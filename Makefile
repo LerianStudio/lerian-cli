@@ -2,7 +2,8 @@
 
 # Variables
 BINARY_NAME=lerian
-BUILD_DIR=./bin
+BUILD_DIR=./build/bin
+MAIN_PATH=./cmd/lerian
 GO_FILES=$(shell find . -name '*.go' -type f)
 
 # Default target
@@ -19,13 +20,13 @@ deps:
 build: deps
 	@echo "Building ${BINARY_NAME}..."
 	@mkdir -p ${BUILD_DIR}
-	go build -o ${BUILD_DIR}/${BINARY_NAME} .
+	go build -o ${BUILD_DIR}/${BINARY_NAME} ${MAIN_PATH}
 	@echo "Build complete: ${BUILD_DIR}/${BINARY_NAME}"
 
 # Install the binary to GOPATH/bin
 install: build
 	@echo "Installing ${BINARY_NAME}..."
-	go install .
+	go install ${MAIN_PATH}
 	@echo "Installed to $(shell go env GOPATH)/bin/${BINARY_NAME}"
 
 # Clean build artifacts
