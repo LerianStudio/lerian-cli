@@ -1,6 +1,5 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
+# Lerian CLI - Git Ignore Rules
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
@@ -11,22 +10,122 @@
 # Test binary, built with `go test -c`
 *.test
 
-# Code coverage profiles and other test artifacts
+# Output of the go coverage tool
 *.out
-coverage.*
+coverage.txt
 *.coverprofile
+coverage.html
 profile.cov
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
 
 # Go workspace file
 go.work
 go.work.sum
 
-# env file
-.env
+# Build directories
+bin/
+build/
+dist/
+*.snap
 
-# Editor/IDE
-# .idea/
-# .vscode/
+# Dependency directories
+vendor/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.local.yaml
+
+# IDE - VSCode
+.vscode/
+*.code-workspace
+
+# IDE - JetBrains (GoLand, IntelliJ)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# IDE - Vim
+*.swp
+*.swo
+*~
+.*.sw?
+
+# IDE - Emacs
+*~
+\#*\#
+.\#*
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# Backup files
+*.bak
+*.backup
+backups/
+
+# Debug files
+debug
+debug.test
+__debug_bin
+
+# GoReleaser artifacts
+.goreleaser.yml.bak
+
+# Air (hot reload) temporary files
+tmp/
+
+# Configuration backups
+*.yaml.bak
+*.yml.bak
+
+# Local testing
+.test/
+testdata/local/
+
+# Release archives
+*.tar.gz
+*.zip
+*.tgz
+
+# Documentation builds
+site/
+_site/
+
+# MacOS
+.AppleDouble
+.LSOverride
+
+# Linux
+.directory
+.Trash-*
+
+# Windows
+$RECYCLE.BIN/
+
+# Certificate files (if any)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Local configuration overrides
+config.local.yaml
+.lerian/
