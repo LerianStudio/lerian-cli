@@ -5,6 +5,7 @@ import (
 
 	"github.com/lerian-studio/lerian-cli/cmd/auth"
 	"github.com/lerian-studio/lerian-cli/cmd/midaz"
+	"github.com/lerian-studio/lerian-cli/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +25,7 @@ your Lerian platform services including Midaz, Finflow, and Finbase.
 
 Use this CLI to interact with your ledgers, manage deployments,
 and access your data.`,
-	Version: "0.1.0",
+	Version: version.GetVersion(),
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

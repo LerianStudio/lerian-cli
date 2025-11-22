@@ -6,6 +6,20 @@ BUILD_DIR=./build/bin
 MAIN_PATH=./cmd/lerian
 GO_FILES=$(shell find . -name '*.go' -type f)
 
+# Version information
+VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+BUILT_BY?=$(shell whoami)@$(shell hostname)
+
+# Linker flags
+LDFLAGS=-ldflags "\
+	-s -w \
+	-X github.com/lerian-studio/lerian-cli/internal/version.Version=${VERSION} \
+	-X github.com/lerian-studio/lerian-cli/internal/version.Commit=${COMMIT} \
+	-X github.com/lerian-studio/lerian-cli/internal/version.Date=${DATE} \
+	-X github.com/lerian-studio/lerian-cli/internal/version.BuiltBy=${BUILT_BY}"
+
 # Default target
 all: build
 
@@ -18,15 +32,15 @@ deps:
 
 # Build the binary
 build: deps
-	@echo "Building ${BINARY_NAME}..."
+	@echo "Building ${BINARY_NAME} ${VERSION}..."
 	@mkdir -p ${BUILD_DIR}
-	go build -o ${BUILD_DIR}/${BINARY_NAME} ${MAIN_PATH}
+	go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME} ${MAIN_PATH}
 	@echo "Build complete: ${BUILD_DIR}/${BINARY_NAME}"
 
 # Install the binary to GOPATH/bin
-install: build
-	@echo "Installing ${BINARY_NAME}..."
-	go install ${MAIN_PATH}
+install:
+	@echo "Installing ${BINARY_NAME} ${VERSION}..."
+	go install ${LDFLAGS} ${MAIN_PATH}
 	@echo "Installed to $(shell go env GOPATH)/bin/${BINARY_NAME}"
 
 # Clean build artifacts
