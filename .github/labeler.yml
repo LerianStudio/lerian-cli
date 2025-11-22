@@ -1,0 +1,62 @@
+# Auto-label PRs based on changed files
+
+'area: auth':
+  - cmd/auth/**/*
+  - internal/client/**/*
+
+'area: ledger':
+  - cmd/midaz/ledger/**/*
+
+'area: config':
+  - internal/config/**/*
+
+'area: kubectl':
+  - internal/kubectl/**/*
+
+'area: output':
+  - internal/output/**/*
+
+'area: cli':
+  - cmd/root.go
+  - cmd/lerian/**/*
+
+'area: documentation':
+  - '**/*.md'
+  - docs/**/*
+
+'area: ci/cd':
+  - .github/**/*
+  - .golangci.yml
+  - .goreleaser.yml
+
+'area: dependencies':
+  - go.mod
+  - go.sum
+
+'area: build':
+  - Makefile
+  - Dockerfile
+  - build/**/*
+
+'area: tests':
+  - '**/*_test.go'
+
+'size/XS':
+  - any: ['**/*']
+    all-globs-to-all-files: false
+
+'size/S':
+  - any: ['**/*']
+    all-globs-to-all-files: false
+
+'size/M':
+  - any: ['**/*']
+    all-globs-to-all-files: false
+
+'size/L':
+  - any: ['**/*']
+    all-globs-to-all-files: false
+
+'size/XL':
+  - any: ['**/*']
+    all-globs-to-all-files: false

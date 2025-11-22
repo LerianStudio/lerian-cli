@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://docs.lerian.studio
+    about: Check our documentation for guides and references
+  - name: Discussions
+    url: https://github.com/lerian-studio/lerian-cli/discussions
+    about: Ask questions and discuss ideas with the community
+  - name: Security Vulnerability
+    url: https://github.com/lerian-studio/lerian-cli/security/advisories/new
+    about: Report security vulnerabilities privately
+  - name: Support
+    url: mailto:support@lerian.studio
+    about: Contact support for help with issues

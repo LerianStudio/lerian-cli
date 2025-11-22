@@ -1,0 +1,270 @@
+run:
+  timeout: 5m
+  tests: true
+  skip-dirs:
+    - vendor
+    - third_party
+    - testdata
+  skip-files:
+    - ".*\\.pb\\.go$"
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
+  sort-results: true
+
+linters:
+  enable:
+    # Default linters
+    - errcheck      # Check for unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Vet examines Go source code
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Static analysis
+    - unused        # Check for unused constants, variables, functions and types
+
+    # Additional recommended linters
+    - gofmt         # Check code formatting
+    - goimports     # Check import organization
+    - revive        # Fast, configurable, extensible, flexible linter
+    - misspell      # Find commonly misspelled English words
+    - goconst       # Find repeated strings that could be constants
+    - gocyclo       # Cyclomatic complexity
+    - dupl          # Code clone detection
+    - gosec         # Security issues
+    - unconvert     # Remove unnecessary type conversions
+    - unparam       # Find unused function parameters
+    - prealloc      # Find slice declarations that could be preallocated
+    - exportloopref # Check for pointers to enclosing loop variables
+    - nilerr        # Check that errors are not nil
+    - godot         # Check if comments end in a period
+    - whitespace    # Check for unnecessary whitespace
+    - wsl           # Whitespace Linter
+    - noctx         # Check HTTP requests with context
+    - bodyclose     # Check HTTP response body is closed
+    - sqlclose      # Check SQL rows/statements are closed
+    - nolintlint    # Check nolint directives
+    - stylecheck    # Check style issues
+    - errorlint     # Check error wrapping
+    - gocritic      # Opinionated Go linter
+    - gocognit      # Cognitive complexity
+    - nestif        # Check deeply nested if statements
+    - lll           # Line length
+    - funlen        # Function length
+    - gochecknoinits # Check for init functions
+    - gochecknoglobals # Check for global variables
+    - nakedret      # Check naked returns
+    - dogsled       # Check for too many blank identifiers
+    - goprintffuncname # Check printf-like function names
+    - rowserrcheck  # Check sql.Rows.Err
+
+  disable:
+    - exhaustive    # Too strict for switches
+    - exhaustruct   # Too strict for structs
+    - forbidigo     # Not needed
+    - forcetypeassert # Too strict
+    - gci           # Conflicts with goimports
+    - godox         # Allow TODO/FIXME comments
+    - goerr113      # Too strict for error wrapping
+    - gomnd         # Too many magic numbers in tests
+    - ireturn       # Too strict for interfaces
+    - nlreturn      # Conflicts with wsl
+    - paralleltest  # Not all tests need to be parallel
+    - tagliatelle   # Not using special tag formats
+    - testpackage   # Tests in same package are fine
+    - varnamelen    # Too strict for variable names
+    - wrapcheck     # Too strict for error wrapping
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      - (*database/sql.DB).Close
+      - (*database/sql.Rows).Close
+
+  govet:
+    enable-all: true
+    disable:
+      - shadow
+      - fieldalignment
+
+  gofmt:
+    simplify: true
+
+  goimports:
+    local-prefixes: github.com/lerian-studio/lerian-cli
+
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+    ignore-tests: true
+
+  gocyclo:
+    min-complexity: 15
+
+  dupl:
+    threshold: 100
+
+  gosec:
+    severity: medium
+    confidence: medium
+    excludes:
+      - G104 # Audit errors not checked (covered by errcheck)
+    config:
+      G301: "0750"  # Directory permissions
+      G302: "0640"  # File permissions
+      G306: "0640"  # File permissions
+
+  misspell:
+    locale: US
+    ignore-words:
+      - lerian
+      - midaz
+      - finflow
+      - finbase
+
+  lll:
+    line-length: 120
+    tab-width: 4
+
+  funlen:
+    lines: 80
+    statements: 50
+    ignore-comments: true
+
+  gocognit:
+    min-complexity: 20
+
+  nestif:
+    min-complexity: 4
+
+  nakedret:
+    max-func-lines: 30
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+      - experimental
+      - opinionated
+    disabled-checks:
+      - whyNoLint
+      - hugeParam
+      - rangeValCopy
+    settings:
+      captLocal:
+        paramsOnly: false
+      underef:
+        skipRecvDeref: false
+
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+        disabled: true  # Too strict
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+        disabled: true  # Too strict
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+        disabled: true  # Covered by unparam
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  stylecheck:
+    checks: ["all", "-ST1000", "-ST1003"]
+    dot-import-whitelist: []
+    initialisms: ["ACL", "API", "ASCII", "CPU", "CSS", "DNS", "EOF", "GUID", "HTML", "HTTP", "HTTPS", "ID", "IP", "JSON", "QPS", "RAM", "RPC", "SLA", "SMTP", "SQL", "SSH", "TCP", "TLS", "TTL", "UDP", "UI", "GID", "UID", "UUID", "URI", "URL", "UTF8", "VM", "XML", "XMPP", "XSRF", "XSS", "SIP", "RTP", "AMQP", "DB", "TS"]
+
+  errorlint:
+    errorf: true
+    asserts: true
+    comparison: true
+
+  nolintlint:
+    allow-unused: false
+    require-explanation: true
+    require-specific: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - gosec
+        - dupl
+        - funlen
+        - gocognit
+        - lll
+
+    # Exclude specific gosec rules in test files
+    - path: _test\.go
+      text: "G404:"  # Use of weak random number generator
+
+    # Exclude long lines in generated files
+    - path: \.pb\.go$
+      linters:
+        - lll
+
+    # Allow main function to be longer
+    - path: cmd/lerian/main\.go
+      linters:
+        - funlen
+        - gochecknoglobals
+        - gochecknoinits
+
+    # Allow init functions in cmd packages
+    - path: cmd/
+      text: "don't use `init` function"
+
+    # Allow global variables in cmd packages
+    - path: cmd/
+      text: "`.*` is a global variable"
+
+    # Exclude some staticcheck messages
+    - linters:
+        - staticcheck
+      text: "SA9003:"
+
+    # Exclude lll issues for long lines with go:generate
+    - linters:
+        - lll
+      source: "^//go:generate "
+
+  exclude-use-default: false
+
+severity:
+  default-severity: warning
+  rules:
+    - linters:
+        - gosec
+        - errcheck
+        - govet
+        - staticcheck
+      severity: error

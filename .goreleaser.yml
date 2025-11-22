@@ -1,0 +1,295 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod verify
+    - go generate ./...
+
+builds:
+  - id: lerian
+    binary: lerian
+    main: ./cmd/lerian
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    ignore:
+      - goos: windows
+        goarch: arm64
+      - goos: windows
+        goarch: arm
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+    flags:
+      - -trimpath
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - SECURITY.md
+    rlcp: true
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+      - 'merge conflict'
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+  groups:
+    - title: '🚀 Features'
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: '🐛 Bug Fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: '📚 Documentation'
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: '⚡ Performance Improvements'
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: '♻️ Code Refactoring'
+      regexp: '^.*?refactor(\([[:word:]]+\))??!?:.+$'
+      order: 4
+    - title: '🎨 Style Changes'
+      regexp: '^.*?style(\([[:word:]]+\))??!?:.+$'
+      order: 5
+    - title: '🧪 Tests'
+      regexp: '^.*?test(\([[:word:]]+\))??!?:.+$'
+      order: 6
+    - title: '🔧 Build System'
+      regexp: '^.*?build(\([[:word:]]+\))??!?:.+$'
+      order: 7
+    - title: '⚙️ Other Changes'
+      order: 999
+
+release:
+  github:
+    owner: lerian-studio
+    name: lerian-cli
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## Lerian CLI {{ .Tag }} ({{ .Date }})
+
+    This release contains {{ len .Commits }} commit(s) since {{ .PreviousTag }}.
+
+    ### Installation
+
+    #### Using Go Install
+    ```bash
+    go install github.com/lerian-studio/lerian-cli/cmd/lerian@{{ .Tag }}
+    ```
+
+    #### Download Binary
+    Download the appropriate binary for your platform from the assets below.
+
+    #### Verify Checksum
+    ```bash
+    sha256sum -c checksums.txt
+    ```
+
+    ### What's Changed
+  footer: |
+    **Full Changelog**: https://github.com/lerian-studio/lerian-cli/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+    ---
+
+    ## Support
+
+    - **Documentation:** https://docs.lerian.studio
+    - **Issues:** https://github.com/lerian-studio/lerian-cli/issues
+    - **Security:** security@lerian.studio
+
+brews:
+  - name: lerian
+    repository:
+      owner: lerian-studio
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: lerian-bot
+      email: bot@lerian.studio
+    folder: Formula
+    homepage: https://github.com/lerian-studio/lerian-cli
+    description: |
+      Official command-line interface for the Lerian platform.
+      Manage Midaz ledger deployments and interact with your ledgers.
+    license: Apache-2.0
+    test: |
+      system "#{bin}/lerian --version"
+    install: |
+      bin.install "lerian"
+
+      # Install shell completions
+      generate_completions_from_executable(bin/"lerian", "completion")
+
+      # Install man pages (if we add them in future)
+      # man1.install Dir["man/*.1"]
+    skip_upload: auto
+
+nfpms:
+  - id: default
+    package_name: lerian
+    vendor: Lerian Studio
+    homepage: https://github.com/lerian-studio/lerian-cli
+    maintainer: Lerian Studio <support@lerian.studio>
+    description: |
+      Official command-line interface for the Lerian platform.
+      Manage Midaz ledger deployments, interact with your ledgers,
+      and streamline your financial infrastructure operations.
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin
+    section: utils
+    priority: optional
+    file_name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    contents:
+      - src: README.md
+        dst: /usr/share/doc/lerian/README.md
+      - src: LICENSE
+        dst: /usr/share/doc/lerian/LICENSE
+      - src: CHANGELOG.md
+        dst: /usr/share/doc/lerian/CHANGELOG.md
+    dependencies:
+      - kubectl
+    recommends:
+      - docker
+    suggests:
+      - kubernetes-client
+
+dockers:
+  - image_templates:
+      - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-amd64"
+      - "ghcr.io/lerian-studio/lerian-cli:latest-amd64"
+    use: buildx
+    goos: linux
+    goarch: amd64
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--label=org.opencontainers.image.description=Lerian CLI"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+
+  - image_templates:
+      - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-arm64"
+      - "ghcr.io/lerian-studio/lerian-cli:latest-arm64"
+    use: buildx
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--label=org.opencontainers.image.description=Lerian CLI"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+
+docker_manifests:
+  - name_template: "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-amd64"
+      - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/lerian-studio/lerian-cli:latest"
+    image_templates:
+      - "ghcr.io/lerian-studio/lerian-cli:latest-amd64"
+      - "ghcr.io/lerian-studio/lerian-cli:latest-arm64"
+
+sboms:
+  - artifacts: archive
+    documents:
+      - "{{ .ProjectName }}_{{ .Version }}_sbom.spdx.json"
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    certificate: '${artifact}.pem'
+    args:
+      - sign-blob
+      - '--output-certificate=${certificate}'
+      - '--output-signature=${signature}'
+      - '${artifact}'
+      - '--yes'
+    output: true
+
+announce:
+  skip: "{{ gt .Patch 0 }}"
+  github:
+    enabled: true
+    message_template: |
+      🎉 Lerian CLI {{ .Tag }} is out!
+
+      {{ .ReleaseNotes }}
+
+      Install: `go install github.com/lerian-studio/lerian-cli/cmd/lerian@{{ .Tag }}`
+
+      Or download binaries from: {{ .ReleaseURL }}
+
+milestones:
+  - repo:
+      owner: lerian-studio
+      name: lerian-cli
+    close: true
+    fail_on_error: false
