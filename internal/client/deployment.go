@@ -45,41 +45,41 @@ const (
 // Reported by: business-logic-reviewer on 2025-11-17
 // Severity: Medium
 type CreateDeploymentRequest struct {
-	Name           string                 `json:"name"`
-	Type           string                 `json:"type"`
-	Region         string                 `json:"region"`
-	Size           *string                `json:"size,omitempty"`
-	TPS            *int                   `json:"tps,omitempty"`
-	Environment    string                 `json:"environment"`
-	MultiAZ        bool                   `json:"multi_az"`
-	Sandbox        bool                   `json:"sandbox"`
-	AppVersion     *string                `json:"app_version,omitempty"`
-	ChartVersion   *string                `json:"chart_version,omitempty"`
-	AgentID        *uuid.UUID             `json:"agent_id,omitempty"`
-	Configuration  map[string]interface{} `json:"configuration,omitempty"`
+	Name          string                 `json:"name"`
+	Type          string                 `json:"type"`
+	Region        string                 `json:"region"`
+	Size          *string                `json:"size,omitempty"`
+	TPS           *int                   `json:"tps,omitempty"`
+	Environment   string                 `json:"environment"`
+	MultiAZ       bool                   `json:"multi_az"`
+	Sandbox       bool                   `json:"sandbox"`
+	AppVersion    *string                `json:"app_version,omitempty"`
+	ChartVersion  *string                `json:"chart_version,omitempty"`
+	AgentID       *uuid.UUID             `json:"agent_id,omitempty"`
+	Configuration map[string]interface{} `json:"configuration,omitempty"`
 }
 
 // Deployment represents a ledger deployment
 type Deployment struct {
-	ID              uuid.UUID              `json:"id"`
-	TenantID        uuid.UUID              `json:"tenant_id"`
-	Name            string                 `json:"name"`
-	Type            string                 `json:"type"`
-	Region          string                 `json:"region"`
-	Size            *string                `json:"size,omitempty"`
-	TPS             *int                   `json:"tps,omitempty"`
-	Status          string                 `json:"status"`
-	Endpoint        *string                `json:"endpoint,omitempty"`
-	Environment     string                 `json:"environment"`
-	MultiAZ         bool                   `json:"multi_az"`
-	HelmReleaseName *string                `json:"helm_release_name,omitempty"`
-	HelmChart       *string                `json:"helm_chart,omitempty"`
-	HelmNamespace   *string                `json:"helm_namespace,omitempty"`
-	AppVersion      *string                `json:"app_version,omitempty"`
-	ChartVersion    *string                `json:"chart_version,omitempty"`
-	ErrorMessage    *string                `json:"error_message,omitempty"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	ID              uuid.UUID `json:"id"`
+	TenantID        uuid.UUID `json:"tenant_id"`
+	Name            string    `json:"name"`
+	Type            string    `json:"type"`
+	Region          string    `json:"region"`
+	Size            *string   `json:"size,omitempty"`
+	TPS             *int      `json:"tps,omitempty"`
+	Status          string    `json:"status"`
+	Endpoint        *string   `json:"endpoint,omitempty"`
+	Environment     string    `json:"environment"`
+	MultiAZ         bool      `json:"multi_az"`
+	HelmReleaseName *string   `json:"helm_release_name,omitempty"`
+	HelmChart       *string   `json:"helm_chart,omitempty"`
+	HelmNamespace   *string   `json:"helm_namespace,omitempty"`
+	AppVersion      *string   `json:"app_version,omitempty"`
+	ChartVersion    *string   `json:"chart_version,omitempty"`
+	ErrorMessage    *string   `json:"error_message,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // CreateDeployment creates a new ledger deployment

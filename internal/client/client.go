@@ -31,15 +31,15 @@ func NewClient(baseURL, apiKey, tenantID string) *Client {
 
 // Ledger represents a Midaz ledger deployment
 type Ledger struct {
-	ID                string    `json:"id"`
-	Name              string    `json:"name"`
-	Region            string    `json:"region"`
-	Status            string    `json:"status"`
-	HelmReleaseName   string    `json:"helm_release_name,omitempty"`
-	HelmChart         string    `json:"helm_chart,omitempty"`
-	HelmNamespace     string    `json:"helm_namespace,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Region          string    `json:"region"`
+	Status          string    `json:"status"`
+	HelmReleaseName string    `json:"helm_release_name,omitempty"`
+	HelmChart       string    `json:"helm_chart,omitempty"`
+	HelmNamespace   string    `json:"helm_namespace,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // APIResponse represents a generic API response
