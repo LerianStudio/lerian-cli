@@ -1,3 +1,10 @@
+## [1.0.0-beta.16](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.15...v1.0.0-beta.16) (2025-11-25)
+
+
+### Bug Fixes
+
+* enable goreleaser release upload to attach binaries to github releases ([bb782a8](https://github.com/LerianStudio/lerian-cli/commit/bb782a876a8e198389ba4ec09fc4e649331d260f))
+
 ## [1.0.0-beta.15](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.14...v1.0.0-beta.15) (2025-11-25)
 
 
