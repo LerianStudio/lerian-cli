@@ -387,10 +387,7 @@ func TestPrinter_PrintLedgerList(t *testing.T) {
 			}
 
 			// Read output
-			out, _ := io.ReadAll(r)
-			if len(out) == 0 && !tt.wantErr {
-				// Some test cases expect output
-			}
+			_, _ = io.ReadAll(r)
 		})
 	}
 }

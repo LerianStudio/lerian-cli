@@ -1,3 +1,4 @@
+// Package config handles configuration management for the Lerian CLI.
 package config
 
 import (

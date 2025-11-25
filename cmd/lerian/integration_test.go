@@ -1,5 +1,4 @@
 //go:build !windows
-// +build !windows
 
 //nolint:errcheck // Integration test - error checking not critical for cleanup
 package main

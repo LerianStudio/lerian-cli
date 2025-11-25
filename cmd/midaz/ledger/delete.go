@@ -37,7 +37,7 @@ func init() {
 	deleteCmd.Flags().BoolVarP(&deleteForce, "force", "f", false, "Skip confirmation prompt")
 }
 
-func runDelete(cmd *cobra.Command, args []string) error {
+func runDelete(_ *cobra.Command, args []string) error {
 	deploymentID := args[0]
 
 	// Load config
@@ -74,10 +74,10 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Type the ledger name '%s' to confirm deletion: ", deployment.Name)
 
 		var confirmation string
-		fmt.Scanln(&confirmation)
+		_, _ = fmt.Scanln(&confirmation)
 
 		if strings.TrimSpace(confirmation) != deployment.Name {
-			color.Yellow("\nDeletion cancelled. Name did not match.")
+			color.Yellow("\nDeletion canceled. Name did not match.")
 			return nil
 		}
 	}

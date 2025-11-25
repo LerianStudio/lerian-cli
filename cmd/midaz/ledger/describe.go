@@ -54,7 +54,7 @@ func runDescribe(cmd *cobra.Command, args []string) error {
 	// Convert to interface{} for printer
 	var ledgerData map[string]interface{}
 	jsonData, _ := json.Marshal(ledger)
-	json.Unmarshal(jsonData, &ledgerData)
+	_ = json.Unmarshal(jsonData, &ledgerData)
 
 	// Print results
 	if err := printer.PrintLedgerDetails(ledgerData); err != nil {

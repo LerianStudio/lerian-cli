@@ -18,7 +18,7 @@ func init() {
 	logoutCmd.Flags().StringVar(&profile, "profile", "default", "Profile name to logout")
 }
 
-func runLogout(cmd *cobra.Command, args []string) error {
+func runLogout(_ *cobra.Command, _ []string) error {
 	// Load existing config
 	cfg, err := config.Load()
 	if err != nil {

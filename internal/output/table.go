@@ -83,19 +83,19 @@ func (p *Printer) printMapSliceTable(data []map[string]interface{}) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 
 	// Print header
-	fmt.Fprint(w, strings.ToUpper(keys[0]))
+	_, _ = fmt.Fprint(w, strings.ToUpper(keys[0]))
 	for i := 1; i < len(keys); i++ {
-		fmt.Fprintf(w, "\t%s", strings.ToUpper(keys[i]))
+		_, _ = fmt.Fprintf(w, "\t%s", strings.ToUpper(keys[i]))
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 
 	// Print rows
 	for _, row := range data {
-		fmt.Fprint(w, formatValue(row[keys[0]]))
+		_, _ = fmt.Fprint(w, formatValue(row[keys[0]]))
 		for i := 1; i < len(keys); i++ {
-			fmt.Fprintf(w, "\t%s", formatValue(row[keys[i]]))
+			_, _ = fmt.Fprintf(w, "\t%s", formatValue(row[keys[i]]))
 		}
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w)
 	}
 
 	return w.Flush()
@@ -127,7 +127,7 @@ func (p *Printer) PrintLedgerList(ledgers interface{}) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tREGION\tSTATUS\tCREATED")
+	_, _ = fmt.Fprintln(w, "ID\tNAME\tREGION\tSTATUS\tCREATED")
 
 	for _, item := range data {
 		ledger, ok := item.(map[string]interface{})
@@ -146,7 +146,7 @@ func (p *Printer) PrintLedgerList(ledgers interface{}) error {
 			id = id[:36]
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", id, name, region, status, createdAt)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", id, name, region, status, createdAt)
 	}
 
 	return w.Flush()

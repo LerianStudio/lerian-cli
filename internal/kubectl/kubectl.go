@@ -1,3 +1,4 @@
+// Package kubectl provides utility functions for interacting with Kubernetes clusters.
 package kubectl
 
 import (

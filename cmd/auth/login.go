@@ -27,12 +27,12 @@ func init() {
 	loginCmd.Flags().StringVar(&tenantID, "tenant-id", "", "Tenant ID")
 	loginCmd.Flags().StringVar(&profile, "profile", "default", "Profile name")
 
-	loginCmd.MarkFlagRequired("api-url")
-	loginCmd.MarkFlagRequired("api-key")
-	loginCmd.MarkFlagRequired("tenant-id")
+	_ = loginCmd.MarkFlagRequired("api-url")
+	_ = loginCmd.MarkFlagRequired("api-key")
+	_ = loginCmd.MarkFlagRequired("tenant-id")
 }
 
-func runLogin(cmd *cobra.Command, args []string) error {
+func runLogin(_ *cobra.Command, args []string) error {
 	// Load existing config or create new one
 	cfg, err := config.Load()
 	if err != nil {

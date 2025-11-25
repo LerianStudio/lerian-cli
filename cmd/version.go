@@ -43,11 +43,11 @@ func runVersion(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to generate JSON output: %w", err)
 		}
-		fmt.Fprintln(os.Stdout, jsonOutput)
+		_, _ = fmt.Fprintln(os.Stdout, jsonOutput)
 		return nil
 	}
 
 	// Default: print full version information
-	fmt.Fprintln(os.Stdout, info.String())
+	_, _ = fmt.Fprintln(os.Stdout, info.String())
 	return nil
 }

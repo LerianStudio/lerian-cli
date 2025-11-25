@@ -17,7 +17,7 @@ var listCmd = &cobra.Command{
 	RunE:  runList,
 }
 
-func runList(cmd *cobra.Command, args []string) error {
+func runList(cmd *cobra.Command, _ []string) error {
 	// Load config
 	cfg, err := config.Load()
 	if err != nil {
@@ -51,7 +51,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	// Convert to interface{} for printer
 	var ledgersData []interface{}
 	jsonData, _ := json.Marshal(ledgers)
-	json.Unmarshal(jsonData, &ledgersData)
+	_ = json.Unmarshal(jsonData, &ledgersData)
 
 	// Print results
 	if err := printer.PrintLedgerList(ledgersData); err != nil {

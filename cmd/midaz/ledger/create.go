@@ -53,10 +53,11 @@ func init() {
 	// Required flags
 	createCmd.Flags().StringVar(&createName, "name", "", "Name of the ledger (required, 3-100 chars)")
 	createCmd.Flags().StringVar(&createRegion, "region", "", "Region for deployment (required)")
-	createCmd.Flags().StringVar(&createEnv, "env", "", "Environment type: dev, staging, prod (required unless using --sandbox)")
+	createCmd.Flags().StringVar(&createEnv, "env", "",
+		"Environment type: dev, staging, prod (required unless using --sandbox)")
 	createCmd.Flags().StringVar(&createAgentID, "agent-id", "", "Agent ID (required for private mode, optional for SaaS)")
-	createCmd.MarkFlagRequired("name")
-	createCmd.MarkFlagRequired("region")
+	_ = createCmd.MarkFlagRequired("name")
+	_ = createCmd.MarkFlagRequired("region")
 
 	// Optional flags
 	createCmd.Flags().StringVar(&createMode, "mode", "saas", "Deployment mode: saas, private")
@@ -68,7 +69,7 @@ func init() {
 	createCmd.Flags().StringVar(&createChartVersion, "chart-version", "", "Specific Helm chart version")
 }
 
-func preRunCreate(cmd *cobra.Command, args []string) error {
+func preRunCreate(cmd *cobra.Command, _ []string) error {
 	// Apply sandbox overrides before validation
 	if createSandbox {
 		// Check for conflicting flags
