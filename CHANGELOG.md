@@ -1,3 +1,10 @@
+## [1.0.0-beta.13](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.12...v1.0.0-beta.13) (2025-11-25)
+
+
+### Bug Fixes
+
+* remove header/footer from release section when disable is true ([66d6f3e](https://github.com/LerianStudio/lerian-cli/commit/66d6f3e6aa5fa754ab321644bfeddbb541a412c2))
+
 ## [1.0.0-beta.12](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.11...v1.0.0-beta.12) (2025-11-25)
 
 
