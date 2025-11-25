@@ -1,14 +1,7 @@
 name: Semantic Release
 
 on:
-  workflow_run:
-    workflows:
-      - "Go CI"
-      - "Go Security"
-      - "Unit Tests"
-      - "Coverage Check"
-    types:
-      - completed
+  push:
     branches:
       - develop
       - main
@@ -21,39 +14,52 @@ permissions:
   pull-requests: write
 
 jobs:
-  semantic-release:
-    name: Semantic Release
+  # Wait for all CI checks to complete successfully
+  wait-for-checks:
+    name: Wait for CI Checks
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == github.ref_name)
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Wait for Go CI
+        uses: lewagon/wait-on-check-action@v1.3.4
         with:
-          fetch-depth: 0
-          persist-credentials: false
+          ref: ${{ github.ref }}
+          check-name: 'ci / All Checks Pass'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Wait for Go Security
+        uses: lewagon/wait-on-check-action@v1.3.4
         with:
-          node-version: 'lts/*'
+          ref: ${{ github.ref }}
+          check-name: 'security / Security Summary'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
 
-      - name: Install semantic-release
-        run: |
-          npm install -g \
-            semantic-release@^23.0.0 \
-            @semantic-release/git@^10.0.1 \
-            @semantic-release/changelog@^6.0.3 \
-            @semantic-release/exec@^6.0.3 \
-            conventional-changelog-conventionalcommits@^7.0.2
+      - name: Wait for Unit Tests
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.ref }}
+          check-name: 'unit-tests / Unit Tests'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
 
-      - name: Run semantic-release
-        env:
-          GITHUB_TOKEN: ${{ secrets.MANAGE_TOKEN || secrets.GITHUB_TOKEN }}
-          GIT_AUTHOR_NAME: semantic-release-bot
-          GIT_AUTHOR_EMAIL: semantic-release-bot@users.noreply.github.com
-          GIT_COMMITTER_NAME: semantic-release-bot
-          GIT_COMMITTER_EMAIL: semantic-release-bot@users.noreply.github.com
-        run: npx semantic-release
+      - name: Wait for Coverage Check
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.ref }}
+          check-name: 'coverage / Coverage Check'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
+  # Call shared release workflow after checks pass
+  release:
+    name: Create Release
+    needs: wait-for-checks
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@feature/go-workflows
+    secrets:
+      lerian_studio_push_bot_app_id: ${{ secrets.LERIAN_STUDIO_PUSH_BOT_APP_ID }}
+      lerian_studio_push_bot_private_key: ${{ secrets.LERIAN_STUDIO_PUSH_BOT_PRIVATE_KEY }}
+      lerian_ci_cd_user_gpg_key: ${{ secrets.LERIAN_CI_CD_USER_GPG_KEY }}
+      lerian_ci_cd_user_gpg_key_password: ${{ secrets.LERIAN_CI_CD_USER_GPG_KEY_PASSWORD }}
+      lerian_ci_cd_user_name: ${{ secrets.LERIAN_CI_CD_USER_NAME }}
+      lerian_ci_cd_user_email: ${{ secrets.LERIAN_CI_CD_USER_EMAIL }}
