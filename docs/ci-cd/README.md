@@ -22,78 +22,132 @@ The Lerian CLI uses **GitHub Actions** with a sophisticated CI/CD pipeline that 
 
 ### CI/CD Flow Diagram
 
-```mermaid
-graph TD
-    A[Code Push to develop/RC/main] --> B[Go CI]
-    A --> C[Unit Tests]
-    A --> D[Coverage Check]
-    A --> E[Go Security]
-    A --> F[PR Validation - PRs only]
-
-    B --> G{CI Gate}
-    C --> G
-    D --> G
-    E --> G
-
-    G -->|All Pass| H[Semantic Release]
-    G -->|Any Fail| I[Block Release]
-
-    H -->|Create Tag| J[Go Release]
-    J --> K[Build Binaries]
-    J --> L[Create Packages]
-    J --> M[Upload Assets]
-
-    K --> N[GitHub Release]
-    L --> N
-    M --> N
-
-    style G fill:#f9f,stroke:#333,stroke-width:4px
-    style H fill:#9f9,stroke:#333,stroke-width:2px
-    style N fill:#99f,stroke:#333,stroke-width:2px
+```
+┌─────────────────────────────────────┐
+│   Code Push to develop/RC/main      │
+└───────────────┬─────────────────────┘
+                │
+        ┌───────┼───────┬────────┬────────────┐
+        │       │       │        │            │
+        ▼       ▼       ▼        ▼            ▼
+    ┌───────┐ ┌────┐ ┌────┐ ┌────────┐ ┌──────────┐
+    │Go CI  │ │Unit│ │Cov │ │  Go    │ │    PR    │
+    │       │ │Test│ │Chk │ │Security│ │Validation│
+    └───┬───┘ └─┬──┘ └─┬──┘ └───┬────┘ └──────────┘
+        │       │      │        │      (PRs only)
+        └───────┴──────┴────────┘
+                │
+                ▼
+        ┌───────────────┐
+        │   [CI Gate]   │ ◄── Quality Gatekeeper
+        └───────┬───────┘
+                │
+        ┌───────┴────────┐
+        │                │
+        ▼                ▼
+    All Pass       Any Fail
+        │                │
+        ▼                ▼
+┌───────────────┐  ┌──────────┐
+│Semantic       │  │  Block   │
+│Release        │  │ Release  │
+└───────┬───────┘  └──────────┘
+        │
+        │ (Create Tag)
+        ▼
+┌───────────────┐
+│  Go Release   │
+└───────┬───────┘
+        │
+    ┌───┴────┬──────────┐
+    ▼        ▼          ▼
+┌──────┐ ┌────────┐ ┌──────┐
+│Build │ │Create  │ │Upload│
+│Binary│ │Package │ │Assets│
+└───┬──┘ └───┬────┘ └───┬──┘
+    └────────┴──────────┘
+             │
+             ▼
+    ┌────────────────┐
+    │GitHub Release  │
+    └────────────────┘
 ```
 
 ### Detailed Pipeline Flow
 
-```mermaid
-sequenceDiagram
-    participant Dev as Developer
-    participant GH as GitHub
-    participant CI as CI Workflows
-    participant Gate as CI Gate
-    participant SR as Semantic Release
-    participant GR as Go Release
-
-    Dev->>GH: Push to develop/RC/main
-
-    par Parallel CI Workflows
-        GH->>CI: Trigger Go CI
-        GH->>CI: Trigger Unit Tests
-        GH->>CI: Trigger Coverage Check
-        GH->>CI: Trigger Go Security
-    end
-
-    CI->>Gate: Report: Go CI (success)
-    CI->>Gate: Report: Unit Tests (success)
-    CI->>Gate: Report: Coverage Check (success)
-    CI->>Gate: Report: Go Security (success)
-
-    alt All Workflows Pass
-        Gate->>SR: ✓ Trigger Semantic Release
-        SR->>SR: Analyze commits
-        SR->>SR: Generate version
-        SR->>SR: Update CHANGELOG
-        SR->>GH: Create Git Tag
-        SR->>GH: Create GitHub Release
-
-        GH->>GR: Trigger Go Release
-        GR->>GR: Build multi-platform binaries
-        GR->>GR: Create packages (deb/rpm/apk)
-        GR->>GR: Generate checksums
-        GR->>GH: Upload release assets
-    else Any Workflow Fails
-        Gate->>SR: ✗ Block release
-        Gate->>Dev: Notify failure
-    end
+```
+Developer    GitHub     CI Workflows    CI Gate    Semantic Release    Go Release
+    │            │             │             │              │                │
+    │ Push       │             │             │              │                │
+    │─────────>  │             │             │              │                │
+    │            │             │             │              │                │
+    │            │  Trigger    │             │              │                │
+    │            │──────────>  │             │              │                │
+    │            │  (Parallel) │             │              │                │
+    │            │  - Go CI    │             │              │                │
+    │            │  - Unit     │             │              │                │
+    │            │  - Coverage │             │              │                │
+    │            │  - Security │             │              │                │
+    │            │             │             │              │                │
+    │            │             │  Report     │              │                │
+    │            │             │──────────>  │              │                │
+    │            │             │  (Go CI)    │              │                │
+    │            │             │──────────>  │              │                │
+    │            │             │  (Unit)     │              │                │
+    │            │             │──────────>  │              │                │
+    │            │             │  (Coverage) │              │                │
+    │            │             │──────────>  │              │                │
+    │            │             │  (Security) │              │                │
+    │            │             │             │              │                │
+    │            │             │       ┌─────┴─────┐        │                │
+    │            │             │       │  All Pass │        │                │
+    │            │             │       │     ?     │        │                │
+    │            │             │       └─────┬─────┘        │                │
+    │            │             │         YES │  NO          │                │
+    │            │             │             │              │                │
+    │            │             │         YES │              │                │
+    │            │             │             │  Trigger     │                │
+    │            │             │             │──────────────────>            │
+    │            │             │             │              │                │
+    │            │             │             │   Analyze    │                │
+    │            │             │             │   commits    │                │
+    │            │             │             │  <────────>  │                │
+    │            │             │             │   Generate   │                │
+    │            │             │             │   version    │                │
+    │            │             │             │  <────────>  │                │
+    │            │             │             │   Update     │                │
+    │            │             │             │  CHANGELOG   │                │
+    │            │             │             │  <────────>  │                │
+    │            │             │             │              │                │
+    │            │  Create Tag │             │              │                │
+    │            │ <────────────────────────────────────────┘                │
+    │            │             │             │              │                │
+    │            │   Create Release          │              │                │
+    │            │ <────────────────────────────────────────┘                │
+    │            │             │             │              │                │
+    │            │             │             │              │  Trigger       │
+    │            │────────────────────────────────────────────────────────>  │
+    │            │             │             │              │                │
+    │            │             │             │              │   Build        │
+    │            │             │             │              │   binaries     │
+    │            │             │             │              │  <──────────>  │
+    │            │             │             │              │   Create       │
+    │            │             │             │              │   packages     │
+    │            │             │             │              │  <──────────>  │
+    │            │             │             │              │   Generate     │
+    │            │             │             │              │   checksums    │
+    │            │             │             │              │  <──────────>  │
+    │            │             │             │              │                │
+    │            │  Upload assets            │              │                │
+    │            │ <─────────────────────────────────────────────────────────┘
+    │            │             │             │              │                │
+    │            │             │        NO   │              │                │
+    │            │             │             │  Block       │                │
+    │            │             │             │──────────────────>            │
+    │            │             │             │              │                │
+    │  Notify    │             │             │              │                │
+    │ <──────────────────────────────────────┘              │                │
+    │  failure   │             │             │              │                │
 ```
 
 ## GitFlow Branching Model
@@ -102,42 +156,43 @@ The project follows a three-branch GitFlow strategy with automated semantic vers
 
 ### Branch Strategy Diagram
 
-```mermaid
-gitGraph
-    commit id: "Initial"
-    branch develop
-    checkout develop
-    commit id: "feat: Add feature A" tag: "v1.0.0-beta.1"
-    commit id: "fix: Bug fix B" tag: "v1.0.0-beta.2"
-    commit id: "feat: Add feature C" tag: "v1.0.0-beta.3"
+```
+main:                ●──────────────────────────────────────●
+                     │                                      │
+                     │                                  [merge RC]
+                     │                                  v1.0.0
+                     │                                      │
+                     │                                      │
+release-candidate:   │           ●──────────●───────────────┘
+                     │           │          │
+                     │       [merge dev] [fix RC]
+                     │       v1.0.0-rc.1 v1.0.0-rc.2
+                     │           │
+                     │           │
+develop:             ●───────────●───────────●───────────●───────────●
+                    Initial    feat A      fix B      feat C     feat D
+                               v1.0.0-     v1.0.0-    v1.0.0-    v1.0.1-
+                               beta.1      beta.2     beta.3     beta.1
 
-    branch release-candidate
-    checkout release-candidate
-    merge develop tag: "v1.0.0-rc.1"
-    commit id: "fix: RC bug fix" tag: "v1.0.0-rc.2"
-
-    checkout main
-    merge release-candidate tag: "v1.0.0"
-
-    checkout develop
-    commit id: "feat: New feature D" tag: "v1.0.1-beta.1"
+Timeline: ────────────────────────────────────────────────>
 ```
 
 ### Branch Lifecycle
 
-```mermaid
-graph LR
-    A[develop<br/>Beta Releases] -->|Merge when stable| B[release-candidate<br/>RC Releases]
-    B -->|Merge when tested| C[main<br/>Stable Releases]
-    C -.->|Hotfix if needed| C
-
-    A -.->|v1.0.0-beta.X| A
-    B -.->|v1.0.0-rc.X| B
-    C -.->|v1.0.0| C
-
-    style A fill:#ffd700,stroke:#333,stroke-width:2px
-    style B fill:#ffa500,stroke:#333,stroke-width:2px
-    style C fill:#90ee90,stroke:#333,stroke-width:2px
+```
+┌─────────────────┐    Merge when     ┌─────────────────┐    Merge when    ┌─────────────────┐
+│    develop      │      stable       │release-candidate│      tested      │      main       │
+│                 │──────────────────>│                 │─────────────────>│                 │
+│ Beta Releases   │                   │   RC Releases   │                  │Stable Releases  │
+└─────────────────┘                   └─────────────────┘                  └─────────────────┘
+         │                                     │                                     │
+         │ v1.0.0-beta.X                       │ v1.0.0-rc.X                         │ v1.0.0
+         └─────────────┐                       └─────────────┐                       └─────────────┐
+                       │                                     │                                     │
+                       │                                     │                      Hotfix         │
+                       │                                     │                      if needed      │
+                       │                                     │                       ┌─────────────┘
+                       └─> (self-tag)                        └─> (self-tag)          └────> (self-tag)
 ```
 
 ### Branch Details
@@ -327,30 +382,53 @@ The CI Gate is a critical quality gate that ensures comprehensive validation bef
 
 ### How CI Gate Works
 
-```mermaid
-graph TD
-    A[Push to Branch] --> B[Trigger 4 CI Workflows]
-    B --> C[Go CI]
-    B --> D[Unit Tests]
-    B --> E[Coverage Check]
-    B --> F[Go Security]
-
-    C -->|Complete| G[CI Gate<br/>Checks Status]
-    D -->|Complete| G
-    E -->|Complete| G
-    F -->|Complete| G
-
-    G -->|Check All Workflows| H{All Success?}
-    H -->|Yes| I[✓ CI Gate Pass]
-    H -->|No| J[✗ CI Gate Fail]
-
-    I --> K[Semantic Release<br/>Can Proceed]
-    J --> L[Block Release<br/>Show Failures]
-
-    style G fill:#f9f,stroke:#333,stroke-width:4px
-    style H fill:#ff9,stroke:#333,stroke-width:2px
-    style I fill:#9f9,stroke:#333,stroke-width:2px
-    style J fill:#f99,stroke:#333,stroke-width:2px
+```
+                        ┌─────────────────┐
+                        │ Push to Branch  │
+                        └────────┬────────┘
+                                 │
+                                 ▼
+                    ┌────────────────────────┐
+                    │ Trigger 4 CI Workflows │
+                    └────────────┬───────────┘
+                                 │
+                    ┌────────────┼────────────┬────────────┐
+                    │            │            │            │
+                    ▼            ▼            ▼            ▼
+               ┌────────┐  ┌─────────┐  ┌─────────┐  ┌──────────┐
+               │ Go CI  │  │  Unit   │  │Coverage │  │   Go     │
+               │        │  │  Tests  │  │  Check  │  │ Security │
+               └───┬────┘  └────┬────┘  └────┬────┘  └────┬─────┘
+                   │            │            │            │
+                   │ Complete   │ Complete   │ Complete   │ Complete
+                   └────────────┴────────────┴────────────┘
+                                 │
+                                 ▼
+                         ┌───────────────┐
+                         │   CI Gate     │ ◄── Quality Gatekeeper
+                         │ Checks Status │
+                         └───────┬───────┘
+                                 │
+                                 ▼
+                          ┌──────────────┐
+                          │ All Success? │
+                          └──────┬───────┘
+                                 │
+                        ┌────────┴────────┐
+                        │                 │
+                     YES│                 │NO
+                        ▼                 ▼
+                ┌──────────────┐   ┌──────────────┐
+                │  CI Gate     │   │  CI Gate     │
+                │     PASS     │   │     FAIL     │
+                └──────┬───────┘   └──────┬───────┘
+                       │                  │
+                       ▼                  ▼
+              ┌─────────────────┐  ┌──────────────┐
+              │Semantic Release │  │    Block     │
+              │  Can Proceed    │  │   Release    │
+              └─────────────────┘  │Show Failures │
+                                   └──────────────┘
 ```
 
 ### CI Gate Benefits
@@ -398,25 +476,34 @@ Based on [Conventional Commits](https://www.conventionalcommits.org/):
 
 ### Branch-Specific Versions
 
-```mermaid
-graph LR
-    A[Commit Types] --> B{Branch?}
-    B -->|develop| C[v1.0.0-beta.X]
-    B -->|release-candidate| D[v1.0.0-rc.X]
-    B -->|main| E[v1.0.0]
-
-    C -.->|feat: +minor| C
-    C -.->|fix: +patch| C
-
-    D -.->|feat: +minor| D
-    D -.->|fix: +patch| D
-
-    E -.->|feat: +minor| E
-    E -.->|fix: +patch| E
-
-    style C fill:#ffd700
-    style D fill:#ffa500
-    style E fill:#90ee90
+```
+                   ┌──────────────┐
+                   │Commit Types  │
+                   └──────┬───────┘
+                          │
+                          ▼
+                    ┌─────────┐
+                    │ Branch? │
+                    └────┬────┘
+                         │
+         ┌───────────────┼───────────────┐
+         │               │               │
+      develop   release-candidate      main
+         │               │               │
+         ▼               ▼               ▼
+  ┌──────────────┐ ┌──────────────┐ ┌────────────┐
+  │v1.0.0-beta.X │ │v1.0.0-rc.X   │ │  v1.0.0    │
+  └──────┬───────┘ └──────┬───────┘ └─────┬──────┘
+         │                │                │
+    ┌────┴────┐      ┌────┴────┐      ┌───┴────┐
+    │         │      │         │      │        │
+    │  feat:  │      │  feat:  │      │ feat:  │
+    │ +minor  │      │ +minor  │      │ +minor │
+    │         │      │         │      │        │
+    │  fix:   │      │  fix:   │      │  fix:  │
+    │ +patch  │      │ +patch  │      │ +patch │
+    └─────────┘      └─────────┘      └────────┘
+    (beta.X++)         (rc.X++)       (patch++)
 ```
 
 ## Configuration Files
@@ -653,40 +740,69 @@ chore: bump dependencies to latest versions
 
 ## Workflow Dependencies Graph
 
-```mermaid
-graph TD
-    A[Code Push] --> B[Go CI]
-    A --> C[Unit Tests]
-    A --> D[Coverage Check]
-    A --> E[Go Security]
-    A --> F[PR Validation]
-
-    B --> G[CI Gate]
-    C --> G
-    D --> G
-    E --> G
-
-    G --> H{All Pass?}
-    H -->|Yes| I[Semantic Release]
-    H -->|No| J[Block & Notify]
-
-    I --> K[Create Tag]
-    K --> L[Go Release]
-
-    L --> M[Build Binaries]
-    L --> N[Create Packages]
-    L --> O[Generate Checksums]
-
-    M --> P[Upload Assets]
-    N --> P
-    O --> P
-
-    P --> Q[GitHub Release]
-
-    style G fill:#f9f,stroke:#333,stroke-width:4px
-    style H fill:#ff9,stroke:#333,stroke-width:2px
-    style I fill:#9f9,stroke:#333,stroke-width:2px
-    style Q fill:#99f,stroke:#333,stroke-width:2px
+```
+                              ┌─────────────┐
+                              │  Code Push  │
+                              └──────┬──────┘
+                                     │
+         ┌───────────────┬───────────┼───────────┬───────────────┬────────────────┐
+         │               │           │           │               │                │
+         ▼               ▼           ▼           ▼               ▼                ▼
+    ┌────────┐    ┌──────────┐ ┌─────────┐ ┌──────────┐  ┌────────────┐  ┌──────────────┐
+    │ Go CI  │    │   Unit   │ │Coverage │ │   Go     │  │     PR     │  │   (parallel  │
+    │        │    │  Tests   │ │  Check  │ │ Security │  │Validation  │  │  workflows)  │
+    └───┬────┘    └─────┬────┘ └────┬────┘ └────┬─────┘  └────────────┘  └──────────────┘
+        │               │           │           │          (PRs only)
+        └───────────────┴───────────┴───────────┘
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │   CI Gate    │ ◄────── Quality Gatekeeper
+                 └──────┬───────┘
+                        │
+                        ▼
+                  ┌──────────┐
+                  │All Pass? │
+                  └────┬─────┘
+                       │
+              ┌────────┴────────┐
+              │                 │
+           YES│                 │NO
+              ▼                 ▼
+      ┌───────────────┐   ┌─────────────┐
+      │   Semantic    │   │   Block &   │
+      │    Release    │   │   Notify    │
+      └───────┬───────┘   └─────────────┘
+              │
+              ▼
+         ┌──────────┐
+         │Create Tag│
+         └─────┬────┘
+               │
+               ▼
+         ┌──────────────┐
+         │  Go Release  │
+         └──────┬───────┘
+                │
+     ┌──────────┼──────────┐
+     │          │          │
+     ▼          ▼          ▼
+┌─────────┐ ┌────────┐ ┌──────────┐
+│  Build  │ │ Create │ │ Generate │
+│Binaries │ │Packages│ │Checksums │
+└────┬────┘ └───┬────┘ └────┬─────┘
+     │          │          │
+     └──────────┴──────────┘
+                │
+                ▼
+        ┌───────────────┐
+        │Upload Assets  │
+        └───────┬───────┘
+                │
+                ▼
+        ┌───────────────┐
+        │GitHub Release │ ◄────── Final Artifact
+        └───────────────┘
 ```
 
 ## Status Badges
