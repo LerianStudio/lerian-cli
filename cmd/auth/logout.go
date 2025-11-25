@@ -3,8 +3,9 @@ package auth
 import (
 	"fmt"
 
-	"github.com/lerian-studio/lerian-cli/internal/config"
 	"github.com/spf13/cobra"
+
+	"github.com/lerian-studio/lerian-cli/internal/config"
 )
 
 var logoutCmd = &cobra.Command{

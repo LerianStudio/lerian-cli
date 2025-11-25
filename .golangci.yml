@@ -67,7 +67,7 @@ linters:
 linters-settings:
   errcheck:
     check-type-assertions: true
-    check-blank: true
+    check-blank: false  # Allow _ = for intentionally ignored errors
     exclude-functions:
       - (*database/sql.DB).Close
       - (*database/sql.Rows).Close
@@ -214,6 +214,7 @@ issues:
         - funlen
         - gocognit
         - lll
+        - errcheck  # Allow unchecked errors in test setup/teardown
 
     # Exclude specific gosec rules in test files
     - path: _test\.go

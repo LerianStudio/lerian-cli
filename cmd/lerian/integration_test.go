@@ -1,6 +1,5 @@
 //go:build !windows
 
-//nolint:errcheck // Integration test - error checking not critical for cleanup
 package main
 
 import (

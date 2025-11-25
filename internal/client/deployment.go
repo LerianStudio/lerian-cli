@@ -108,8 +108,5 @@ func (c *Client) GetDeploymentByID(id string) (*Deployment, error) {
 // DeleteDeployment deletes a deployment by ID
 func (c *Client) DeleteDeployment(id string) error {
 	path := fmt.Sprintf("/api/deployments/%s", id)
-	if err := c.DoRequest("DELETE", path, nil, nil); err != nil {
-		return err
-	}
-	return nil
+	return c.DoRequest("DELETE", path, nil, nil)
 }

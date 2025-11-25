@@ -1,4 +1,3 @@
-//nolint:errcheck // Test file - error checking not critical for test setup
 package output
 
 import (

@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lerian-studio/lerian-cli/internal/version"
 	"github.com/spf13/cobra"
+
+	"github.com/lerian-studio/lerian-cli/internal/version"
 )
 
 var (

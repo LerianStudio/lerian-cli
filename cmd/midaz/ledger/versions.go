@@ -5,9 +5,10 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/spf13/cobra"
+
 	"github.com/lerian-studio/lerian-cli/internal/client"
 	"github.com/lerian-studio/lerian-cli/internal/config"
-	"github.com/spf13/cobra"
 )
 
 var versionsCmd = &cobra.Command{

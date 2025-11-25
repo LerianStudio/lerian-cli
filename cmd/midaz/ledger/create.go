@@ -8,9 +8,10 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/google/uuid"
+	"github.com/spf13/cobra"
+
 	"github.com/lerian-studio/lerian-cli/internal/client"
 	"github.com/lerian-studio/lerian-cli/internal/config"
-	"github.com/spf13/cobra"
 )
 
 var (
@@ -55,7 +56,8 @@ func init() {
 	createCmd.Flags().StringVar(&createRegion, "region", "", "Region for deployment (required)")
 	createCmd.Flags().StringVar(&createEnv, "env", "",
 		"Environment type: dev, staging, prod (required unless using --sandbox)")
-	createCmd.Flags().StringVar(&createAgentID, "agent-id", "", "Agent ID (required for private mode, optional for SaaS)")
+	createCmd.Flags().StringVar(&createAgentID, "agent-id", "",
+		"Agent ID (required for private mode, optional for SaaS)")
 	_ = createCmd.MarkFlagRequired("name")
 	_ = createCmd.MarkFlagRequired("region")
 
@@ -260,7 +262,9 @@ func validateRegion(region, mode string) error {
 	} else {
 		// SaaS mode should use standard AWS region format or private- prefix
 		if !awsRegionPattern.MatchString(region) && !privateRegionPattern.MatchString(region) {
-			return fmt.Errorf("region must match AWS format (e.g., us-east-1) or private format (e.g., private-us-east-1)")
+			return fmt.Errorf(
+				"region must match AWS format (e.g., us-east-1) or private format (e.g., private-us-east-1)",
+			)
 		}
 	}
 

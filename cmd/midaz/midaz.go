@@ -1,8 +1,9 @@
 package midaz
 
 import (
-	"github.com/lerian-studio/lerian-cli/cmd/midaz/ledger"
 	"github.com/spf13/cobra"
+
+	"github.com/lerian-studio/lerian-cli/cmd/midaz/ledger"
 )
 
 // MidazCmd represents the midaz command
