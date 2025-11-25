@@ -1,3 +1,10 @@
+## [1.0.0-beta.5](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.4...v1.0.0-beta.5) (2025-11-25)
+
+
+### Bug Fixes
+
+* downgrade .goreleaser.yml to version 1 format for compatibility with goreleaser v1.x ([f8fd883](https://github.com/LerianStudio/lerian-cli/commit/f8fd8836dbeaaf706bb942ab3f03ed95ce796e46))
+
 ## [1.0.0-beta.4](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.3...v1.0.0-beta.4) (2025-11-25)
 
 
