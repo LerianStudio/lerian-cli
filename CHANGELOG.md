@@ -1,3 +1,10 @@
+## [1.0.0-beta.7](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.6...v1.0.0-beta.7) (2025-11-25)
+
+
+### Bug Fixes
+
+* comment out sboms and signs sections requiring syft and cosign ([b31581d](https://github.com/LerianStudio/lerian-cli/commit/b31581d1649970dec6762245453ca4f9747dd1e3))
+
 ## [1.0.0-beta.6](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.5...v1.0.0-beta.6) (2025-11-25)
 
 
