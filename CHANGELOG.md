@@ -1,3 +1,10 @@
+## [1.0.0-beta.10](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.9...v1.0.0-beta.10) (2025-11-25)
+
+
+### Bug Fixes
+
+* use append mode for goreleaser release since semantic-release creates the release first ([ff33f5a](https://github.com/LerianStudio/lerian-cli/commit/ff33f5aa20900cd283e51586fea58ad94d860dac))
+
 ## [1.0.0-beta.9](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.8...v1.0.0-beta.9) (2025-11-25)
 
 
