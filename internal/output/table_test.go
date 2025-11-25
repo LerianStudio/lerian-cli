@@ -1,3 +1,4 @@
+//nolint:errcheck // Test file - error checking not critical for test setup
 package output
 
 import (
@@ -180,8 +181,8 @@ func TestPrinter_printTable(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "empty slice",
-			data: []map[string]interface{}{},
+			name:    "empty slice",
+			data:    []map[string]interface{}{},
 			wantErr: false,
 		},
 		{
@@ -200,8 +201,8 @@ func TestPrinter_printTable(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "unknown type fallback to JSON",
-			data: "string data",
+			name:    "unknown type fallback to JSON",
+			data:    "string data",
 			wantErr: false,
 		},
 	}
@@ -405,15 +406,15 @@ func TestPrinter_PrintLedgerDetails(t *testing.T) {
 			name:   "json format",
 			format: "json",
 			ledger: map[string]interface{}{
-				"id":                  "123",
-				"name":                "test-ledger",
-				"region":              "us-east-1",
-				"status":              "active",
-				"helm_release_name":   "release-1",
-				"helm_chart":          "chart-1",
-				"helm_namespace":      "namespace-1",
-				"created_at":          "2025-11-25",
-				"updated_at":          "2025-11-25",
+				"id":                "123",
+				"name":              "test-ledger",
+				"region":            "us-east-1",
+				"status":            "active",
+				"helm_release_name": "release-1",
+				"helm_chart":        "chart-1",
+				"helm_namespace":    "namespace-1",
+				"created_at":        "2025-11-25",
+				"updated_at":        "2025-11-25",
 			},
 			wantErr: false,
 		},
@@ -421,15 +422,15 @@ func TestPrinter_PrintLedgerDetails(t *testing.T) {
 			name:   "table format",
 			format: "table",
 			ledger: map[string]interface{}{
-				"id":                  "123",
-				"name":                "test-ledger",
-				"region":              "us-east-1",
-				"status":              "active",
-				"helm_release_name":   "release-1",
-				"helm_chart":          "chart-1",
-				"helm_namespace":      "namespace-1",
-				"created_at":          "2025-11-25",
-				"updated_at":          "2025-11-25",
+				"id":                "123",
+				"name":              "test-ledger",
+				"region":            "us-east-1",
+				"status":            "active",
+				"helm_release_name": "release-1",
+				"helm_chart":        "chart-1",
+				"helm_namespace":    "namespace-1",
+				"created_at":        "2025-11-25",
+				"updated_at":        "2025-11-25",
 			},
 			wantErr: false,
 		},

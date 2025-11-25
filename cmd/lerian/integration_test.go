@@ -1,3 +1,7 @@
+//go:build !windows
+// +build !windows
+
+//nolint:errcheck // Integration test - error checking not critical for cleanup
 package main
 
 import (
@@ -5,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -19,11 +22,8 @@ func TestMain(m *testing.M) {
 	// Build the binary
 	tmpDir := os.TempDir()
 	binaryPath = filepath.Join(tmpDir, "lerian-test")
-	if runtime.GOOS == "windows" {
-		binaryPath += ".exe"
-	}
 
-	// Build command - explicitly specify main.go to avoid Windows path issues
+	// Build command - explicitly specify main.go
 	mainFile := filepath.Join("cmd", "lerian", "main.go")
 	buildCmd := exec.Command("go", "build", "-o", binaryPath, mainFile)
 	buildCmd.Stdout = os.Stdout
