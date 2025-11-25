@@ -1,7 +1,15 @@
 name: Semantic Release
 
+# This workflow creates releases based on conventional commits
+# It triggers automatically after all CI checks pass on release branches
+# Semantic-release will analyze commits and only create a release if needed
+
 on:
-  push:
+  workflow_run:
+    workflows:
+      - "Go CI"
+    types:
+      - completed
     branches:
       - develop
       - main
@@ -14,47 +22,12 @@ permissions:
   pull-requests: write
 
 jobs:
-  # Wait for all CI checks to complete successfully
-  wait-for-checks:
-    name: Wait for CI Checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Wait for Go CI
-        uses: lewagon/wait-on-check-action@v1.3.4
-        with:
-          ref: ${{ github.ref }}
-          check-name: 'ci / All Checks Pass'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
-
-      - name: Wait for Go Security
-        uses: lewagon/wait-on-check-action@v1.3.4
-        with:
-          ref: ${{ github.ref }}
-          check-name: 'security / Security Summary'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
-
-      - name: Wait for Unit Tests
-        uses: lewagon/wait-on-check-action@v1.3.4
-        with:
-          ref: ${{ github.ref }}
-          check-name: 'unit-tests / Unit Tests'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
-
-      - name: Wait for Coverage Check
-        uses: lewagon/wait-on-check-action@v1.3.4
-        with:
-          ref: ${{ github.ref }}
-          check-name: 'coverage / Coverage Check'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
-
-  # Call shared release workflow after checks pass
   release:
     name: Create Release
-    needs: wait-for-checks
+    # Only run if Go CI completed successfully (all other checks are dependencies of Go CI)
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@feature/go-workflows
     secrets:
       lerian_studio_push_bot_app_id: ${{ secrets.LERIAN_STUDIO_PUSH_BOT_APP_ID }}
