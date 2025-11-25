@@ -1,3 +1,10 @@
+## [1.0.0-beta.8](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.7...v1.0.0-beta.8) (2025-11-25)
+
+
+### Bug Fixes
+
+* comment out docker sections requiring Dockerfile ([559ab1f](https://github.com/LerianStudio/lerian-cli/commit/559ab1f4c5586984626ca9d3aad99962f40e4a3a))
+
 ## [1.0.0-beta.7](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.6...v1.0.0-beta.7) (2025-11-25)
 
 
