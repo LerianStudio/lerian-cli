@@ -272,18 +272,18 @@ signs:
       - '--yes'
     output: true
 
-announce:
-  skip: "{{ gt .Patch 0 }}"
-  github:
-    enabled: true
-    message_template: |
-      🎉 Lerian CLI {{ .Tag }} is out!
-
-      {{ .ReleaseNotes }}
-
-      Install: `go install github.com/lerian-studio/lerian-cli/cmd/lerian@{{ .Tag }}`
-
-      Or download binaries from: {{ .ReleaseURL }}
+# announce:
+#   skip: "{{ gt .Patch 0 }}"
+#   github:
+#     enabled: true
+#     message_template: |
+#       🎉 Lerian CLI {{ .Tag }} is out!
+#
+#       {{ .ReleaseNotes }}
+#
+#       Install: `go install github.com/lerian-studio/lerian-cli/cmd/lerian@{{ .Tag }}`
+#
+#       Or download binaries from: {{ .ReleaseURL }}
 
 milestones:
   - repo:
