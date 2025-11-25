@@ -55,7 +55,7 @@ The Lerian CLI uses **GitHub Actions** for automation. When you push code, creat
 **When it runs:** On every push to `main` or `develop` branches, and on every pull request
 
 **What it does:**
-1. **Test Matrix** - Runs tests on Go 1.25 across multiple operating systems (Ubuntu, macOS, Windows)
+1. **Test Matrix** - Runs tests on Go 1.23 across multiple operating systems (Ubuntu, macOS, Windows)
 2. **Build** - Compiles binaries for all supported platforms
 3. **Lint** - Checks code quality with golangci-lint (40+ linters)
 4. **Security** - Scans for security issues with Gosec

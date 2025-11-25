@@ -47,7 +47,7 @@ The CI/CD workflows have been reorganized from monolithic, mixed-purpose files t
 **Purpose:** Core CI operations for Go projects
 
 **Jobs:**
-- **test** - Multi-matrix testing (Go 1.25 × Linux, macOS, Windows)
+- **test** - Multi-matrix testing (Go 1.23 × Linux, macOS, Windows)
 - **lint** - golangci-lint with 40+ linters
 - **build** - Cross-platform binary builds
 - **verify-module** - Go module verification
