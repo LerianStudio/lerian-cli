@@ -1,3 +1,10 @@
+## [1.0.0-beta.6](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.5...v1.0.0-beta.6) (2025-11-25)
+
+
+### Bug Fixes
+
+* comment out announce.github section incompatible with goreleaser v1.x ([6ffaa71](https://github.com/LerianStudio/lerian-cli/commit/6ffaa710e188db30f03d6d458b7d8456cf736eaf))
+
 ## [1.0.0-beta.5](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.4...v1.0.0-beta.5) (2025-11-25)
 
 
