@@ -1,3 +1,10 @@
+## [1.0.0-beta.4](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.3...v1.0.0-beta.4) (2025-11-25)
+
+
+### Bug Fixes
+
+* pass manage_token secret to go-release workflow ([86dce02](https://github.com/LerianStudio/lerian-cli/commit/86dce02ecd2ddf1678a9ee2a05f93044333f5fef))
+
 ## [1.0.0-beta.3](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.2...v1.0.0-beta.3) (2025-11-25)
 
 
