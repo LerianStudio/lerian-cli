@@ -1,0 +1,32 @@
+name: Go Security
+
+on:
+  push:
+    branches: [develop, release-candidate, main]
+  pull_request:
+    branches: [develop, release-candidate, main]
+  schedule:
+    # Run security scans every Monday at 00:00 UTC
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security:
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-security.yml@feature/go-workflows
+    with:
+      go_version: '1.25'
+      enable_dependency_review: true
+      enable_gosec: true
+      enable_govulncheck: true
+      enable_nancy: true
+      enable_trivy: true
+      enable_secret_scan: true
+      enable_license_check: true
+      enable_sbom: true
+      trivy_severity: 'CRITICAL,HIGH'
+      upload_sarif: true
+      fail_on_security_issues: true

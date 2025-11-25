@@ -2,6 +2,8 @@
 
 Welcome to the Lerian CLI documentation! This directory contains comprehensive guides, references, and examples for using the Lerian command-line interface.
 
+Lerian CLI is a unified command-line tool for managing Lerian platform products. Currently supports **Midaz** (ledger system), with more products coming soon.
+
 ## Documentation Structure
 
 ### Getting Started
@@ -12,17 +14,22 @@ Welcome to the Lerian CLI documentation! This directory contains comprehensive g
 
 ### Command Reference
 - [Authentication Commands](commands/auth.md) *(coming soon)*
-- [Ledger Management](commands/ledger.md) *(coming soon)*
-- [Operations Commands](commands/operations.md) *(coming soon)*
+- [Midaz Commands](commands/midaz.md) *(coming soon)*
+  - [Ledger Management](commands/midaz/ledger.md) *(coming soon)*
+  - [Operations](commands/midaz/operations.md) *(coming soon)*
 - [Global Flags](commands/global-flags.md) *(coming soon)*
 
 ### User Guides
-- [Creating Ledgers](guides/creating-ledgers.md) *(coming soon)*
+
+**General:**
 - [Managing Profiles](guides/managing-profiles.md) *(coming soon)*
-- [Multi-Region Deployments](guides/multi-region.md) *(coming soon)*
-- [Private Deployments](guides/private-deployments.md) *(coming soon)*
 - [Debugging and Troubleshooting](guides/debugging.md) *(coming soon)*
 - [CI/CD Integration](guides/cicd-integration.md) *(coming soon)*
+
+**Midaz-Specific:**
+- [Creating Midaz Ledgers](guides/midaz/creating-ledgers.md) *(coming soon)*
+- [Multi-Region Deployments](guides/midaz/multi-region.md) *(coming soon)*
+- [Private Deployments](guides/midaz/private-deployments.md) *(coming soon)*
 
 ### Architecture
 - [Overview](architecture/overview.md) *(coming soon)*
@@ -35,8 +42,12 @@ Welcome to the Lerian CLI documentation! This directory contains comprehensive g
 - [Contributing Guidelines](../CONTRIBUTING.md)
 - [Code Structure](development/code-structure.md) *(coming soon)*
 - [Adding Commands](development/adding-commands.md) *(coming soon)*
-- [Testing Guide](development/testing.md) *(coming soon)*
+- [Testing Strategy](testing-strategy.md) - Comprehensive testing guide
 - [Release Process](development/release-process.md) *(coming soon)*
+
+### CI/CD
+- [CI/CD Overview](ci-cd/README.md) - Workflow documentation
+- [Workflow Summary](ci-cd/WORKFLOW_SUMMARY.md) - Complete workflow guide
 
 ### API Reference
 - [HTTP Client](api/http-client.md) *(coming soon)*
@@ -88,38 +99,46 @@ See [Quick Start Guide](getting-started/quickstart.md) *(coming soon)* for detai
 
 ## Command Overview
 
-### Authentication
+### Authentication (Global)
 
 | Command | Description |
 |---------|-------------|
 | `lerian auth login` | Authenticate with API key and tenant ID |
 | `lerian auth logout` | Clear authentication credentials |
 
-### Ledger Management
+### Midaz Product
+
+All Midaz commands use the `lerian midaz` prefix.
+
+**Ledger Management:**
 
 | Command | Description |
 |---------|-------------|
-| `lerian midaz ledger create` | Create a new ledger deployment |
-| `lerian midaz ledger list` | List all ledgers |
-| `lerian midaz ledger describe <id>` | Get ledger details |
-| `lerian midaz ledger delete <id>` | Delete a ledger |
-| `lerian midaz ledger versions` | List available versions |
+| `lerian midaz ledger create` | Create a new Midaz ledger deployment |
+| `lerian midaz ledger list` | List all Midaz ledgers |
+| `lerian midaz ledger describe <id>` | Get Midaz ledger details |
+| `lerian midaz ledger delete <id>` | Delete a Midaz ledger |
+| `lerian midaz ledger versions` | List available Midaz versions |
 
-### Operations
+**Ledger Operations:**
 
 | Command | Description |
 |---------|-------------|
-| `lerian midaz ledger logs <id>` | View ledger logs |
-| `lerian midaz ledger port-forward <id>` | Forward port to ledger |
-| `lerian midaz ledger exec <id> <sql>` | Execute SQL query |
-| `lerian midaz ledger backup <id>` | Create database backup |
-| `lerian midaz ledger events <id>` | View Kubernetes events |
+| `lerian midaz ledger logs <id>` | View Midaz ledger logs |
+| `lerian midaz ledger port-forward <id>` | Forward port to Midaz ledger |
+| `lerian midaz ledger exec <id> <sql>` | Execute SQL query on Midaz ledger |
+| `lerian midaz ledger backup <id>` | Create Midaz database backup |
+| `lerian midaz ledger events <id>` | View Kubernetes events for Midaz ledger |
 
 See [Command Reference](commands/) for complete documentation.
 
 ## Concepts
 
-### Deployment Modes
+### Midaz Product
+
+Midaz is a ledger system for managing assets, operations, and multi-tenancy environments. It's the first product supported by Lerian CLI.
+
+### Midaz Deployment Modes
 
 **SaaS Mode** (default)
 - Multi-tenant deployments on Lerian-managed infrastructure
@@ -152,7 +171,7 @@ See [Command Reference](commands/) for complete documentation.
 - Custom regions connected via Lerian Agent
 - Use `private-*` prefix (e.g., `private-us-west-2`)
 
-### Ledger Sizes
+### Midaz Ledger Sizes
 
 | Size | TPS | Resources | Use Case |
 |------|-----|-----------|----------|
@@ -187,7 +206,9 @@ lerian --profile production ledger list
 
 ## Examples
 
-### Creating a Development Ledger
+### Midaz Examples
+
+**Creating a Development Ledger:**
 
 ```bash
 lerian midaz ledger create \
@@ -197,7 +218,7 @@ lerian midaz ledger create \
   --size test
 ```
 
-### Creating a Production Ledger with Multi-AZ
+**Creating a Production Ledger with Multi-AZ:**
 
 ```bash
 lerian midaz ledger create \
@@ -209,7 +230,7 @@ lerian midaz ledger create \
   --multi-az
 ```
 
-### Creating a Private Ledger
+**Creating a Private Ledger:**
 
 ```bash
 lerian midaz ledger create \
@@ -221,13 +242,13 @@ lerian midaz ledger create \
   --agent-id <agent-uuid>
 ```
 
-### Viewing Logs in Real-Time
+**Viewing Logs in Real-Time:**
 
 ```bash
 lerian midaz ledger logs <ledger-id> --follow --tail 100
 ```
 
-### Port Forwarding for Development
+**Port Forwarding for Development:**
 
 ```bash
 # Forward local port 8080 to ledger port 8080
@@ -290,18 +311,20 @@ We welcome contributions! Please see:
 The following documentation is planned:
 
 ### Phase 1 (Current)
-- ✅ Documentation index (this file)
-- ✅ README with quick start
-- ✅ Contributing guidelines
-- ✅ Code of conduct
-- ✅ Security policy
-- ✅ Changelog
+- Documentation index (this file)
+- README with quick start
+- Contributing guidelines
+- Code of conduct
+- Security policy
+- Changelog
+- Testing strategy
+- CI/CD workflows
 
 ### Phase 2 (Next)
-- [ ] Getting started guides
-- [ ] Command reference documentation
-- [ ] User guides for common workflows
-- [ ] Architecture documentation
+- Getting started guides
+- Command reference documentation
+- User guides for common workflows
+- Architecture documentation
 
 ### Phase 3 (Future)
 - [ ] API reference documentation

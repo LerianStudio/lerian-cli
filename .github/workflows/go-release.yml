@@ -1,0 +1,24 @@
+name: Go Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-release.yml@feature/go-workflows
+    with:
+      go_version: '1.25'
+      goreleaser_distribution: 'goreleaser'
+      goreleaser_version: 'latest'
+      run_tests_before_release: true
+      enable_docker: false
+      enable_homebrew: false
+      enable_notifications: true
+    secrets:
+      github_token: ${{ secrets.MANAGE_TOKEN }}

@@ -1,20 +1,36 @@
 # Lerian CLI
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.21%2B-00ADD8?logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](https://go.dev/)
 [![GitHub Release](https://img.shields.io/badge/release-v0.1.0-green.svg)](https://github.com/lerian-studio/lerian-cli/releases)
 
-Official command-line interface for the Lerian platform. Manage Midaz ledger deployments, interact with your ledgers, and streamline your financial infrastructure operations.
+Official command-line interface for the Lerian platform. Manage your infrastructure products and deployments.
 
-## Features
+## Supported Products
 
-- 🚀 **Ledger Management** - Create, list, describe, and delete Midaz ledger deployments
-- 🔐 **Authentication** - Profile-based authentication with API key support
-- ☁️ **Multi-Region Support** - Deploy to SaaS regions or private infrastructure
-- 🎯 **Multiple Deployment Modes** - SaaS, private, and sandbox environments
-- 📊 **Operations Tools** - Logs, port-forwarding, SQL execution, backups, and events
-- 📝 **Multiple Output Formats** - Table, JSON, and YAML output options
-- 🔧 **Kubernetes Integration** - Direct access to deployed resources
+### Midaz (Available Now)
+
+Midaz is a ledger system for managing assets, operations, and multi-tenancy environments.
+
+**Features:**
+- **Ledger Management** - Create, list, describe, and delete ledger deployments
+- **Multi-Region Support** - Deploy to SaaS regions or private infrastructure
+- **Multiple Deployment Modes** - SaaS, private, and sandbox environments
+- **Operations Tools** - Logs, port-forwarding, SQL execution, backups, and events
+- **Kubernetes Integration** - Direct access to deployed resources
+
+### Future Products
+
+- **Flowker** - Coming soon
+- **Reporter** - Coming soon
+- **Tracer** - Coming soon
+- **Fees** - Coming soon
+
+## Core Features
+
+- **Authentication** - Profile-based authentication with API key support
+- **Multiple Output Formats** - Table, JSON, and YAML output options
+- **Multi-Product Support** - Unified CLI for all Lerian products
 
 ## Quick Start
 
@@ -45,7 +61,7 @@ Download the latest release for your platform from the [releases page](https://g
      --tenant-id YOUR_TENANT_ID
    ```
 
-2. **Create Your First Ledger**
+2. **Create Your First Midaz Ledger**
    ```bash
    lerian midaz ledger create \
      --name my-first-ledger \
@@ -53,12 +69,12 @@ Download the latest release for your platform from the [releases page](https://g
      --env dev
    ```
 
-3. **List Your Ledgers**
+3. **List Your Midaz Ledgers**
    ```bash
    lerian midaz ledger list
    ```
 
-4. **Get Ledger Details**
+4. **Get Midaz Ledger Details**
    ```bash
    lerian midaz ledger describe <ledger-id>
    ```
@@ -93,9 +109,13 @@ lerian auth login \
 lerian auth logout
 ```
 
-### Ledger Management
+### Midaz Product Commands
 
-#### Create Ledger
+All Midaz commands start with `lerian midaz`.
+
+#### Ledger Management
+
+##### Create Ledger
 
 **SaaS Deployment (Default):**
 ```bash
@@ -137,7 +157,7 @@ lerian midaz ledger create \
 - `--chart-version` - Specific Helm chart version
 - `--agent-id` - Agent ID (required for private mode)
 
-#### List Ledgers
+##### List Ledgers
 
 ```bash
 # Table format (default)
@@ -153,21 +173,21 @@ lerian midaz ledger list -o yaml
 lerian midaz ledger list --profile production
 ```
 
-#### Describe Ledger
+##### Describe Ledger
 
 ```bash
 lerian midaz ledger describe <ledger-id>
 ```
 
-#### Delete Ledger
+##### Delete Ledger
 
 ```bash
 lerian midaz ledger delete <ledger-id>
 ```
 
-### Operations
+#### Operations
 
-#### View Logs
+##### View Logs
 
 ```bash
 # Show logs
@@ -180,35 +200,35 @@ lerian midaz ledger logs <ledger-id> --follow
 lerian midaz ledger logs <ledger-id> --tail 100
 ```
 
-#### Port Forwarding
+##### Port Forwarding
 
 ```bash
 # Forward local port 8080 to ledger service port 8080
 lerian midaz ledger port-forward <ledger-id> 8080:8080
 ```
 
-#### Execute SQL
+##### Execute SQL
 
 ```bash
 # Run SQL query
-lerian midaz ledger exec <ledger-id> "SELECT COUNT(*) FROM transactions;"
+lerian midaz ledger exec <ledger-id> "SELECT COUNT(*) FROM accounts;"
 ```
 
-#### Backup Database
+##### Backup Database
 
 ```bash
 # Create backup
 lerian midaz ledger backup <ledger-id> --output ./backup.sql
 ```
 
-#### View Kubernetes Events
+##### View Kubernetes Events
 
 ```bash
 # View events for troubleshooting
 lerian midaz ledger events <ledger-id>
 ```
 
-#### Check Available Versions
+##### Check Available Versions
 
 ```bash
 # List available app and chart versions
@@ -250,7 +270,9 @@ lerian auth login --profile production --api-url ... --api-key ... --tenant-id .
 lerian --config /path/to/config.yaml ledger list
 ```
 
-## Deployment Modes
+## Midaz Deployment Modes
+
+Midaz ledgers support three deployment modes:
 
 ### SaaS Mode (Default)
 Multi-tenant deployment on Lerian-managed infrastructure.
@@ -287,7 +309,7 @@ Temporary ledger for testing and trials.
 - View available private regions: `lerian agent list` (future)
 - Requires Lerian Agent deployment
 
-## Ledger Sizes
+## Midaz Ledger Sizes
 
 | Size | TPS | Resources | Use Case |
 |------|-----|-----------|----------|
@@ -339,11 +361,110 @@ lerian midaz ledger describe <ledger-id>
 lerian midaz ledger events <ledger-id>
 ```
 
+## Testing
+
+### Test Coverage
+
+Current test coverage: **~86%** (83.7% for config package, 90.9% for version package)
+
+Target coverage: **80%+** for all packages
+
+### Running Tests
+
+```bash
+# Run all tests with coverage
+make test
+
+# Run unit tests only (fast)
+make test-unit
+
+# Run tests with coverage report
+make test-coverage
+
+# Run tests with race detector
+make test-race
+
+# Run tests in verbose mode
+make test-verbose
+
+# Run benchmarks
+make test-bench
+```
+
+### Test Organization
+
+Tests follow Go best practices:
+- **Unit tests**: Fast, isolated tests for individual functions
+- **Table-driven tests**: Parameterized test cases for comprehensive coverage
+- **Integration tests**: Tests with real file I/O and system interactions
+- **Benchmark tests**: Performance testing
+
+### Coverage by Package
+
+| Package | Coverage | Target | Status |
+|---------|----------|--------|--------|
+| `internal/version` | 90.9% | 90%+ | Complete |
+| `internal/config` | 83.7% | 80%+ | Complete |
+| `internal/output` | 0% | 80%+ | In Progress |
+| `internal/kubectl` | 0% | 70%+ | Planned |
+| `internal/client` | 0% | 70%+ | Planned |
+| `cmd/auth` | 0% | 60%+ | Planned |
+| `cmd/midaz/ledger` | 0% | 60%+ | Planned |
+
+### Test Examples
+
+**Unit Test Example** (`internal/config/config_test.go`):
+```go
+func TestLoad_ValidConfigFile(t *testing.T) {
+    // Setup: Create temporary config
+    tmpDir := t.TempDir()
+    configPath := filepath.Join(tmpDir, ".lerian", "config.yaml")
+
+    // Test: Load and verify
+    config, err := Load()
+
+    if err != nil {
+        t.Fatalf("Load() error = %v", err)
+    }
+}
+```
+
+**Table-Driven Test Example**:
+```go
+func TestGetProfile(t *testing.T) {
+    tests := []struct {
+        name        string
+        config      *Config
+        profileName string
+        wantErr     bool
+    }{
+        {"valid profile", validConfig, "test", false},
+        {"profile not found", emptyConfig, "missing", true},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            profile, err := tt.config.GetProfile(tt.profileName)
+            // assertions...
+        })
+    }
+}
+```
+
+### Continuous Integration
+
+Tests run automatically on:
+- Pull requests to `develop`, `release-candidate`, and `main`
+- Push to `develop`, `release-candidate`, and `main`
+- Scheduled weekly security scans
+
+See `.github/workflows/` for CI/CD configuration.
+
 ## Development
 
 ### Prerequisites
 
-- Go 1.21 or higher
+- Go 1.25 or higher
 - kubectl (for Kubernetes operations)
 - Make
 

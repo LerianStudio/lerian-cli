@@ -1,0 +1,23 @@
+name: Go CI
+
+on:
+  push:
+    branches: [develop, release-candidate, main]
+  pull_request:
+    branches: [develop, release-candidate, main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ci:
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-ci.yml@feature/go-workflows
+    with:
+      go_versions: '["1.25"]'
+      operating_systems: '["ubuntu-latest", "macos-latest", "windows-latest"]'
+      enable_cross_platform_build: true
+      build_path: './cmd/lerian'
+      enable_coverage_comment: true
+      check_docs: true
+      check_module_tidy: true

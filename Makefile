@@ -1,4 +1,4 @@
-.PHONY: build clean install test deps help
+.PHONY: build clean install test test-unit test-integration test-coverage test-race test-verbose test-bench lint fmt deps help
 
 # Variables
 BINARY_NAME=lerian
@@ -50,10 +50,54 @@ clean:
 	@rm -f ${BINARY_NAME}
 	@echo "Clean complete"
 
-# Run tests
+# Run all tests
 test:
-	@echo "Running tests..."
-	go test -v ./...
+	@echo "Running all tests..."
+	go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+
+# Run unit tests only
+test-unit:
+	@echo "Running unit tests..."
+	go test -v -short ./...
+
+# Run integration tests only
+test-integration:
+	@echo "Running integration tests..."
+	go test -v -run Integration ./...
+
+# Run tests with coverage report
+test-coverage:
+	@echo "Running tests with coverage..."
+	go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+	go tool cover -html=coverage.txt -o coverage.html
+	@echo "Coverage report generated: coverage.html"
+
+# Run tests with race detector
+test-race:
+	@echo "Running tests with race detector..."
+	go test -v -race ./...
+
+# Run tests in verbose mode
+test-verbose:
+	@echo "Running tests in verbose mode..."
+	go test -v -count=1 ./...
+
+# Run benchmarks
+test-bench:
+	@echo "Running benchmarks..."
+	go test -v -bench=. -benchmem ./...
+
+# Run linter
+lint:
+	@echo "Running linter..."
+	@which golangci-lint > /dev/null || (echo "golangci-lint not installed. Run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" && exit 1)
+	golangci-lint run --timeout=5m
+
+# Format code
+fmt:
+	@echo "Formatting code..."
+	go fmt ./...
+	gofmt -s -w .
 
 # Run the application
 run: build
@@ -62,10 +106,25 @@ run: build
 # Show help
 help:
 	@echo "Available targets:"
-	@echo "  make build    - Build the binary"
-	@echo "  make install  - Install the binary to GOPATH/bin"
-	@echo "  make clean    - Remove build artifacts"
-	@echo "  make test     - Run tests"
-	@echo "  make deps     - Install dependencies"
-	@echo "  make run      - Build and run the application"
-	@echo "  make help     - Show this help message"
+	@echo ""
+	@echo "Build Commands:"
+	@echo "  make build              - Build the binary"
+	@echo "  make install            - Install the binary to GOPATH/bin"
+	@echo "  make clean              - Remove build artifacts"
+	@echo "  make deps               - Install dependencies"
+	@echo "  make run                - Build and run the application"
+	@echo ""
+	@echo "Test Commands:"
+	@echo "  make test               - Run all tests with coverage and race detector"
+	@echo "  make test-unit          - Run unit tests only (fast)"
+	@echo "  make test-integration   - Run integration tests only"
+	@echo "  make test-coverage      - Run tests and generate HTML coverage report"
+	@echo "  make test-race          - Run tests with race detector"
+	@echo "  make test-verbose       - Run tests in verbose mode"
+	@echo "  make test-bench         - Run benchmarks"
+	@echo ""
+	@echo "Code Quality:"
+	@echo "  make lint               - Run golangci-lint"
+	@echo "  make fmt                - Format code with gofmt"
+	@echo ""
+	@echo "  make help               - Show this help message"
