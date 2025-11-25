@@ -111,9 +111,7 @@ release:
   prerelease: auto
   mode: replace
   header: |
-    ## Lerian CLI {{ .Tag }} ({{ .Date }})
-
-    This release contains {{ len .Commits }} commit(s) since {{ .PreviousTag }}.
+    ## Lerian CLI {{ .Tag }}
 
     ### Installation
 
@@ -132,7 +130,7 @@ release:
 
     ### What's Changed
   footer: |
-    **Full Changelog**: https://github.com/lerian-studio/lerian-cli/compare/{{ .PreviousTag }}...{{ .Tag }}
+    **Full Changelog**: https://github.com/lerian-studio/lerian-cli/releases/tag/{{ .Tag }}
 
     ---
 
