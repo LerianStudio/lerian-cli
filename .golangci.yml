@@ -100,6 +100,9 @@ linters-settings:
     confidence: medium
     excludes:
       - G104 # Audit errors not checked (covered by errcheck)
+      - G204 # Subprocess launched with variable (acceptable for CLI kubectl wrapper)
+      - G301 # Directory permissions (0755 is acceptable for user config dirs)
+      - G304 # File inclusion via variable (acceptable for config file reading)
     config:
       G301: "0750"  # Directory permissions
       G302: "0640"  # File permissions
