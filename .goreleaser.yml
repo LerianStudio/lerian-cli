@@ -128,10 +128,10 @@ release:
 #
 #       # Install shell completions
 #       generate_completions_from_executable(bin/"lerian", "completion")
-
-      # Install man pages (if we add them in future)
-      # man1.install Dir["man/*.1"]
-    skip_upload: auto
+#
+#       # Install man pages (if we add them in future)
+#       # man1.install Dir["man/*.1"]
+#    skip_upload: auto
 
 nfpms:
   - id: default
