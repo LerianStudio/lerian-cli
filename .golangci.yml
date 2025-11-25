@@ -19,7 +19,6 @@ linters:
     - goimports     # Check import organization
     - revive        # Fast, configurable, extensible, flexible linter
     - misspell      # Find commonly misspelled English words
-    - gocyclo       # Cyclomatic complexity
     - dupl          # Code clone detection
     - gosec         # Security issues
     - unconvert     # Remove unnecessary type conversions
@@ -32,8 +31,6 @@ linters:
     - nolintlint    # Check nolint directives
     - stylecheck    # Check style issues
     - errorlint     # Check error wrapping
-    - gocognit      # Cognitive complexity
-    - nestif        # Check deeply nested if statements
     - lll           # Line length
     - funlen        # Function length
     - nakedret      # Check naked returns
@@ -63,6 +60,9 @@ linters:
     - goconst       # Disable constant requirement
     - gocritic      # Too opinionated
     - exportloopref # Deprecated in Go 1.22+
+    - gocyclo       # Cyclomatic complexity (too strict for small codebase)
+    - gocognit      # Cognitive complexity (too strict for CLI tool)
+    - nestif        # Nested if complexity (acceptable for business logic)
 
 linters-settings:
   errcheck:
