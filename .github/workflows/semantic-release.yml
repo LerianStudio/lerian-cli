@@ -1,13 +1,13 @@
 name: Semantic Release
 
 # This workflow creates releases based on conventional commits
-# It triggers automatically after all CI checks pass on release branches
+# It triggers automatically after ALL CI checks pass on release branches
 # Semantic-release will analyze commits and only create a release if needed
 
 on:
   workflow_run:
     workflows:
-      - "Go CI"
+      - "CI Gate"
     types:
       - completed
     branches:
@@ -24,7 +24,7 @@ permissions:
 jobs:
   release:
     name: Create Release
-    # Only run if Go CI completed successfully (all other checks are dependencies of Go CI)
+    # Only run if CI Gate completed successfully (meaning all CI workflows passed)
     if: |
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'

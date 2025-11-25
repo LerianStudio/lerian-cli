@@ -1,0 +1,53 @@
+name: CI Gate
+
+# This workflow acts as a gate for semantic-release
+# It waits for all CI workflows to complete successfully
+# Only then will it trigger the semantic-release workflow
+
+on:
+  push:
+    branches: [develop, release-candidate, main]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    name: Wait for All CI Workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Go CI
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          check-name: 'ci'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
+      - name: Wait for Unit Tests
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          check-name: 'unit-tests'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
+      - name: Wait for Go Security
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          check-name: 'security'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
+      - name: Wait for Coverage Check
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          check-name: 'coverage'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
+      - name: All CI Checks Passed
+        run: echo "All CI workflows completed successfully!"
