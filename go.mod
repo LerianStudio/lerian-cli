@@ -1,6 +1,6 @@
 module github.com/lerian-studio/lerian-cli
 
-go 1.23
+go 1.24
 
 require (
 	github.com/fatih/color v1.18.0

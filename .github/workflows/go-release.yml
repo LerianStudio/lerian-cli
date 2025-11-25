@@ -13,7 +13,7 @@ jobs:
   release:
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-release.yml@feature/go-workflows
     with:
-      go_version: '1.23'
+      go_version: '1.24'
       goreleaser_distribution: 'goreleaser'
       goreleaser_version: 'latest'
       run_tests_before_release: true
