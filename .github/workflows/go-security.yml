@@ -16,6 +16,10 @@ permissions:
 
 jobs:
   security:
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-security.yml@feature/go-workflows
     with:
       go_version: '1.23'
