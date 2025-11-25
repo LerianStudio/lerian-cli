@@ -104,7 +104,13 @@ changelog:
       order: 999
 
 release:
-  disable: true
+  github:
+    owner: LerianStudio
+    name: lerian-cli
+  draft: false
+  prerelease: auto
+  mode: append
+  skip_upload: false
 
 # brews:
 #   - name: lerian
