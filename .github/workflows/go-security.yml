@@ -39,6 +39,6 @@ jobs:
       enable_license_check: true
       enable_sbom: true
       trivy_severity: 'CRITICAL,HIGH'
-      upload_sarif: true
+      upload_sarif: false
       fail_on_security_issues: true
     secrets: inherit
