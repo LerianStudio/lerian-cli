@@ -23,10 +23,18 @@ func TestMain(m *testing.M) {
 		binaryPath += ".exe"
 	}
 
-	// Build command
-	buildCmd := exec.Command("go", "build", "-o", binaryPath, ".")
+	// Build command - explicitly specify main.go to avoid Windows path issues
+	mainFile := filepath.Join("cmd", "lerian", "main.go")
+	buildCmd := exec.Command("go", "build", "-o", binaryPath, mainFile)
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
+
+	// Set working directory to project root
+	if wd, err := os.Getwd(); err == nil {
+		// We're in cmd/lerian, go up two levels to project root
+		projectRoot := filepath.Join(wd, "..", "..")
+		buildCmd.Dir = projectRoot
+	}
 
 	if err := buildCmd.Run(); err != nil {
 		panic("Failed to build test binary: " + err.Error())
