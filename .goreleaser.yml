@@ -104,13 +104,7 @@ changelog:
       order: 999
 
 release:
-  github:
-    owner: lerian-studio
-    name: lerian-cli
-  draft: false
-  prerelease: auto
-  mode: append
-  make_latest: false
+  disable: true
   header: |
     ## Lerian CLI {{ .Tag }}
 
