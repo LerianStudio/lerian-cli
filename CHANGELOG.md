@@ -1,3 +1,10 @@
+## [1.0.0-beta.11](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.10...v1.0.0-beta.11) (2025-11-25)
+
+
+### Bug Fixes
+
+* disable goreleaser release creation, let semantic-release handle it ([adedefa](https://github.com/LerianStudio/lerian-cli/commit/adedefa6cad5a59aba5ab6637fd65823bd926694))
+
 ## [1.0.0-beta.10](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.9...v1.0.0-beta.10) (2025-11-25)
 
 
