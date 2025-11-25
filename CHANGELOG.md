@@ -1,3 +1,10 @@
+## [1.0.0-beta.14](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.13...v1.0.0-beta.14) (2025-11-25)
+
+
+### Features
+
+* update README badges for Go 1.24 and beta release version ([8592248](https://github.com/LerianStudio/lerian-cli/commit/8592248ce4e3cb1d87e9d0e32b78e06656cab1b1))
+
 ## [1.0.0-beta.13](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.12...v1.0.0-beta.13) (2025-11-25)
 
 
