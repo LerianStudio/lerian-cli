@@ -22,3 +22,5 @@ jobs:
       enable_docker: false
       enable_homebrew: false
       enable_notifications: true
+    secrets:
+      manage_token: ${{ secrets.MANAGE_TOKEN }}
