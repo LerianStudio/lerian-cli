@@ -1,3 +1,10 @@
+## [1.0.0-beta.9](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.8...v1.0.0-beta.9) (2025-11-25)
+
+
+### Bug Fixes
+
+* simplify release header/footer templates to use v1-compatible variables ([be7dce4](https://github.com/LerianStudio/lerian-cli/commit/be7dce427993350e3a16afc281a1c44469ded6a6))
+
 ## [1.0.0-beta.8](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.7...v1.0.0-beta.8) (2025-11-25)
 
 
