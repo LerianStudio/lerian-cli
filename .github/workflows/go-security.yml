@@ -41,5 +41,4 @@ jobs:
       trivy_severity: 'CRITICAL,HIGH'
       upload_sarif: true
       fail_on_security_issues: true
-    secrets:
-      manage_token: ${{ secrets.GITHUB_TOKEN }}
+    secrets: inherit
