@@ -135,28 +135,28 @@ release:
     - **Issues:** https://github.com/lerian-studio/lerian-cli/issues
     - **Security:** security@lerian.studio
 
-brews:
-  - name: lerian
-    repository:
-      owner: lerian-studio
-      name: homebrew-tap
-      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
-    commit_author:
-      name: lerian-bot
-      email: bot@lerian.studio
-    folder: Formula
-    homepage: https://github.com/lerian-studio/lerian-cli
-    description: |
-      Official command-line interface for the Lerian platform.
-      Manage Midaz ledger deployments and interact with your ledgers.
-    license: Apache-2.0
-    test: |
-      system "#{bin}/lerian --version"
-    install: |
-      bin.install "lerian"
-
-      # Install shell completions
-      generate_completions_from_executable(bin/"lerian", "completion")
+# brews:
+#   - name: lerian
+#     repository:
+#       owner: lerian-studio
+#       name: homebrew-tap
+#       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+#     commit_author:
+#       name: lerian-bot
+#       email: bot@lerian.studio
+#     folder: Formula
+#     homepage: https://github.com/lerian-studio/lerian-cli
+#     description: |
+#       Official command-line interface for the Lerian platform.
+#       Manage Midaz ledger deployments and interact with your ledgers.
+#     license: Apache-2.0
+#     test: |
+#       system "#{bin}/lerian --version"
+#     install: |
+#       bin.install "lerian"
+#
+#       # Install shell completions
+#       generate_completions_from_executable(bin/"lerian", "completion")
 
       # Install man pages (if we add them in future)
       # man1.install Dir["man/*.1"]
