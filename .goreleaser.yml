@@ -209,51 +209,51 @@ nfpms:
     suggests:
       - kubernetes-client
 
-dockers:
-  - image_templates:
-      - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-amd64"
-      - "ghcr.io/lerian-studio/lerian-cli:latest-amd64"
-    use: buildx
-    goos: linux
-    goarch: amd64
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.source={{.GitURL}}"
-      - "--label=org.opencontainers.image.description=Lerian CLI"
-      - "--label=org.opencontainers.image.licenses=Apache-2.0"
-
-  - image_templates:
-      - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-arm64"
-      - "ghcr.io/lerian-studio/lerian-cli:latest-arm64"
-    use: buildx
-    goos: linux
-    goarch: arm64
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.source={{.GitURL}}"
-      - "--label=org.opencontainers.image.description=Lerian CLI"
-      - "--label=org.opencontainers.image.licenses=Apache-2.0"
-
-docker_manifests:
-  - name_template: "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-amd64"
-      - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-arm64"
-
-  - name_template: "ghcr.io/lerian-studio/lerian-cli:latest"
-    image_templates:
-      - "ghcr.io/lerian-studio/lerian-cli:latest-amd64"
-      - "ghcr.io/lerian-studio/lerian-cli:latest-arm64"
+# dockers:
+#   - image_templates:
+#       - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-amd64"
+#       - "ghcr.io/lerian-studio/lerian-cli:latest-amd64"
+#     use: buildx
+#     goos: linux
+#     goarch: amd64
+#     dockerfile: Dockerfile
+#     build_flag_templates:
+#       - "--platform=linux/amd64"
+#       - "--label=org.opencontainers.image.created={{.Date}}"
+#       - "--label=org.opencontainers.image.title={{.ProjectName}}"
+#       - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+#       - "--label=org.opencontainers.image.version={{.Version}}"
+#       - "--label=org.opencontainers.image.source={{.GitURL}}"
+#       - "--label=org.opencontainers.image.description=Lerian CLI"
+#       - "--label=org.opencontainers.image.licenses=Apache-2.0"
+#
+#   - image_templates:
+#       - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-arm64"
+#       - "ghcr.io/lerian-studio/lerian-cli:latest-arm64"
+#     use: buildx
+#     goos: linux
+#     goarch: arm64
+#     dockerfile: Dockerfile
+#     build_flag_templates:
+#       - "--platform=linux/arm64"
+#       - "--label=org.opencontainers.image.created={{.Date}}"
+#       - "--label=org.opencontainers.image.title={{.ProjectName}}"
+#       - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+#       - "--label=org.opencontainers.image.version={{.Version}}"
+#       - "--label=org.opencontainers.image.source={{.GitURL}}"
+#       - "--label=org.opencontainers.image.description=Lerian CLI"
+#       - "--label=org.opencontainers.image.licenses=Apache-2.0"
+#
+# docker_manifests:
+#   - name_template: "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}"
+#     image_templates:
+#       - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-amd64"
+#       - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-arm64"
+#
+#   - name_template: "ghcr.io/lerian-studio/lerian-cli:latest"
+#     image_templates:
+#       - "ghcr.io/lerian-studio/lerian-cli:latest-amd64"
+#       - "ghcr.io/lerian-studio/lerian-cli:latest-arm64"
 
 # sboms:
 #   - artifacts: archive
