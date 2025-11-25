@@ -1,3 +1,25 @@
+## 1.0.0-beta.1 (2025-11-25)
+
+
+### Features
+
+* add comprehensive testing, CI/CD workflows, and update Go to 1.25 ([d1fa5e5](https://github.com/LerianStudio/lerian-cli/commit/d1fa5e5b0d6cf2c5fc7bc93bd061b6d3898a784e))
+* add semantic-release automation with CI/CD integration ([38c97cd](https://github.com/LerianStudio/lerian-cli/commit/38c97cdba75428512203b5685bb48101c474fff1))
+* add version management system (Phase 7) ([22ed831](https://github.com/LerianStudio/lerian-cli/commit/22ed8316ec2225918aa491973ea0b73c52a3fb9b))
+* extract lerian-cli source code from saas-poc (Phase 3) ([ff46dd2](https://github.com/LerianStudio/lerian-cli/commit/ff46dd2f240882886c50bfcead3ce51e6c9b44ba))
+* upgrade to Go 1.25.4 ([2a61f7f](https://github.com/LerianStudio/lerian-cli/commit/2a61f7ffceb748b6e50443f25c4cb10d84d68d54))
+
+
+### Bug Fixes
+
+* map organization secrets to workflow parameters ([f237ea2](https://github.com/LerianStudio/lerian-cli/commit/f237ea2ebe48737808650a5f6ef792000670677a))
+* remove double quotes in workflow files ([4dc06b7](https://github.com/LerianStudio/lerian-cli/commit/4dc06b74c194cf4b696ac4b353e0bb67776e92b4))
+* revert Go version from 1.25 to 1.23 ([17794ca](https://github.com/LerianStudio/lerian-cli/commit/17794ca9a48a6b2382606a31d8cb3ff2d226322c))
+* revert to Go 1.23 and fix workflow configurations ([c8e5553](https://github.com/LerianStudio/lerian-cli/commit/c8e5553c94d7dce4ed949a4ccb0813ac788b668c))
+* simplify semantic-release trigger to use workflow_run ([07d4096](https://github.com/LerianStudio/lerian-cli/commit/07d40967b92dd6261f54819a5e0cf0f44d23dc11))
+* use secrets inherit for semantic-release workflow ([8b90802](https://github.com/LerianStudio/lerian-cli/commit/8b90802215d60ef535a2c4ee938874c73b21fd47))
+* use workflow_run trigger for semantic-release ([e9bc082](https://github.com/LerianStudio/lerian-cli/commit/e9bc082345b472b82e3c15fa95b69a201b325278))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
