@@ -14,7 +14,7 @@ jobs:
   ci:
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-ci.yml@feature/go-workflows
     with:
-      go_versions: '["1.25"]'
+      go_version: '1.23'"]'
       operating_systems: '["ubuntu-latest", "macos-latest", "windows-latest"]'
       enable_cross_platform_build: true
       build_path: './cmd/lerian'

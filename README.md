@@ -1,7 +1,7 @@
 # Lerian CLI
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go)](https://go.dev/)
 [![GitHub Release](https://img.shields.io/badge/release-v0.1.0-green.svg)](https://github.com/lerian-studio/lerian-cli/releases)
 
 Official command-line interface for the Lerian platform. Manage your infrastructure products and deployments.
@@ -464,7 +464,7 @@ See `.github/workflows/` for CI/CD configuration.
 
 ### Prerequisites
 
-- Go 1.25 or higher
+- Go 1.23 or higher
 - kubectl (for Kubernetes operations)
 - Make
 

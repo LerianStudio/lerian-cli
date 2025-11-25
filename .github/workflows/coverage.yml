@@ -14,7 +14,7 @@ jobs:
   coverage:
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-coverage-check.yml@feature/go-workflows
     with:
-      go_version: '1.25'
+      go_version: '1.23''
       coverage_threshold: 80
       fail_on_threshold: true
       enable_pr_comment: true
