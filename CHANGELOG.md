@@ -1,3 +1,10 @@
+## [1.0.0-beta.2](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.1...v1.0.0-beta.2) (2025-11-25)
+
+
+### Bug Fixes
+
+* add release event trigger to go-release workflow ([48d74d2](https://github.com/LerianStudio/lerian-cli/commit/48d74d24025504e8b86502dff07b7717c793936c))
+
 ## 1.0.0-beta.1 (2025-11-25)
 
 
