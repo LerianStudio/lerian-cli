@@ -167,7 +167,7 @@ jobs:
   ci:
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-ci.yml@main
     with:
-      go_version: '1.23'
+      go_version: '1.25''
 ```
 
 ## Quality Assurance
