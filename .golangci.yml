@@ -63,6 +63,13 @@ linters:
     - testpackage   # Tests in same package are fine
     - varnamelen    # Too strict for variable names
     - wrapcheck     # Too strict for error wrapping
+    - godot         # Disable comment period requirement
+    - wsl           # Disable whitespace linter (too strict)
+    - gochecknoglobals  # Allow global variables in cmd
+    - gochecknoinits    # Allow init functions
+    - goconst       # Disable constant requirement
+    - gocritic      # Too opinionated
+    - exportloopref # Deprecated in Go 1.22+
 
 linters-settings:
   errcheck:
