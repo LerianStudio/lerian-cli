@@ -1,3 +1,10 @@
+## [1.0.0-beta.15](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.14...v1.0.0-beta.15) (2025-11-25)
+
+
+### Bug Fixes
+
+* comment out leftover lines from brews section causing YAML parsing error ([9b94285](https://github.com/LerianStudio/lerian-cli/commit/9b94285e083ced22aef35c70fbfc7a8e40139fdb))
+
 ## [1.0.0-beta.14](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.13...v1.0.0-beta.14) (2025-11-25)
 
 
