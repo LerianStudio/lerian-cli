@@ -32,7 +32,6 @@ linters:
     - stylecheck    # Check style issues
     - errorlint     # Check error wrapping
     - lll           # Line length
-    - funlen        # Function length
     - nakedret      # Check naked returns
     - dogsled       # Check for too many blank identifiers
     - goprintffuncname # Check printf-like function names
@@ -63,6 +62,7 @@ linters:
     - gocyclo       # Cyclomatic complexity (too strict for small codebase)
     - gocognit      # Cognitive complexity (too strict for CLI tool)
     - nestif        # Nested if complexity (acceptable for business logic)
+    - funlen        # Function length (acceptable for CLI command handlers)
 
 linters-settings:
   errcheck:
