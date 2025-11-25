@@ -1,35 +1,21 @@
+version: "2"
+
 run:
   timeout: 5m
   tests: true
-  skip-dirs:
-    - vendor
-    - third_party
-    - testdata
-  skip-files:
-    - ".*\\.pb\\.go$"
   modules-download-mode: readonly
   allow-parallel-runners: true
-
-output:
-  format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
-  uniq-by-line: true
-  sort-results: true
 
 linters:
   enable:
     # Default linters
     - errcheck      # Check for unchecked errors
-    - gosimple      # Simplify code
     - govet         # Vet examines Go source code
     - ineffassign   # Detect ineffectual assignments
     - staticcheck   # Static analysis
     - unused        # Check for unused constants, variables, functions and types
 
     # Additional recommended linters
-    - gofmt         # Check code formatting
-    - goimports     # Check import organization
     - revive        # Fast, configurable, extensible, flexible linter
     - misspell      # Find commonly misspelled English words
     - goconst       # Find repeated strings that could be constants
@@ -39,16 +25,13 @@ linters:
     - unconvert     # Remove unnecessary type conversions
     - unparam       # Find unused function parameters
     - prealloc      # Find slice declarations that could be preallocated
-    - exportloopref # Check for pointers to enclosing loop variables
     - nilerr        # Check that errors are not nil
     - godot         # Check if comments end in a period
     - whitespace    # Check for unnecessary whitespace
-    - wsl           # Whitespace Linter
+    - wsl_v5        # Whitespace Linter v5
     - noctx         # Check HTTP requests with context
     - bodyclose     # Check HTTP response body is closed
-    - sqlclose      # Check SQL rows/statements are closed
     - nolintlint    # Check nolint directives
-    - stylecheck    # Check style issues
     - errorlint     # Check error wrapping
     - gocritic      # Opinionated Go linter
     - gocognit      # Cognitive complexity
@@ -67,12 +50,9 @@ linters:
     - exhaustruct   # Too strict for structs
     - forbidigo     # Not needed
     - forcetypeassert # Too strict
-    - gci           # Conflicts with goimports
     - godox         # Allow TODO/FIXME comments
-    - goerr113      # Too strict for error wrapping
-    - gomnd         # Too many magic numbers in tests
     - ireturn       # Too strict for interfaces
-    - nlreturn      # Conflicts with wsl
+    - nlreturn      # Conflicts with wsl_v5
     - paralleltest  # Not all tests need to be parallel
     - tagliatelle   # Not using special tag formats
     - testpackage   # Tests in same package are fine
@@ -92,12 +72,6 @@ linters-settings:
     disable:
       - shadow
       - fieldalignment
-
-  gofmt:
-    simplify: true
-
-  goimports:
-    local-prefixes: github.com/lerian-studio/lerian-cli
 
   goconst:
     min-len: 3
@@ -193,11 +167,6 @@ linters-settings:
       - name: unreachable-code
       - name: redefines-builtin-id
 
-  stylecheck:
-    checks: ["all", "-ST1000", "-ST1003"]
-    dot-import-whitelist: []
-    initialisms: ["ACL", "API", "ASCII", "CPU", "CSS", "DNS", "EOF", "GUID", "HTML", "HTTP", "HTTPS", "ID", "IP", "JSON", "QPS", "RAM", "RPC", "SLA", "SMTP", "SQL", "SSH", "TCP", "TLS", "TTL", "UDP", "UI", "GID", "UID", "UUID", "URI", "URL", "UTF8", "VM", "XML", "XMPP", "XSRF", "XSS", "SIP", "RTP", "AMQP", "DB", "TS"]
-
   errorlint:
     errorf: true
     asserts: true
@@ -211,6 +180,13 @@ linters-settings:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  uniq-by-line: true
+  exclude-dirs:
+    - vendor
+    - third_party
+    - testdata
+  exclude-files:
+    - ".*\\.pb\\.go$"
 
   exclude-rules:
     # Exclude some linters from running on tests files
@@ -258,13 +234,3 @@ issues:
       source: "^//go:generate "
 
   exclude-use-default: false
-
-severity:
-  default-severity: warning
-  rules:
-    - linters:
-        - gosec
-        - errcheck
-        - govet
-        - staticcheck
-      severity: error
