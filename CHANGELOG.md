@@ -1,3 +1,10 @@
+## [1.0.0-beta.12](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.11...v1.0.0-beta.12) (2025-11-25)
+
+
+### Bug Fixes
+
+* comment out brews section since release is disabled ([2667d87](https://github.com/LerianStudio/lerian-cli/commit/2667d87e08af2a148e59e568cfe8d74816dd3e45))
+
 ## [1.0.0-beta.11](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.10...v1.0.0-beta.11) (2025-11-25)
 
 
