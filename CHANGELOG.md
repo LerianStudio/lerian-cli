@@ -1,3 +1,10 @@
+## [1.0.0-beta.3](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.2...v1.0.0-beta.3) (2025-11-25)
+
+
+### Bug Fixes
+
+* remove reserved github_token secret from go-release workflow ([9f8662e](https://github.com/LerianStudio/lerian-cli/commit/9f8662e5ad0fe55613b4fda6e040051a7e5f86cd))
+
 ## [1.0.0-beta.2](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.1...v1.0.0-beta.2) (2025-11-25)
 
 
