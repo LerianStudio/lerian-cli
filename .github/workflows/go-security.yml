@@ -1,9 +1,12 @@
 name: Go Security
 
 on:
-  push:
-    branches: [develop, release-candidate, main]
   pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
     branches: [develop, release-candidate, main]
   schedule:
     # Run security scans every Monday at 00:00 UTC
