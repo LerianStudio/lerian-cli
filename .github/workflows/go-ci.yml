@@ -22,6 +22,6 @@ jobs:
       operating_systems: '["ubuntu-latest", "macos-latest"]'
       enable_cross_platform_build: true
       build_path: './cmd/lerian'
-      enable_coverage_comment: true
+      enable_coverage_comment: false
       check_docs: true
       check_module_tidy: true
