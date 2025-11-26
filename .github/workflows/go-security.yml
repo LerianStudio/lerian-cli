@@ -33,7 +33,7 @@ jobs:
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-security.yml@feature/go-workflows
     with:
       go_version: '1.24'
-      enable_dependency_review: true
+      enable_dependency_review: false
       enable_gosec: true
       enable_govulncheck: true
       enable_nancy: true

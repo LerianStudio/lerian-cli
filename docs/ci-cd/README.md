@@ -251,6 +251,8 @@ Timeline: ───────────────────────�
 
 **Configuration:** Fails on security issues, uploads SARIF to GitHub Security
 
+**Note:** Dependency Review is disabled (requires GitHub Advanced Security)
+
 ### 5. PR Validation (`pr-validation.yml`)
 
 **Triggers:**
