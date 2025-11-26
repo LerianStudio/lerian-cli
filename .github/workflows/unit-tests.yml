@@ -2,8 +2,11 @@ name: Unit Tests
 
 on:
   pull_request:
-    branches: [develop, release-candidate, main]
-  push:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
     branches: [develop, release-candidate, main]
 
 permissions:
