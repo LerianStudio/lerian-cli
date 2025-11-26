@@ -1,3 +1,77 @@
+## 1.0.0-beta.1 (2025-11-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* CI Gate workflow removed, pipelines simplified
+
+- Remove CI Gate workflow (no longer needed)
+- CI workflows (Go CI, Unit Tests, Coverage, Security) now only run on PRs
+- Added explicit PR trigger types: opened, edited, synchronize, reopened
+- Semantic Release triggers directly on push to develop/RC/main
+- Semantic Release no longer waits for CI workflows
+- Updated CI/CD documentation to reflect new architecture
+- CI checks run on source branch (PR head) before merge
+- Release flow completely separated from PR validation flow
+
+Benefits:
+- Simpler pipeline architecture
+- Faster release process (no waiting)
+- Clearer separation between validation and release
+- Reduced workflow complexity
+- CI only runs when needed (on PRs)
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+
+### Features
+
+* add CI gate workflow to ensure all checks pass before release ([5c5d260](https://github.com/LerianStudio/lerian-cli/commit/5c5d26059ea02ab723629a863f667268bd980a09))
+* add CI/CD pipeline status tracking ([add02c9](https://github.com/LerianStudio/lerian-cli/commit/add02c9b0a9c2672b66e2397853364d17eb23648))
+* add comprehensive testing, CI/CD workflows, and update Go to 1.25 ([d1fa5e5](https://github.com/LerianStudio/lerian-cli/commit/d1fa5e5b0d6cf2c5fc7bc93bd061b6d3898a784e))
+* add semantic-release automation with CI/CD integration ([38c97cd](https://github.com/LerianStudio/lerian-cli/commit/38c97cdba75428512203b5685bb48101c474fff1))
+* add version management system (Phase 7) ([22ed831](https://github.com/LerianStudio/lerian-cli/commit/22ed8316ec2225918aa491973ea0b73c52a3fb9b))
+* extract lerian-cli source code from saas-poc (Phase 3) ([ff46dd2](https://github.com/LerianStudio/lerian-cli/commit/ff46dd2f240882886c50bfcead3ce51e6c9b44ba))
+* initialize CI/CD pipeline with quality gates ([4e22d37](https://github.com/LerianStudio/lerian-cli/commit/4e22d379eb1076f88632ea271c5682673681b230))
+* update README badges for Go 1.24 and beta release version ([8592248](https://github.com/LerianStudio/lerian-cli/commit/8592248ce4e3cb1d87e9d0e32b78e06656cab1b1))
+* upgrade to Go 1.25.4 ([2a61f7f](https://github.com/LerianStudio/lerian-cli/commit/2a61f7ffceb748b6e50443f25c4cb10d84d68d54))
+
+
+### Bug Fixes
+
+* add checks read permission to CI gate workflow ([febc035](https://github.com/LerianStudio/lerian-cli/commit/febc0356677268c4931ded52a9d91968b9945c9e))
+* add release event trigger to go-release workflow ([48d74d2](https://github.com/LerianStudio/lerian-cli/commit/48d74d24025504e8b86502dff07b7717c793936c))
+* comment out announce.github section incompatible with goreleaser v1.x ([6ffaa71](https://github.com/LerianStudio/lerian-cli/commit/6ffaa710e188db30f03d6d458b7d8456cf736eaf))
+* comment out brews section since release is disabled ([2667d87](https://github.com/LerianStudio/lerian-cli/commit/2667d87e08af2a148e59e568cfe8d74816dd3e45))
+* comment out docker sections requiring Dockerfile ([559ab1f](https://github.com/LerianStudio/lerian-cli/commit/559ab1f4c5586984626ca9d3aad99962f40e4a3a))
+* comment out leftover lines from brews section causing YAML parsing error ([9b94285](https://github.com/LerianStudio/lerian-cli/commit/9b94285e083ced22aef35c70fbfc7a8e40139fdb))
+* comment out sboms and signs sections requiring syft and cosign ([b31581d](https://github.com/LerianStudio/lerian-cli/commit/b31581d1649970dec6762245453ca4f9747dd1e3))
+* disable coverage comment in go-ci workflow ([0561739](https://github.com/LerianStudio/lerian-cli/commit/05617393614e1369d20ec015d186cd740d658dd2))
+* disable dependency review check ([ad1e351](https://github.com/LerianStudio/lerian-cli/commit/ad1e35117e406d1dd16051dad7de97d97fa07620))
+* disable goreleaser release creation, let semantic-release handle it ([adedefa](https://github.com/LerianStudio/lerian-cli/commit/adedefa6cad5a59aba5ab6637fd65823bd926694))
+* downgrade .goreleaser.yml to version 1 format for compatibility with goreleaser v1.x ([f8fd883](https://github.com/LerianStudio/lerian-cli/commit/f8fd8836dbeaaf706bb942ab3f03ed95ce796e46))
+* enable goreleaser release upload to attach binaries to github releases ([bb782a8](https://github.com/LerianStudio/lerian-cli/commit/bb782a876a8e198389ba4ec09fc4e649331d260f))
+* map organization secrets to workflow parameters ([f237ea2](https://github.com/LerianStudio/lerian-cli/commit/f237ea2ebe48737808650a5f6ef792000670677a))
+* pass manage_token secret to go-release workflow ([86dce02](https://github.com/LerianStudio/lerian-cli/commit/86dce02ecd2ddf1678a9ee2a05f93044333f5fef))
+* remove double quotes in workflow files ([4dc06b7](https://github.com/LerianStudio/lerian-cli/commit/4dc06b74c194cf4b696ac4b353e0bb67776e92b4))
+* remove header/footer from release section when disable is true ([66d6f3e](https://github.com/LerianStudio/lerian-cli/commit/66d6f3e6aa5fa754ab321644bfeddbb541a412c2))
+* remove reserved github_token secret from go-release workflow ([9f8662e](https://github.com/LerianStudio/lerian-cli/commit/9f8662e5ad0fe55613b4fda6e040051a7e5f86cd))
+* revert Go version from 1.25 to 1.23 ([17794ca](https://github.com/LerianStudio/lerian-cli/commit/17794ca9a48a6b2382606a31d8cb3ff2d226322c))
+* revert to Go 1.23 and fix workflow configurations ([c8e5553](https://github.com/LerianStudio/lerian-cli/commit/c8e5553c94d7dce4ed949a4ccb0813ac788b668c))
+* rewrite CI gate to use workflow_run trigger and github-script ([1bad7eb](https://github.com/LerianStudio/lerian-cli/commit/1bad7eb68a97dc2528365eaf5c964de9db9c8e55))
+* set go_version_lint to 1.24 to match test matrix ([3ad2df0](https://github.com/LerianStudio/lerian-cli/commit/3ad2df050fc7b108724946c190bc5bb7c784469d))
+* simplify release header/footer templates to use v1-compatible variables ([be7dce4](https://github.com/LerianStudio/lerian-cli/commit/be7dce427993350e3a16afc281a1c44469ded6a6))
+* simplify semantic-release trigger to use workflow_run ([07d4096](https://github.com/LerianStudio/lerian-cli/commit/07d40967b92dd6261f54819a5e0cf0f44d23dc11))
+* use append mode for goreleaser release since semantic-release creates the release first ([ff33f5a](https://github.com/LerianStudio/lerian-cli/commit/ff33f5aa20900cd283e51586fea58ad94d860dac))
+* use secrets inherit for semantic-release workflow ([8b90802](https://github.com/LerianStudio/lerian-cli/commit/8b90802215d60ef535a2c4ee938874c73b21fd47))
+* use workflow_run trigger for semantic-release ([e9bc082](https://github.com/LerianStudio/lerian-cli/commit/e9bc082345b472b82e3c15fa95b69a201b325278))
+
+
+### Miscellaneous Chores
+
+* simplify CI/CD pipeline architecture ([6173709](https://github.com/LerianStudio/lerian-cli/commit/6173709a2d6a4345d22d70c9e21ffef74b4c22b8))
+
 ## [1.0.0-beta.16](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.15...v1.0.0-beta.16) (2025-11-25)
 
 
