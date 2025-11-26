@@ -479,6 +479,11 @@ func TestDeleteProfile(t *testing.T) {
 }
 
 func TestLoad_FileExistsButUnreadable(t *testing.T) {
+	// Skip if running as root (e.g., in Docker containers) where chmod doesn't restrict access
+	if os.Getuid() == 0 {
+		t.Skip("Skipping test when running as root - file permissions don't restrict root access")
+	}
+
 	// Setup: Create config file with no read permissions
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, ".lerian")
