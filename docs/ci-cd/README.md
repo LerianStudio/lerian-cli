@@ -98,9 +98,9 @@ Developer        GitHub       Semantic Release     Go Release
     │          Push to branch          │                 │
     │                │─────────────────>                 │
     │                │                 │                 │
-    │                │      Analyze commits             │
-    │                │      Generate version            │
-    │                │      Update CHANGELOG            │
+    │                │       Analyze commits             │
+    │                │       Generate version            │
+    │                │       Update CHANGELOG            │
     │                │                 │                 │
     │      Create Tag & Release        │                 │
     │                │ <───────────────┘                 │
@@ -108,12 +108,12 @@ Developer        GitHub       Semantic Release     Go Release
     │                │  Tag created event                │
     │                │───────────────────────────────────>
     │                │                                   │
-    │                │          Build multi-platform    │
-    │                │          binaries                │
-    │                │          Create packages         │
-    │                │          Generate checksums      │
+    │                │           Build multi-platform    │
+    │                │           binaries                │
+    │                │           Create packages         │
+    │                │           Generate checksums      │
     │                │                                   │
-    │      Upload release assets                        │
+    │       Upload release assets                        │
     │                │ <─────────────────────────────────┘
     │                │                                   │
 ```
