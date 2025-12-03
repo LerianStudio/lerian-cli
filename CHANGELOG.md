@@ -1,3 +1,11 @@
+## [1.0.0-beta.2](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0-beta.1...v1.0.0-beta.2) (2025-12-03)
+
+
+### Bug Fixes
+
+* **ci:** correct secret name in pr-validation workflow ([8357d35](https://github.com/LerianStudio/lerian-cli/commit/8357d35b2351dad1109267a40051daa7e58c6838))
+* **ci:** update labeler.yml to v5 format ([91fb63d](https://github.com/LerianStudio/lerian-cli/commit/91fb63d137a50427a0a452ead753124787f0ea8f))
+
 ## 1.0.0-beta.1 (2025-11-26)
 
 
