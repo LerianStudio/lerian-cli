@@ -1,4 +1,4 @@
-name: Semantic Release
+name: Release
 
 # This workflow creates releases based on conventional commits
 # It triggers on push to release branches and waits for CI Gate to pass

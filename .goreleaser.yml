@@ -27,10 +27,10 @@ builds:
         goarch: arm
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
-      - -X main.builtBy=goreleaser
+      - -X github.com/lerian-studio/lerian-cli/internal/version.Version={{.Version}}
+      - -X github.com/lerian-studio/lerian-cli/internal/version.Commit={{.Commit}}
+      - -X github.com/lerian-studio/lerian-cli/internal/version.Date={{.Date}}
+      - -X github.com/lerian-studio/lerian-cli/internal/version.BuiltBy=goreleaser
     flags:
       - -trimpath
 

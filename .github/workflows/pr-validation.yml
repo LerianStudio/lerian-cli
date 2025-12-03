@@ -43,4 +43,4 @@ jobs:
       enable_auto_labeler: true
       labeler_config_path: '.github/labeler.yml'
     secrets:
-      github_token: ${{ secrets.MANAGE_TOKEN }}
+      manage_token: ${{ secrets.MANAGE_TOKEN }}
