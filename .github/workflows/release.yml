@@ -8,7 +8,6 @@ on:
   push:
     branches:
       - develop
-      - release-candidate
       - main
 
 permissions:
@@ -19,7 +18,9 @@ permissions:
 jobs:
   release:
     name: Create Release
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@feature/go-workflows
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@v1.2.0
+    with:
+      runner_type: "blacksmith-4vcpu-ubuntu-2404"
     secrets:
       lerian_studio_push_bot_app_id: ${{ secrets.LERIAN_STUDIO_MIDAZ_PUSH_BOT_APP_ID }}
       lerian_studio_push_bot_private_key: ${{ secrets.LERIAN_STUDIO_MIDAZ_PUSH_BOT_PRIVATE_KEY }}

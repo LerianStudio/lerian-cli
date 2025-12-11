@@ -2,7 +2,7 @@ name: PR Validation
 
 on:
   pull_request:
-    branches: [develop, release-candidate, main]
+    branches: [develop, main]
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -12,8 +12,9 @@ permissions:
 
 jobs:
   validate:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@feature/go-workflows
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@v1.2.0
     with:
+      runner_type: "blacksmith-4vcpu-ubuntu-2404"
       pr_title_types: |
         feat
         fix
