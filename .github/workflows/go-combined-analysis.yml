@@ -18,8 +18,9 @@ on:
 jobs:
   go-analysis:
     name: Go Analysis
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-analysis.yml@feature/go-workflows
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-analysis.yml@v1.2.0
     with:
+      runner_type: "blacksmith-4vcpu-ubuntu-2404"
       # Single-app mode: no filter_paths = run against root directory
       app_name_prefix: "lerian-cli"
       go_version: "1.25"

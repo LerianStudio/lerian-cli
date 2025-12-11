@@ -13,8 +13,9 @@ permissions:
 
 jobs:
   release:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-release.yml@feature/go-workflows
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-release.yml@v1.2.0
     with:
+      runner_type: "blacksmith-4vcpu-ubuntu-2404"
       go_version: '1.25'
       goreleaser_distribution: 'goreleaser'
       goreleaser_version: 'latest'
