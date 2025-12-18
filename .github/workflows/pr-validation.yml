@@ -4,6 +4,15 @@ on:
   pull_request:
     branches: [develop, release-candidate, main]
     types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/**'
+      - 'LICENSE'
+      - 'CODEOWNERS'
+      - '.gitignore'
+      - 'images/**'
+      - '*.txt'
 
 permissions:
   contents: read
@@ -12,7 +21,7 @@ permissions:
 
 jobs:
   validate:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@v1.2.0
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@v1.3.0
     with:
       runner_type: "blacksmith-4vcpu-ubuntu-2404"
       pr_title_types: |
