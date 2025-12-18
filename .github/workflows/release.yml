@@ -10,6 +10,15 @@ on:
       - develop
       - release-candidate
       - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/**'
+      - 'LICENSE'
+      - 'CODEOWNERS'
+      - '.gitignore'
+      - 'images/**'
+      - '*.txt'
 
 permissions:
   contents: write

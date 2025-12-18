@@ -14,6 +14,15 @@ on:
       - opened
       - synchronize
       - reopened
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/**'
+      - 'LICENSE'
+      - 'CODEOWNERS'
+      - '.gitignore'
+      - 'images/**'
+      - '*.txt'
 
 jobs:
   go-analysis:
