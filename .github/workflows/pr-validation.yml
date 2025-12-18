@@ -4,15 +4,6 @@ on:
   pull_request:
     branches: [develop, release-candidate, main]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.github/**'
-      - 'LICENSE'
-      - 'CODEOWNERS'
-      - '.gitignore'
-      - 'images/**'
-      - '*.txt'
 
 permissions:
   contents: read
