@@ -55,7 +55,6 @@ archives:
       - LICENSE
       - CHANGELOG.md
       - SECURITY.md
-    rlcp: true
 
 checksum:
   name_template: 'checksums.txt'
