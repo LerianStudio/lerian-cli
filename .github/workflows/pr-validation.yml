@@ -12,8 +12,9 @@ permissions:
 
 jobs:
   validate:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@feature/go-workflows
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@v1.3.5
     with:
+      runner_type: "blacksmith-4vcpu-ubuntu-2404"
       pr_title_types: |
         feat
         fix
@@ -42,5 +43,4 @@ jobs:
       check_changelog: true
       enable_auto_labeler: true
       labeler_config_path: '.github/labeler.yml'
-    secrets:
-      github_token: ${{ secrets.MANAGE_TOKEN }}
+    secrets: inherit

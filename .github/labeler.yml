@@ -1,62 +1,65 @@
 # Auto-label PRs based on changed files
+# https://github.com/actions/labeler
 
 'area: auth':
-  - cmd/auth/**/*
-  - internal/client/**/*
+  - changed-files:
+      - any-glob-to-any-file:
+          - cmd/auth/**/*
+          - internal/client/**/*
 
 'area: ledger':
-  - cmd/midaz/ledger/**/*
+  - changed-files:
+      - any-glob-to-any-file:
+          - cmd/midaz/ledger/**/*
 
 'area: config':
-  - internal/config/**/*
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/config/**/*
 
 'area: kubectl':
-  - internal/kubectl/**/*
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/kubectl/**/*
 
 'area: output':
-  - internal/output/**/*
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/output/**/*
 
 'area: cli':
-  - cmd/root.go
-  - cmd/lerian/**/*
+  - changed-files:
+      - any-glob-to-any-file:
+          - cmd/root.go
+          - cmd/lerian/**/*
 
 'area: documentation':
-  - '**/*.md'
-  - docs/**/*
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - docs/**/*
 
 'area: ci/cd':
-  - .github/**/*
-  - .golangci.yml
-  - .goreleaser.yml
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**/*
+          - .golangci.yml
+          - .goreleaser.yml
 
 'area: dependencies':
-  - go.mod
-  - go.sum
+  - changed-files:
+      - any-glob-to-any-file:
+          - go.mod
+          - go.sum
 
 'area: build':
-  - Makefile
-  - Dockerfile
-  - build/**/*
+  - changed-files:
+      - any-glob-to-any-file:
+          - Makefile
+          - Dockerfile
+          - build/**/*
 
 'area: tests':
-  - '**/*_test.go'
-
-'size/XS':
-  - any: ['**/*']
-    all-globs-to-all-files: false
-
-'size/S':
-  - any: ['**/*']
-    all-globs-to-all-files: false
-
-'size/M':
-  - any: ['**/*']
-    all-globs-to-all-files: false
-
-'size/L':
-  - any: ['**/*']
-    all-globs-to-all-files: false
-
-'size/XL':
-  - any: ['**/*']
-    all-globs-to-all-files: false
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*_test.go'

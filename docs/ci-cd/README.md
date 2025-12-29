@@ -2,14 +2,13 @@
 
 This document explains how the CI/CD pipelines work for the Lerian CLI project with visual flowcharts and comprehensive workflow descriptions.
 
-> **Note:** The workflows were reorganized on 2025-11-22 and updated on 2025-11-25 to include CI Gate and Semantic Release automation.
+> **Note:** The workflows were reorganized on 2025-11-22 and simplified on 2025-11-26 to separate PR validation from release automation.
 
 ## Table of Contents
 
 - [Pipeline Architecture](#pipeline-architecture)
 - [GitFlow Branching Model](#gitflow-branching-model)
 - [Workflow Descriptions](#workflow-descriptions)
-- [CI Gate System](#ci-gate-system)
 - [Semantic Versioning](#semantic-versioning)
 - [Configuration Files](#configuration-files)
 - [Secrets and Variables](#secrets-and-variables)
@@ -18,13 +17,21 @@ This document explains how the CI/CD pipelines work for the Lerian CLI project w
 
 ## Pipeline Architecture
 
-The Lerian CLI uses **GitHub Actions** with a sophisticated CI/CD pipeline that ensures all quality gates pass before releases.
+The Lerian CLI uses **GitHub Actions** with a streamlined CI/CD pipeline that separates PR validation from release automation.
 
-### CI/CD Flow Diagram
+### Pipeline Overview
+
+The pipeline has two distinct flows:
+
+1. **Pull Request Flow**: Quality checks run on every PR
+2. **Release Flow**: Automated releases on push to protected branches
+
+### Pull Request Flow
 
 ```
 ┌─────────────────────────────────────┐
-│   Code Push to develop/RC/main      │
+│  PR: opened/edited/synchronize/     │
+│           reopened                  │
 └───────────────┬─────────────────────┘
                 │
         ┌───────┼───────┬────────┬────────────┐
@@ -33,121 +40,82 @@ The Lerian CLI uses **GitHub Actions** with a sophisticated CI/CD pipeline that 
     ┌───────┐ ┌────┐ ┌────┐ ┌────────┐ ┌──────────┐
     │Go CI  │ │Unit│ │Cov │ │  Go    │ │    PR    │
     │       │ │Test│ │Chk │ │Security│ │Validation│
-    └───┬───┘ └─┬──┘ └─┬──┘ └───┬────┘ └──────────┘
-        │       │      │        │      (PRs only)
-        └───────┴──────┴────────┘
+    └───────┘ └────┘ └────┘ └────────┘ └──────────┘
+         All run on source branch
+         Must pass before merge
+```
+
+### Release Flow
+
+```
+┌─────────────────────────────────────┐
+│  Push to develop/RC/main            │
+└───────────────┬─────────────────────┘
                 │
                 ▼
         ┌───────────────┐
-        │   [CI Gate]   │ ◄── Quality Gatekeeper
+        │   Semantic    │
+        │    Release    │
         └───────┬───────┘
                 │
-        ┌───────┴────────┐
-        │                │
-        ▼                ▼
-    All Pass       Any Fail
-        │                │
-        ▼                ▼
-┌───────────────┐  ┌──────────┐
-│Semantic       │  │  Block   │
-│Release        │  │ Release  │
-└───────┬───────┘  └──────────┘
-        │
-        │ (Create Tag)
-        ▼
-┌───────────────┐
-│  Go Release   │
-└───────┬───────┘
-        │
-    ┌───┴────┬──────────┐
-    ▼        ▼          ▼
-┌──────┐ ┌────────┐ ┌──────┐
-│Build │ │Create  │ │Upload│
-│Binary│ │Package │ │Assets│
-└───┬──┘ └───┬────┘ └───┬──┘
-    └────────┴──────────┘
-             │
-             ▼
-    ┌────────────────┐
-    │GitHub Release  │
-    └────────────────┘
+                │ (Create Tag v*.*.*)
+                ▼
+        ┌───────────────┐
+        │  Go Release   │
+        └───────┬───────┘
+                │
+        ┌───────┼────────┬──────────┐
+        │       │        │          │
+        ▼       ▼        ▼          ▼
+    ┌──────┐ ┌────┐ ┌────────┐ ┌──────┐
+    │Build │ │Pack│ │Checksum│ │Upload│
+    └──────┘ └────┘ └────────┘ └──────┘
+                │
+                ▼
+        ┌───────────────┐
+        │GitHub Release │
+        └───────────────┘
 ```
 
 ### Detailed Pipeline Flow
 
 ```
-Developer    GitHub     CI Workflows    CI Gate    Semantic Release    Go Release
-    │            │             │             │              │                │
-    │ Push       │             │             │              │                │
-    │─────────>  │             │             │              │                │
-    │            │             │             │              │                │
-    │            │  Trigger    │             │              │                │
-    │            │──────────>  │             │              │                │
-    │            │  (Parallel) │             │              │                │
-    │            │  - Go CI    │             │              │                │
-    │            │  - Unit     │             │              │                │
-    │            │  - Coverage │             │              │                │
-    │            │  - Security │             │              │                │
-    │            │             │             │              │                │
-    │            │             │  Report     │              │                │
-    │            │             │──────────>  │              │                │
-    │            │             │  (Go CI)    │              │                │
-    │            │             │──────────>  │              │                │
-    │            │             │  (Unit)     │              │                │
-    │            │             │──────────>  │              │                │
-    │            │             │  (Coverage) │              │                │
-    │            │             │──────────>  │              │                │
-    │            │             │  (Security) │              │                │
-    │            │             │             │              │                │
-    │            │             │       ┌─────┴─────┐        │                │
-    │            │             │       │  All Pass │        │                │
-    │            │             │       │     ?     │        │                │
-    │            │             │       └─────┬─────┘        │                │
-    │            │             │         YES │  NO          │                │
-    │            │             │             │              │                │
-    │            │             │         YES │              │                │
-    │            │             │             │  Trigger     │                │
-    │            │             │             │──────────────────>            │
-    │            │             │             │              │                │
-    │            │             │             │   Analyze    │                │
-    │            │             │             │   commits    │                │
-    │            │             │             │  <────────>  │                │
-    │            │             │             │   Generate   │                │
-    │            │             │             │   version    │                │
-    │            │             │             │  <────────>  │                │
-    │            │             │             │   Update     │                │
-    │            │             │             │  CHANGELOG   │                │
-    │            │             │             │  <────────>  │                │
-    │            │             │             │              │                │
-    │            │  Create Tag │             │              │                │
-    │            │ <────────────────────────────────────────┘                │
-    │            │             │             │              │                │
-    │            │   Create Release          │              │                │
-    │            │ <────────────────────────────────────────┘                │
-    │            │             │             │              │                │
-    │            │             │             │              │  Trigger       │
-    │            │────────────────────────────────────────────────────────>  │
-    │            │             │             │              │                │
-    │            │             │             │              │   Build        │
-    │            │             │             │              │   binaries     │
-    │            │             │             │              │  <──────────>  │
-    │            │             │             │              │   Create       │
-    │            │             │             │              │   packages     │
-    │            │             │             │              │  <──────────>  │
-    │            │             │             │              │   Generate     │
-    │            │             │             │              │   checksums    │
-    │            │             │             │              │  <──────────>  │
-    │            │             │             │              │                │
-    │            │  Upload assets            │              │                │
-    │            │ <─────────────────────────────────────────────────────────┘
-    │            │             │             │              │                │
-    │            │             │        NO   │              │                │
-    │            │             │             │  Block       │                │
-    │            │             │             │──────────────────>            │
-    │            │             │             │              │                │
-    │  Notify    │             │             │              │                │
-    │ <──────────────────────────────────────┘              │                │
-    │  failure   │             │             │              │                │
+Developer        GitHub       Semantic Release     Go Release
+    │                │                 │                 │
+    │  Create PR     │                 │                 │
+    │─────────────>  │                 │                 │
+    │                │                 │                 │
+    │          ┌─────┴─────┐           │                 │
+    │          │   Run CI  │           │                 │
+    │          │  Checks   │           │                 │
+    │          │ (4 flows) │           │                 │
+    │          └─────┬─────┘           │                 │
+    │                │                 │                 │
+    │  PR passes     │                 │                 │
+    │  & merged      │                 │                 │
+    │─────────────>  │                 │                 │
+    │                │                 │                 │
+    │          Push to branch          │                 │
+    │                │─────────────────>                 │
+    │                │                 │                 │
+    │                │       Analyze commits             │
+    │                │       Generate version            │
+    │                │       Update CHANGELOG            │
+    │                │                 │                 │
+    │      Create Tag & Release        │                 │
+    │                │ <───────────────┘                 │
+    │                │                                   │
+    │                │  Tag created event                │
+    │                │───────────────────────────────────>
+    │                │                                   │
+    │                │           Build multi-platform    │
+    │                │           binaries                │
+    │                │           Create packages         │
+    │                │           Generate checksums      │
+    │                │                                   │
+    │       Upload release assets                        │
+    │                │ <─────────────────────────────────┘
+    │                │                                   │
 ```
 
 ## GitFlow Branching Model
@@ -215,8 +183,8 @@ Timeline: ───────────────────────�
 ### 1. Go CI (`go-ci.yml`)
 
 **Triggers:**
-- Push to: `develop`, `release-candidate`, `main`
-- Pull requests to: `develop`, `release-candidate`, `main`
+- Pull requests: `opened`, `edited`, `synchronize`, `reopened`
+- Target branches: `develop`, `release-candidate`, `main`
 
 **What it does:**
 - **Cross-platform testing**: Tests on Go 1.24 across Ubuntu and macOS
@@ -233,8 +201,8 @@ Timeline: ───────────────────────�
 ### 2. Unit Tests (`unit-tests.yml`)
 
 **Triggers:**
-- Push to: `develop`, `release-candidate`, `main`
-- Pull requests to: `develop`, `release-candidate`, `main`
+- Pull requests: `opened`, `edited`, `synchronize`, `reopened`
+- Target branches: `develop`, `release-candidate`, `main`
 
 **What it does:**
 - **Unit test execution**: Runs all unit tests
@@ -249,8 +217,8 @@ Timeline: ───────────────────────�
 ### 3. Coverage Check (`coverage.yml`)
 
 **Triggers:**
-- Push to: `develop`, `release-candidate`, `main`
-- Pull requests to: `develop`, `release-candidate`, `main`
+- Pull requests: `opened`, `edited`, `synchronize`, `reopened`
+- Target branches: `develop`, `release-candidate`, `main`
 
 **What it does:**
 - **Coverage calculation**: Measures test coverage
@@ -265,8 +233,8 @@ Timeline: ───────────────────────�
 ### 4. Go Security (`go-security.yml`)
 
 **Triggers:**
-- Push to: `develop`, `release-candidate`, `main`
-- Pull requests to: `develop`, `release-candidate`, `main`
+- Pull requests: `opened`, `edited`, `synchronize`, `reopened`
+- Target branches: `develop`, `release-candidate`, `main`
 - Schedule: Every Monday at 00:00 UTC
 - Manual dispatch
 
@@ -275,13 +243,15 @@ Timeline: ───────────────────────�
 - **Govulncheck**: Official Go vulnerability checker
 - **Nancy**: Dependency vulnerability scanner
 - **Trivy**: Container and code security scanner
-- **Secret scanning**: Detects leaked credentials (PR only)
+- **Secret scanning**: Detects leaked credentials
 - **License check**: Validates dependency licenses
 - **SBOM generation**: Creates Software Bill of Materials
 
 **Duration:** ~4-6 minutes
 
 **Configuration:** Fails on security issues, uploads SARIF to GitHub Security
+
+**Note:** Dependency Review is disabled (requires GitHub Advanced Security)
 
 ### 5. PR Validation (`pr-validation.yml`)
 
@@ -301,39 +271,10 @@ Timeline: ───────────────────────�
 
 **Valid PR title types:** `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `ci`, `build`, `revert`
 
-### 6. CI Gate (`ci-gate.yml`)
+### 6. Semantic Release (`semantic-release.yml`)
 
 **Triggers:**
-- Workflow run completion of: `Go CI`, `Unit Tests`, `Go Security`, `Coverage Check`
-- Branches: `develop`, `release-candidate`, `main`
-
-**What it does:**
-- **Aggregate status**: Collects results from all CI workflows
-- **Validation**: Checks that ALL 4 workflows succeeded
-- **Gatekeeper**: Blocks semantic-release if any workflow fails
-- **Status reporting**: Provides detailed status of each workflow
-
-**Duration:** ~5-15 seconds
-
-**Logic:**
-```javascript
-// Pseudo-code of CI Gate logic
-workflows = ['Go CI', 'Unit Tests', 'Go Security', 'Coverage Check']
-allPassed = workflows.every(w => w.status === 'success')
-
-if (!allPassed) {
-  fail('Not all required workflows passed')
-  block_semantic_release()
-} else {
-  success('All CI workflows passed')
-  trigger_semantic_release()
-}
-```
-
-### 7. Semantic Release (`semantic-release.yml`)
-
-**Triggers:**
-- Workflow run completion of: `CI Gate` (when successful)
+- Push to: `develop`, `release-candidate`, `main`
 - Manual dispatch
 
 **What it does:**
@@ -352,9 +293,9 @@ if (!allPassed) {
 
 **Duration:** ~1-2 minutes
 
-**Dependencies:** `CI Gate` must pass
+**Note:** Runs independently on push events, does not wait for PR validation workflows
 
-### 8. Go Release (`go-release.yml`)
+### 7. Go Release (`go-release.yml`)
 
 **Triggers:**
 - Release published (created by semantic-release)
@@ -375,78 +316,6 @@ if (!allPassed) {
 **Duration:** ~8-12 minutes
 
 **Output:** GitHub release with 16+ downloadable assets
-
-## CI Gate System
-
-The CI Gate is a critical quality gate that ensures comprehensive validation before any release.
-
-### How CI Gate Works
-
-```
-                        ┌─────────────────┐
-                        │ Push to Branch  │
-                        └────────┬────────┘
-                                 │
-                                 ▼
-                    ┌────────────────────────┐
-                    │ Trigger 4 CI Workflows │
-                    └────────────┬───────────┘
-                                 │
-                    ┌────────────┼────────────┬────────────┐
-                    │            │            │            │
-                    ▼            ▼            ▼            ▼
-               ┌────────┐  ┌─────────┐  ┌─────────┐  ┌──────────┐
-               │ Go CI  │  │  Unit   │  │Coverage │  │   Go     │
-               │        │  │  Tests  │  │  Check  │  │ Security │
-               └───┬────┘  └────┬────┘  └────┬────┘  └────┬─────┘
-                   │            │            │            │
-                   │ Complete   │ Complete   │ Complete   │ Complete
-                   └────────────┴────────────┴────────────┘
-                                 │
-                                 ▼
-                         ┌───────────────┐
-                         │   CI Gate     │ ◄── Quality Gatekeeper
-                         │ Checks Status │
-                         └───────┬───────┘
-                                 │
-                                 ▼
-                          ┌──────────────┐
-                          │ All Success? │
-                          └──────┬───────┘
-                                 │
-                        ┌────────┴────────┐
-                        │                 │
-                     YES│                 │NO
-                        ▼                 ▼
-                ┌──────────────┐   ┌──────────────┐
-                │  CI Gate     │   │  CI Gate     │
-                │     PASS     │   │     FAIL     │
-                └──────┬───────┘   └──────┬───────┘
-                       │                  │
-                       ▼                  ▼
-              ┌─────────────────┐  ┌──────────────┐
-              │Semantic Release │  │    Block     │
-              │  Can Proceed    │  │   Release    │
-              └─────────────────┘  │Show Failures │
-                                   └──────────────┘
-```
-
-### CI Gate Benefits
-
-1. **Atomic Quality Check**: Single point of validation for all CI workflows
-2. **Prevents Partial Releases**: Won't release if any check fails
-3. **Clear Status**: Shows exactly which workflows passed/failed
-4. **Automated Gating**: No manual intervention needed
-5. **Consistent Standards**: Same checks for all branches
-
-### Monitored Workflows
-
-| Workflow | Check | Failure Impact |
-|----------|-------|----------------|
-| **Go CI** | Code quality, builds, cross-platform | Blocks release |
-| **Unit Tests** | Test passing, race detection | Blocks release |
-| **Coverage Check** | Test coverage ≥ 25% | Blocks release |
-| **Go Security** | Security vulnerabilities, licenses | Blocks release |
 
 ## Semantic Versioning
 
@@ -518,7 +387,6 @@ Based on [Conventional Commits](https://www.conventionalcommits.org/):
 │   ├── coverage.yml           # Coverage checking
 │   ├── go-security.yml        # Security scanning
 │   ├── pr-validation.yml      # PR validation
-│   ├── ci-gate.yml            # Quality gate
 │   ├── semantic-release.yml   # Automated versioning
 │   └── go-release.yml         # Release automation
 ├── ISSUE_TEMPLATE/
@@ -565,42 +433,54 @@ Automatically set during builds:
 
 ### Common Issues
 
-#### 1. CI Gate Fails But All Workflows Pass
+#### 1. Semantic Release Doesn't Trigger
 
-**Symptom:** CI Gate shows "Not all required workflows passed"
+**Symptom:** Push to branch but no release created
 
-**Cause:** Timing issue or workflow name mismatch
+**Cause:** No releasable commits since last release
+
+**Solution:**
+- Ensure commits follow conventional format (`feat:`, `fix:`, etc.)
+- Verify semantic-release workflow triggered: `gh run list --workflow=semantic-release.yml`
+- Check semantic-release logs for analysis result
+- Confirm conventional commits exist since last tag
+
+#### 2. CI Workflows Don't Run on PR
+
+**Symptom:** PR created but CI workflows don't start
+
+**Cause:** PR trigger configuration or branch mismatch
 
 **Solution:**
 ```bash
-# Check CI Gate logs
-gh run view <run-id> --log | grep "workflow"
+# Check PR details
+gh pr view <pr-number>
 
-# Verify workflow names match exactly
-gh run list --limit 20 | grep -E "Go CI|Unit Tests|Coverage|Security"
+# Verify PR targets correct branch (develop/release-candidate/main)
+gh pr view <pr-number> --json baseRefName
+
+# Check workflow run history
+gh run list --limit 10
 ```
 
-#### 2. Semantic Release Doesn't Trigger
+#### 3. Security Scan Fails
 
-**Symptom:** CI Gate passes but no release created
+**Symptom:** Go Security workflow reports vulnerabilities
 
-**Cause:** No releasable commits or CI Gate didn't complete
+**Cause:** Dependencies or code have security issues
 
 **Solution:**
-- Ensure commits follow conventional format
-- Check CI Gate workflow completed successfully
-- Verify semantic-release workflow triggered
-- Check semantic-release logs for analysis result
+```bash
+# Run security scans locally
+make security-check
 
-#### 3. Go Security Fails on Push Events
+# Update vulnerable dependencies
+go get -u ./...
+go mod tidy
 
-**Symptom:** TruffleHog error: "BASE and HEAD commits are the same"
-
-**Cause:** Secret scanning requires PR with diff
-
-**Status:** Known limitation, secret scanning only works on PRs
-
-**Solution:** This is expected behavior; security still validated in other ways
+# Check specific vulnerability
+govulncheck ./...
+```
 
 #### 4. Coverage Below Threshold
 
@@ -706,7 +586,7 @@ chore: bump dependencies to latest versions
 
 - [ ] PR title follows conventional commit format
 - [ ] Description explains what and why (min 50 chars)
-- [ ] All CI workflows passing
+- [ ] All CI workflows passing (Go CI, Unit Tests, Coverage, Security)
 - [ ] Test coverage maintained or improved
 - [ ] Documentation updated if needed
 - [ ] CHANGELOG.md updated (if applicable)
@@ -716,24 +596,27 @@ chore: bump dependencies to latest versions
 ### Release Checklist
 
 **For Beta Release (develop):**
-- [ ] All CI checks passing
-- [ ] Feature branch merged to develop
+- [ ] Feature branch merged to develop via PR
+- [ ] All PR CI checks passed
 - [ ] Conventional commits used
-- [ ] CI Gate passes
+- [ ] Push to develop triggers semantic-release
 - [ ] Semantic-release creates beta tag
-- [ ] Go Release builds assets
+- [ ] Go Release builds and uploads assets
 
 **For RC Release (release-candidate):**
 - [ ] Develop branch stable and tested
-- [ ] Merge develop → release-candidate
-- [ ] All CI checks pass on RC
-- [ ] RC testing completed
+- [ ] Create PR: develop → release-candidate
+- [ ] All CI checks pass on PR
+- [ ] Merge PR to release-candidate
+- [ ] Push triggers semantic-release
 - [ ] Semantic-release creates RC tag
 
 **For Stable Release (main):**
 - [ ] RC thoroughly tested
-- [ ] Merge release-candidate → main
-- [ ] All CI checks pass on main
+- [ ] Create PR: release-candidate → main
+- [ ] All CI checks pass on PR
+- [ ] Merge PR to main
+- [ ] Push triggers semantic-release
 - [ ] Semantic-release creates stable tag
 - [ ] Release notes reviewed
 - [ ] Announcement prepared
@@ -741,68 +624,50 @@ chore: bump dependencies to latest versions
 ## Workflow Dependencies Graph
 
 ```
-                              ┌─────────────┐
-                              │  Code Push  │
-                              └──────┬──────┘
-                                     │
-         ┌───────────────┬───────────┼───────────┬───────────────┬────────────────┐
-         │               │           │           │               │                │
-         ▼               ▼           ▼           ▼               ▼                ▼
-    ┌────────┐    ┌──────────┐ ┌─────────┐ ┌──────────┐  ┌────────────┐  ┌──────────────┐
-    │ Go CI  │    │   Unit   │ │Coverage │ │   Go     │  │     PR     │  │   (parallel  │
-    │        │    │  Tests   │ │  Check  │ │ Security │  │Validation  │  │  workflows)  │
-    └───┬────┘    └─────┬────┘ └────┬────┘ └────┬─────┘  └────────────┘  └──────────────┘
-        │               │           │           │          (PRs only)
-        └───────────────┴───────────┴───────────┘
-                        │
-                        ▼
-                 ┌──────────────┐
-                 │   CI Gate    │ ◄────── Quality Gatekeeper
-                 └──────┬───────┘
-                        │
-                        ▼
-                  ┌──────────┐
-                  │All Pass? │
-                  └────┬─────┘
-                       │
-              ┌────────┴────────┐
-              │                 │
-           YES│                 │NO
-              ▼                 ▼
-      ┌───────────────┐   ┌─────────────┐
-      │   Semantic    │   │   Block &   │
-      │    Release    │   │   Notify    │
-      └───────┬───────┘   └─────────────┘
-              │
-              ▼
-         ┌──────────┐
-         │Create Tag│
-         └─────┬────┘
-               │
-               ▼
-         ┌──────────────┐
-         │  Go Release  │
-         └──────┬───────┘
-                │
-     ┌──────────┼──────────┐
-     │          │          │
-     ▼          ▼          ▼
-┌─────────┐ ┌────────┐ ┌──────────┐
-│  Build  │ │ Create │ │ Generate │
-│Binaries │ │Packages│ │Checksums │
-└────┬────┘ └───┬────┘ └────┬─────┘
-     │          │          │
-     └──────────┴──────────┘
-                │
-                ▼
-        ┌───────────────┐
-        │Upload Assets  │
-        └───────┬───────┘
-                │
-                ▼
-        ┌───────────────┐
-        │GitHub Release │ ◄────── Final Artifact
-        └───────────────┘
+PR Flow:                        Push Flow:
+┌─────────────┐                ┌─────────────┐
+│  Create PR  │                │  Push Code  │
+└──────┬──────┘                └──────┬──────┘
+       │                              │
+       ├──────┬──────┬──────┐         │
+       │      │      │      │         │
+       ▼      ▼      ▼      ▼         ▼
+   ┌────┐ ┌────┐ ┌───┐ ┌────┐   ┌──────────┐
+   │Go  │ │Unit│ │Cov│ │ Go │   │Semantic  │
+   │CI  │ │Test│ │Chk│ │Sec │   │Release   │
+   └─┬──┘ └─┬──┘ └─┬─┘ └─┬──┘   └────┬─────┘
+     │      │      │     │           │
+     └──────┴──────┴─────┘           │
+            │                        │
+            ▼                        ▼
+      ┌──────────┐            ┌──────────┐
+      │All Pass? │            │Create Tag│
+      └─────┬────┘            └────┬─────┘
+            │                      │
+            ▼                      ▼
+      ┌──────────┐            ┌──────────┐
+      │Can Merge │            │Go Release│
+      └──────────┘            └────┬─────┘
+                                   │
+                    ┌──────────────┼──────────────┐
+                    │              │              │
+                    ▼              ▼              ▼
+               ┌────────┐    ┌─────────┐    ┌────────┐
+               │ Build  │    │ Package │    │Checksum│
+               │Binaries│    │         │    │        │
+               └────┬───┘    └────┬────┘    └───┬────┘
+                    │             │             │
+                    └─────────────┴─────────────┘
+                                  │
+                                  ▼
+                          ┌──────────────┐
+                          │Upload Assets │
+                          └──────┬───────┘
+                                 │
+                                 ▼
+                          ┌──────────────┐
+                          │GitHub Release│
+                          └──────────────┘
 ```
 
 ## Status Badges
@@ -836,6 +701,6 @@ If you have questions about the CI/CD pipeline:
 
 ---
 
-**Last Updated:** 2025-11-25
-**Version:** 2.0.0
+**Last Updated:** 2025-11-26
+**Version:** 3.0.0
 **Maintainers:** Lerian Studio DevOps Team

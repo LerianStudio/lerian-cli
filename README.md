@@ -1,7 +1,7 @@
 # Lerian CLI
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](https://go.dev/)
 [![GitHub Release](https://img.shields.io/badge/release-v1.0.0--beta-green.svg)](https://github.com/lerian-studio/lerian-cli/releases)
 
 Official command-line interface for the Lerian platform. Manage your infrastructure products and deployments.
@@ -32,24 +32,115 @@ Midaz is a ledger system for managing assets, operations, and multi-tenancy envi
 - **Multiple Output Formats** - Table, JSON, and YAML output options
 - **Multi-Product Support** - Unified CLI for all Lerian products
 
-## Quick Start
+## Installation
 
-### Installation
+### Quick Install (Recommended)
 
-#### Using Go Install
+The easiest way to install the Lerian CLI is using the install script:
+
 ```bash
-go install github.com/lerian-studio/lerian-cli/cmd/lerian@latest
+curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | sh
 ```
 
-#### From Source
+**Prerequisites:** [GitHub CLI (gh)](https://cli.github.com/) installed and authenticated with access to the repository.
+
+#### Install Options
+
 ```bash
-git clone https://github.com/lerian-studio/lerian-cli.git
+# Install latest version
+curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | sh
+
+# Install specific version
+curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | sh -s -- --version v1.0.0
+
+# Custom install directory
+INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | sh
+```
+
+### Other Installation Methods
+
+<details>
+<summary><strong>Manual Download</strong></summary>
+
+Download the latest release for your platform from the [releases page](https://github.com/LerianStudio/lerian-cli/releases).
+
+```bash
+# Example for Linux amd64
+gh release download --repo LerianStudio/lerian-cli --pattern "lerian_*_Linux_x86_64.tar.gz"
+tar -xzf lerian_*_Linux_x86_64.tar.gz
+sudo mv lerian /usr/local/bin/
+```
+
+</details>
+
+<details>
+<summary><strong>From Source</strong></summary>
+
+```bash
+git clone https://github.com/LerianStudio/lerian-cli.git
 cd lerian-cli
 make install
 ```
 
-#### Download Binary
-Download the latest release for your platform from the [releases page](https://github.com/lerian-studio/lerian-cli/releases).
+</details>
+
+<details>
+<summary><strong>Using Go Install</strong></summary>
+
+```bash
+go install github.com/LerianStudio/lerian-cli/cmd/lerian@latest
+```
+
+> Note: Requires Go 1.25+ and access to the private repository via GOPRIVATE.
+
+</details>
+
+<details>
+<summary><strong>Linux Packages (.deb/.rpm)</strong></summary>
+
+Download the appropriate package from the [releases page](https://github.com/LerianStudio/lerian-cli/releases):
+
+```bash
+# Debian/Ubuntu
+gh release download --repo LerianStudio/lerian-cli --pattern "*.deb"
+sudo dpkg -i lerian_*.deb
+
+# RHEL/Fedora
+gh release download --repo LerianStudio/lerian-cli --pattern "*.rpm"
+sudo rpm -i lerian_*.rpm
+```
+
+</details>
+
+### Verify Installation
+
+```bash
+lerian --version
+```
+
+### Shell Completions
+
+Enable auto-completion for your shell:
+
+```bash
+# Bash
+lerian completion bash > /etc/bash_completion.d/lerian
+# Or for current user only:
+lerian completion bash >> ~/.bashrc
+
+# Zsh
+lerian completion zsh > "${fpath[1]}/_lerian"
+# Or add to ~/.zshrc:
+echo 'source <(lerian completion zsh)' >> ~/.zshrc
+
+# Fish
+lerian completion fish > ~/.config/fish/completions/lerian.fish
+
+# PowerShell
+lerian completion powershell > lerian.ps1
+```
+
+## Quick Start
 
 ### First Steps
 

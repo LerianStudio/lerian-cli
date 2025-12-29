@@ -1,0 +1,34 @@
+name: Release
+
+# This workflow creates releases based on conventional commits
+# It triggers on push to release branches and waits for CI Gate to pass
+# Semantic-release will analyze commits and only create a release if needed
+
+on:
+  push:
+    branches:
+      - develop
+      - release-candidate
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/**'
+      - 'LICENSE'
+      - 'CODEOWNERS'
+      - '.gitignore'
+      - 'images/**'
+      - '*.txt'
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release:
+    name: Create Release
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@v1.3.5
+    with:
+      runner_type: "blacksmith-4vcpu-ubuntu-2404"
+    secrets: inherit

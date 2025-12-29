@@ -137,3 +137,5 @@ $RECYCLE.BIN/
 # Local configuration overrides
 config.local.yaml
 .lerian/
+.beads/
+history/
