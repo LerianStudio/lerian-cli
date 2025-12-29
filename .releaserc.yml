@@ -9,12 +9,15 @@ branches:
 plugins:
   - "@semantic-release/commit-analyzer"
   - "@semantic-release/release-notes-generator"
-  - "@semantic-release/changelog"
-  - - "@semantic-release/git"
-    - assets:
-        - CHANGELOG.md
-      message: "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
-  - "@semantic-release/github"
+  # Changelog disabled - using GPT Changelog for stable releases only
+  # - "@semantic-release/changelog"
+  # Git plugin disabled - no changelog commits needed
+  # - - "@semantic-release/git"
+  #   - assets:
+  #       - CHANGELOG.md
+  #     message: "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+  - - "@semantic-release/github"
+    - successComment: "🎉 This PR is included in version ${nextRelease.gitTag} 🎉\n\nThe release is available on [GitHub release](${releases[0].url})\n\nYour **semantic-release** bot 📦🚀"
 
 preset: conventionalcommits
 
