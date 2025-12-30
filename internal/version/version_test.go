@@ -243,6 +243,62 @@ func TestInfoStringFormat(t *testing.T) {
 	}
 }
 
+func TestIsDevelopment(t *testing.T) {
+	tests := []struct {
+		version  string
+		expected bool
+	}{
+		{"dev", true},
+		{"", true},
+		{"v1.0.0", false},
+		{"v1.0.0-beta.1", false},
+	}
+
+	for _, tc := range tests {
+		Version = tc.version
+		if got := IsDevelopment(); got != tc.expected {
+			t.Errorf("IsDevelopment() with version %q = %v, want %v", tc.version, got, tc.expected)
+		}
+	}
+}
+
+func TestIsRelease(t *testing.T) {
+	tests := []struct {
+		version  string
+		expected bool
+	}{
+		{"dev", false},
+		{"", false},
+		{"v1.0.0", true},
+		{"v1.0.0-beta.1", true},
+	}
+
+	for _, tc := range tests {
+		Version = tc.version
+		if got := IsRelease(); got != tc.expected {
+			t.Errorf("IsRelease() with version %q = %v, want %v", tc.version, got, tc.expected)
+		}
+	}
+}
+
+func TestCompareVersion(t *testing.T) {
+	tests := []struct {
+		v1, v2   string
+		expected int
+	}{
+		{"v1.0.0", "v1.0.0", 0},
+		{"v1.0.0", "v2.0.0", -1},
+		{"v2.0.0", "v1.0.0", 1},
+		{"v1.0.0", "v1.1.0", -1},
+	}
+
+	for _, tc := range tests {
+		if got := CompareVersion(tc.v1, tc.v2); got != tc.expected {
+			t.Errorf("CompareVersion(%q, %q) = %d, want %d", tc.v1, tc.v2, got, tc.expected)
+		}
+	}
+}
+
 func BenchmarkGetInfo(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		GetInfo()
