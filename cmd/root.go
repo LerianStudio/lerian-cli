@@ -1,3 +1,4 @@
+// Package cmd provides the root command and CLI initialization
 package cmd
 
 import (
