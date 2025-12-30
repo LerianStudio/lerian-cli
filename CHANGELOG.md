@@ -23,7 +23,7 @@
   - Simplified CI/CD pipeline architecture for better efficiency.
   - Added comprehensive test coverage to ensure code quality.
 
-Contributors: @ferr3ira-gabriel, @ferr3ira.gabriel
+Contributors: @ferr3ira-gabriel
 
 [View all changes](https://github.com/LerianStudio/lerian-cli/commits/v1.0.0)
 
