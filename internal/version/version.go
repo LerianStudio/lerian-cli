@@ -90,3 +90,25 @@ func GetDate() string {
 func GetBuiltBy() string {
 	return BuiltBy
 }
+
+// IsDevelopment returns true if running a development build.
+func IsDevelopment() bool {
+	return Version == "dev" || Version == ""
+}
+
+// IsRelease returns true if running a release build.
+func IsRelease() bool {
+	return !IsDevelopment()
+}
+
+// CompareVersion compares two semantic versions.
+// Returns -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2.
+func CompareVersion(v1, v2 string) int {
+	if v1 == v2 {
+		return 0
+	}
+	if v1 < v2 {
+		return -1
+	}
+	return 1
+}
