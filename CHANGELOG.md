@@ -1,5 +1,24 @@
 # Lerian-cli Changelog
 
+## [1.1.0](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.1.0)
+
+- **Features:**
+  - Added build type detection helpers to enhance version management.
+
+- **Improvements:**
+  - Improved package and variable documentation for better code clarity.
+  - Added package documentation to the command module.
+
+- **Fixes:**
+  - Fixed duplicate contributor entry in the changelog.
+  - Removed duplicate v1.0.0 entry from the changelog.
+
+Contributors: @ferr3ira-gabriel, @ferr3ira.gabriel, @lerian-studio-midaz-push-bot[bot]
+
+[Compare changes](https://github.com/LerianStudio/lerian-cli/compare/v1.0.0...v1.1.0)
+
+---
+
 ## [1.0.0](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.0.0)
 
 - **Features**
@@ -24,3 +43,4 @@
 Contributors: @ferr3ira-gabriel
 
 [View all changes](https://github.com/LerianStudio/lerian-cli/commits/v1.0.0)
+
