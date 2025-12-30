@@ -23,36 +23,7 @@
   - Simplified CI/CD pipeline architecture for better efficiency.
   - Added comprehensive test coverage to ensure code quality.
 
-Contributors: @ferr3ira-gabriel, @ferr3ira.gabriel
-
-[View all changes](https://github.com/LerianStudio/lerian-cli/commits/v1.0.0)
-
----
-
-## [1.0.0](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.0.0)
-
-- Features:
-  - Added semantic-release automation with CI/CD integration.
-  - Introduced a CI gate workflow to ensure all checks pass before release.
-  - Implemented a version management system.
-  - Added comprehensive testing and CI/CD workflows.
-  - Integrated pr-security-scan workflow for CLI.
-
-- Fixes:
-  - Removed deprecated rlcp field from goreleaser config.
-  - Updated goreleaser config to version 2.
-  - Corrected secret name in pr-validation workflow.
-  - Fixed golangci-lint configuration and remaining violations.
-  - Resolved Windows build issue in integration tests.
-
-- Improvements:
-  - Updated shared workflows to v1.3.5.
-  - Enhanced CI/CD documentation with ASCII diagrams.
-  - Reorganized to standard Go project structure.
-  - Upgraded Go version to 1.25.4.
-  - Added comprehensive test coverage.
-
-Contributors: @ferr3ira-gabriel, @ferr3ira.gabriel
+Contributors: @ferr3ira-gabriel
 
 [View all changes](https://github.com/LerianStudio/lerian-cli/commits/v1.0.0)
 
