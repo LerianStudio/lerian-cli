@@ -1,4 +1,11 @@
-// Package cmd provides the root command and CLI initialization
+// Package cmd provides the root command and CLI initialization.
+//
+// The cmd package is the entry point for the Lerian CLI application.
+// It sets up the root command and registers all subcommands including
+// authentication (auth) and Midaz management (midaz) commands.
+//
+// Configuration is managed through flags and configuration files,
+// supporting multiple profiles for different environments.
 package cmd
 
 import (
@@ -12,10 +19,17 @@ import (
 )
 
 var (
-	// Used for flags
+	// cfgFile holds the path to the configuration file.
+	// Can be set via --config flag or LERIAN_CONFIG environment variable.
 	cfgFile string
+
+	// profile specifies which configuration profile to use.
+	// Profiles allow managing multiple environments (dev, staging, prod).
 	profile string
-	output  string
+
+	// output defines the output format for command results.
+	// Supported formats: json, yaml, table (default).
+	output string
 )
 
 // rootCmd represents the base command when called without any subcommands
