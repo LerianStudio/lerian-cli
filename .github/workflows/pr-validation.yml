@@ -3,44 +3,47 @@ name: PR Validation
 on:
   pull_request:
     branches: [develop, release-candidate, main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
 
 permissions:
+  actions: read
   contents: read
-  pull-requests: write
+  id-token: write
   issues: write
+  pull-requests: write
+  security-events: write
 
 jobs:
   validate:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@v1.3.5
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-validation.yml@tier-1
     with:
-      runner_type: "blacksmith-4vcpu-ubuntu-2404"
-      pr_title_types: |
-        feat
-        fix
-        docs
-        style
-        refactor
-        perf
-        test
-        chore
-        ci
-        build
-        revert
       pr_title_scopes: |
         auth
-        ledger
-        config
-        client
-        kubectl
-        output
-        cli
-        deps
+        build
         ci
-        release
-      require_scope: false
-      min_description_length: 50
-      check_changelog: true
-      enable_auto_labeler: true
-      labeler_config_path: '.github/labeler.yml'
+        cli
+        cmd
+        config
+        deps
+        docs
+        examples
+        kubectl
+        ledger
+        output
+        scripts
+        tests
+        version
+      app_name_prefix: "lerian-cli"
+      go_version: "1.25"
+      golangci_lint_version: "v2.12.2"
+      allowed_source_branches: 'develop|hotfix/*'
+      enable_docker_scan: false
+      run_lib_version_check: false
+      shared_paths: |
+        go.mod
+        go.sum
+        cmd/
+        internal/
+        Makefile
+        .github/workflows/
     secrets: inherit
