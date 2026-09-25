@@ -1,5 +1,24 @@
 # Lerian-cli Changelog
 
+## [1.1.1](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.1.1)
+
+Features:
+
+- Test the GPT changelog generation process to ensure accurate and efficient changelog creation. (@maciell1)
+
+Fixes:
+
+- Align CI workflows with the shared workflows tier-1 boilerplate to maintain consistency and reduce errors. (@bedatty)
+
+Improvements:
+
+- Remove the legacy go-release caller and empty `.gitkeep` files from the CI process to streamline operations. (@bedatty)
+- Refresh shared workflows to the latest tier-1 standards, ensuring up-to-date practices and tools are in use. (@bedatty)
+
+[Compare changes](https://github.com/LerianStudio/lerian-cli/compare/v1.1.0...v1.1.1)
+
+---
+
 ## [1.1.0](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.1.0)
 
 - **Features:**
@@ -47,3 +66,4 @@ Contributors: @ferr3ira-gabriel
 
 ## Test Entry
 - Test GPT changelog generation 2026-01-19
+
