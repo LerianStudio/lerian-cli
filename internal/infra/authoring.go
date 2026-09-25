@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -535,10 +536,20 @@ func upsertINISection(content []byte, name string, body []string) []byte {
 		return joinLines(out)
 	}
 
-	// Present: keep the trailing blank lines AND comments that belonged to the old
-	// section, so repeated upserts do not slowly collapse the file's spacing, and
-	// so a comment the operator wrote above the next header is not swallowed by a
-	// --force rewrite of this one.
+	// A section whose configuration already says what the body says is left exactly
+	// as it is, byte for byte. Rewriting it would replace the operator's lines with
+	// the generated ones — and an inline "# ask before touching" lives on such a
+	// line, so the rewrite would delete it. sectionDiffers ignores those comments
+	// when deciding whether there is a conflict, so without this the write would be
+	// permitted without Force and the comment would vanish silently.
+	if slices.Equal(significantLines(lines[start:end]), significantLines(body)) {
+		return joinLines(lines)
+	}
+
+	// Present and genuinely different: keep the trailing blank lines AND comments
+	// that belonged to the old section, so repeated upserts do not slowly collapse
+	// the file's spacing, and so a comment the operator wrote above the next header
+	// is not swallowed by a --force rewrite of this one.
 	tail := end
 	for tail > start+1 {
 		trimmed := strings.TrimSpace(lines[tail-1])

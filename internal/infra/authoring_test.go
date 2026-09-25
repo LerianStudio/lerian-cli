@@ -986,3 +986,28 @@ func TestSectionDiffersSeesAChangeBehindAnInlineComment(t *testing.T) {
 		t.Error("a changed value was hidden by the inline comment")
 	}
 }
+
+// The guarantee is byte for byte, and ignoring inline comments in the comparison
+// is only half of honouring it: if the upsert then rewrites the section anyway,
+// the comment is deleted — and worse than before, because sectionDiffers no longer
+// reports a conflict, so the write is permitted without Force.
+func TestUpsertLeavesAnEquivalentSectionExactlyAsItIs(t *testing.T) {
+	content := []byte("[dev]\naccount_id = 123456789012 # ask before touching\nprofile    = acme-dev\n")
+	body := []string{"[dev]", "account_id = 123456789012", "profile    = acme-dev"}
+
+	got := upsertINISection(content, "dev", body)
+	if string(got) != string(content) {
+		t.Errorf("an equivalent section was rewritten:\ngot:\n%s\nwant:\n%s", got, content)
+	}
+}
+
+// And a section that really differs is still rewritten.
+func TestUpsertStillRewritesAChangedSection(t *testing.T) {
+	content := []byte("[dev]\naccount_id = 123456789012 # a note\n")
+	body := []string{"[dev]", "account_id = 999999999999"}
+
+	got := string(upsertINISection(content, "dev", body))
+	if !strings.Contains(got, "999999999999") {
+		t.Errorf("the changed value was not written:\n%s", got)
+	}
+}
