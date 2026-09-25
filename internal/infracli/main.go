@@ -261,7 +261,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		terraform.Credentials = credentials
 
-		if err := guardCredentialLifetime(progressOut, credentials, action, opts.minCredentialLifetime, config.Profile); err != nil {
+		err = guardCredentialLifetime(
+			progressOut, credentials, action, opts.minCredentialLifetime, config.Profile)
+		if err != nil {
 			return err
 		}
 	}
