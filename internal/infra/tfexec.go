@@ -138,15 +138,45 @@ func (c *CLI) terraform(unit Unit) (*tfexec.Terraform, error) {
 		return nil, fmt.Errorf("infra: cannot set the environment for %s: %w", unit.Name, err)
 	}
 
-	if c.Logs != nil {
-		if writer := c.Logs(unit); writer != nil {
-			client.SetStdout(writer)
-			client.SetStderr(writer)
-		}
+	if writer := c.logWriter(unit); writer != io.Discard {
+		client.SetStdout(writer)
+		client.SetStderr(writer)
 	}
 
 	c.byDir[unit.Dir] = client
 	return client, nil
+}
+
+// logWriter is where the raw output of one unit goes, or io.Discard when the
+// caller wants none. It mirrors what terraform() installs on the client.
+func (c *CLI) logWriter(unit Unit) io.Writer {
+	if c.Logs == nil {
+		return io.Discard
+	}
+	if writer := c.Logs(unit); writer != nil {
+		return writer
+	}
+	return io.Discard
+}
+
+// quiet sends the client's stdout to io.Discard for the duration of one call and
+// returns the func that puts the unit's log back.
+//
+// It exists for the two calls that ask Terraform for JSON. tfexec runs those
+// through runTerraformCmdJSON, which does `cmd.Stdout = mergeWriters(cmd.Stdout,
+// &outbuf)` — the configured stdout receives the whole document in addition to
+// the capture buffer tfexec decodes from. So a plan JSON, with planned_values and
+// prior state, and an output JSON both landed verbatim in the unit's .log, which
+// this CLI keeps on purpose and prints the path to. Terraform redacts neither.
+//
+// The saved plan files are already deleted at the end of a run because they carry
+// values read from state; the logs held the same values and outlived the run.
+//
+// Safe without a lock: byDir hands each unit its own client, so the calls on one
+// client are sequential even when units run in parallel.
+func (c *CLI) quiet(client *tfexec.Terraform, unit Unit) func() {
+	client.SetStdout(io.Discard)
+	return func() { client.SetStdout(c.logWriter(unit)) }
 }
 
 // Init initializes one root.
@@ -223,6 +253,7 @@ func (c *CLI) ShowPlan(ctx context.Context, unit Unit, planFile string) (Changes
 	if err != nil {
 		return Changes{}, err
 	}
+	defer c.quiet(client, unit)()
 	plan, err := client.ShowPlanFile(ctx, planFile)
 	if err != nil {
 		return Changes{}, fmt.Errorf("infra: cannot read the saved plan of %s: %w", unit.Name, err)
@@ -275,6 +306,7 @@ func (c *CLI) Output(ctx context.Context, unit Unit) (map[string]json.RawMessage
 	if err != nil {
 		return nil, err
 	}
+	defer c.quiet(client, unit)()
 	outputs, err := client.Output(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("infra: terraform output failed for %s: %w", unit.Name, err)
