@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The AWS CLI is a hard dependency, and its absence used to arrive as
@@ -124,10 +125,16 @@ func fakeAWSCLIWith(t *testing.T, script awsScript) string {
 		return dir
 	}
 
+	// The payloads are JSON, so every double quote has to survive the shell that
+	// prints them; unescaped, the fixture emits something that is not JSON at all
+	// and the test fails for a reason that has nothing to do with what it checks.
+	shellQuote := func(value string) string {
+		return strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "$", "\\$", "`", "\\`").Replace(value)
+	}
 	body := "#!/bin/sh\n" +
 		"if [ \"$1\" = \"--version\" ]; then printf '%s\\n' \"" + script.version + "\"; exit 0; fi\n" +
-		"printf '%s' \"" + script.stdout + "\"\n" +
-		"printf '%s' \"" + script.stderr + "\" >&2\n" +
+		"printf '%s' \"" + shellQuote(script.stdout) + "\"\n" +
+		"printf '%s' \"" + shellQuote(script.stderr) + "\" >&2\n" +
 		"exit " + strconv.Itoa(script.exit) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "aws"), []byte(body), 0o755); err != nil {
 		t.Fatal(err)
@@ -136,13 +143,13 @@ func fakeAWSCLIWith(t *testing.T, script awsScript) string {
 }
 
 // stdout and stderr are read apart, and only stdout is parsed. Merging them let a
-// stderr line shaped like KEY=VALUE be read as a credential — a warning or a
-// deprecation notice would become the access key the run then uses.
-func TestResolveCredentialsIgnoresKeyValueLinesOnStderr(t *testing.T) {
+// stderr line be read as a credential — a warning or a deprecation notice would
+// become the access key the run then uses.
+func TestResolveCredentialsIgnoresWhatIsOnStderr(t *testing.T) {
 	t.Setenv("PATH", fakeAWSCLIWith(t, awsScript{
 		version: "aws-cli/2.31.22",
-		stdout:  "AWS_ACCESS_KEY_ID=AKIAREAL\nAWS_SECRET_ACCESS_KEY=realsecret\n",
-		stderr:  "AWS_ACCESS_KEY_ID=AKIAFROMSTDERR\n",
+		stdout:  `{"Version":1,"AccessKeyId":"AKIAREAL","SecretAccessKey":"realsecret","SessionToken":"tok"}`,
+		stderr:  `{"AccessKeyId":"AKIAFROMSTDERR"}`,
 	}))
 
 	credentials, err := ResolveCredentials(context.Background(), "lerian-dev")
@@ -157,12 +164,55 @@ func TestResolveCredentialsIgnoresKeyValueLinesOnStderr(t *testing.T) {
 	}
 }
 
+// The lifetime is the whole reason this reads --format process. A session that
+// expires must report how long it has; one that does not expire must report that
+// there is nothing to know, rather than a zero that reads as "already expired".
+func TestResolveCredentialsReadsTheExpiration(t *testing.T) {
+	expires := time.Now().Add(90 * time.Minute).UTC().Round(time.Second)
+	t.Setenv("PATH", fakeAWSCLIWith(t, awsScript{
+		version: "aws-cli/2.31.22",
+		stdout: `{"Version":1,"AccessKeyId":"AKIAREAL","SecretAccessKey":"s","SessionToken":"t",` +
+			`"Expiration":"` + expires.Format(time.RFC3339) + `"}`,
+	}))
+
+	credentials, err := ResolveCredentials(context.Background(), "lerian-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, known := credentials.RemainingLifetime(time.Now())
+	if !known {
+		t.Fatal("an expiring session reported no lifetime")
+	}
+	if left < 85*time.Minute || left > 95*time.Minute {
+		t.Errorf("remaining lifetime = %v, want about 90m", left)
+	}
+}
+
+// A profile backed by a long-lived access key has no Expiration, and a lifetime
+// this code cannot read must never become a reason to refuse a run.
+func TestResolveCredentialsAcceptsASessionThatDoesNotExpire(t *testing.T) {
+	for _, stdout := range []string{
+		`{"Version":1,"AccessKeyId":"AKIAREAL","SecretAccessKey":"s"}`,
+		`{"Version":1,"AccessKeyId":"AKIAREAL","SecretAccessKey":"s","Expiration":"not-a-timestamp"}`,
+	} {
+		t.Setenv("PATH", fakeAWSCLIWith(t, awsScript{version: "aws-cli/2.31.22", stdout: stdout}))
+
+		credentials, err := ResolveCredentials(context.Background(), "lerian-dev")
+		if err != nil {
+			t.Fatalf("%s: %v", stdout, err)
+		}
+		if _, known := credentials.RemainingLifetime(time.Now()); known {
+			t.Errorf("%s: reported a lifetime it cannot know", stdout)
+		}
+	}
+}
+
 // A non-zero exit AFTER credentials were printed must not put the secret into the
 // error text — the caller prints that error, which is how a secret reaches a CI log.
 func TestResolveCredentialsNeverPutsTheSecretInTheError(t *testing.T) {
 	t.Setenv("PATH", fakeAWSCLIWith(t, awsScript{
 		version: "aws-cli/2.31.22",
-		stdout:  "AWS_ACCESS_KEY_ID=AKIAREAL\nAWS_SECRET_ACCESS_KEY=topsecretvalue\n",
+		stdout:  `{"Version":1,"AccessKeyId":"AKIAREAL","SecretAccessKey":"topsecretvalue"}`,
 		stderr:  "the SSO session has expired\n",
 		exit:    255,
 	}))

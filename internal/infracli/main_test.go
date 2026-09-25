@@ -419,3 +419,99 @@ func TestSpinnerIsInertWhenTheDestinationCannotRepaint(t *testing.T) {
 	// Stop must be safe, and safe twice: the inert path closes no channel.
 	spin.Stop()
 }
+
+// The incident behind this guard: credentials are resolved once for the whole run,
+// the session had ~71 min left, the apply took 96. AWS finished the change, the
+// state write lost its credential, the lock stayed held by a dead process and an
+// errored.tfstate was left behind.
+func TestCredentialLifetimeGuard(t *testing.T) {
+	expiring := func(left time.Duration) infra.Credentials {
+		return infra.Credentials{AccessKeyID: "AKIA", Expiration: time.Now().Add(left)}
+	}
+
+	tests := []struct {
+		name        string
+		credentials infra.Credentials
+		action      infra.Action
+		floor       time.Duration
+		wantErr     bool
+		wantOut     string
+	}{
+		{
+			name:        "apply below the floor is refused",
+			credentials: expiring(71 * time.Minute),
+			action:      infra.ActionApply,
+			floor:       2 * time.Hour,
+			wantErr:     true,
+		},
+		{
+			name:        "destroy below the floor is refused too",
+			credentials: expiring(10 * time.Minute),
+			action:      infra.ActionDestroy,
+			floor:       time.Hour,
+			wantErr:     true,
+		},
+		{
+			name:        "apply above the floor runs and says how long it has",
+			credentials: expiring(4 * time.Hour),
+			action:      infra.ActionApply,
+			floor:       time.Hour,
+			wantOut:     "credential  4h0m0s left",
+		},
+		{
+			name:        "a plan is never blocked: it writes no state",
+			credentials: expiring(time.Minute),
+			action:      infra.ActionPlan,
+			floor:       8 * time.Hour,
+		},
+		{
+			name:        "with no floor a short session is reported, not refused",
+			credentials: expiring(20 * time.Minute),
+			action:      infra.ActionApply,
+			wantOut:     "short — a long apply may outlive it",
+		},
+		{
+			name:        "a session with no expiry says nothing at all",
+			credentials: infra.Credentials{AccessKeyID: "AKIA"},
+			action:      infra.ActionApply,
+			floor:       8 * time.Hour,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var out bytes.Buffer
+			err := guardCredentialLifetime(&out, test.credentials, test.action, test.floor)
+
+			if test.wantErr && err == nil {
+				t.Fatalf("the run was allowed to start; output was %q", out.String())
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			if test.wantOut != "" && !strings.Contains(out.String(), test.wantOut) {
+				t.Errorf("output = %q, want it to contain %q", out.String(), test.wantOut)
+			}
+			if test.wantOut == "" && !test.wantErr && out.Len() != 0 {
+				t.Errorf("nothing should have been said, got %q", out.String())
+			}
+		})
+	}
+}
+
+// The refusal has to tell the operator what to do about it, not just that it
+// happened: an error that names no command leaves them guessing.
+func TestCredentialLifetimeRefusalNamesTheRemedy(t *testing.T) {
+	var out bytes.Buffer
+	err := guardCredentialLifetime(&out,
+		infra.Credentials{AccessKeyID: "AKIA", Expiration: time.Now().Add(30 * time.Minute)},
+		infra.ActionApply, 2*time.Hour)
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	for _, want := range []string{"30m0s", "2h0m0s", "aws sso login"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q:\n%v", want, err)
+		}
+	}
+}

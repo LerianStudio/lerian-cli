@@ -47,16 +47,17 @@ type options struct {
 	repo string
 	// templatesDir relocates the managed checkout. A read-only home, a network
 	// home, or an operator who keeps tooling under XDG all need it somewhere else.
-	templatesDir string
-	environment  string
-	target       string
-	action       string
-	format       string
-	jobs         int
-	autoApprove  bool
-	dryRun       bool
-	list         bool
-	showVersion  bool
+	templatesDir          string
+	environment           string
+	target                string
+	action                string
+	format                string
+	jobs                  int
+	minCredentialLifetime time.Duration
+	autoApprove           bool
+	dryRun                bool
+	list                  bool
+	showVersion           bool
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -88,6 +89,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags.StringVar(&opts.format, "format", "json", "json or yaml, for --action helm-values")
 	flags.IntVar(&opts.jobs, "jobs", 4, "how many services of one product run at once")
 	flags.BoolVar(&opts.autoApprove, "auto-approve", false, "skip the confirmation before apply/destroy")
+	flags.DurationVar(&opts.minCredentialLifetime, "min-credential-lifetime", 0,
+		"refuse to start apply/destroy when the credential has less than this left (e.g. 2h); 0 only warns")
 	flags.BoolVar(&opts.dryRun, "dry-run", false, "resolve and print the execution plan, then exit")
 	flags.BoolVar(&opts.list, "list", false, "list discoverable targets and exit")
 	flags.BoolVar(&opts.showVersion, "version", false, "print the version and exit")
@@ -257,6 +260,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		terraform.Credentials = credentials
+
+		if err := guardCredentialLifetime(progressOut, credentials, action, opts.minCredentialLifetime); err != nil {
+			return err
+		}
 	}
 
 	// The account check is part of the preflight, so it is resolved here too and
@@ -747,6 +754,67 @@ func printFailureLogs(out io.Writer, results []infra.StageResult, logs *infra.Fi
 			}
 		}
 	}
+}
+
+// guardCredentialLifetime says out loud how long the run's credentials have, and
+// refuses to start a write when that is less than the operator demanded.
+//
+// The credentials are resolved ONCE for the whole run — see credentials.go for the
+// SSO cache race that forces it — so whatever is left at this moment is all the run
+// gets. An apply that outlives it is not a clean failure: AWS finishes the change,
+// the state write loses its credential, the lock stays held by a dead process and
+// an errored.tfstate is left in the root. Recovery is force-unlock plus state push,
+// by hand, on a root that may be a money path.
+//
+// Only apply and destroy are gated. A plan is short and writes no state, so
+// blocking one because a session expires in twenty minutes would cost more than it
+// protects. And a session with no expiry is not a session at risk: nothing is said.
+func guardCredentialLifetime(
+	out io.Writer,
+	credentials infra.Credentials,
+	action infra.Action,
+	floor time.Duration,
+) error {
+	left, known := credentials.RemainingLifetime(time.Now())
+	if !known {
+		return nil
+	}
+	writes := action == infra.ActionApply || action == infra.ActionDestroy
+	if !writes {
+		return nil
+	}
+
+	if floor > 0 && left < floor {
+		return fmt.Errorf("the credential has %s left, less than the %s this run requires\n"+
+			"Re-assume the profile and start again:\n\n  aws sso login --profile <profile>\n\n"+
+			"The credentials are resolved once for the whole run, so a %s apply that\n"+
+			"outlives them loses the state write while AWS finishes the change.",
+			roundLifetime(left), roundLifetime(floor), roundLifetime(left))
+	}
+	fmt.Fprintf(out, "  credential  %s left%s\n", roundLifetime(left), lifetimeNote(left, floor))
+	return nil
+}
+
+// lifetimeNote nudges when nothing was demanded and the session is short anyway.
+// Without --min-credential-lifetime nothing refuses, so the only thing left to do
+// is make the number impossible to miss.
+func lifetimeNote(left, floor time.Duration) string {
+	if floor > 0 || left >= time.Hour {
+		return ""
+	}
+	return "  (short — a long apply may outlive it; see --min-credential-lifetime)"
+}
+
+// roundLifetime prints a duration the way an operator reads a clock, not the way
+// Go prints nanoseconds.
+func roundLifetime(d time.Duration) string {
+	if d < 0 {
+		return "0s"
+	}
+	if d >= time.Hour {
+		return d.Round(time.Minute).String()
+	}
+	return d.Round(time.Second).String()
 }
 
 // printPreflight writes the whole block at once. Every value it names is already
