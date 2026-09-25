@@ -1,6 +1,7 @@
 package infracli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"os"
@@ -731,4 +732,143 @@ func TestOmittedProfileIsNotTheSameAsAnEmptyOne(t *testing.T) {
 			t.Errorf("no profile should have been invented:\n%s", config)
 		}
 	})
+}
+
+// --set is documented as "the escape hatch for any token this build does not
+// know". In shared mode it was not: the tier request carried no Replacements, so
+// a tier template with a placeholder was written with the token still in it and
+// CheckReadiness then refused to plan the root.
+func TestInitSetAlsoReachesTheSharedTier(t *testing.T) {
+	root := initCheckout(t)
+
+	mk := func(product, service, body string) {
+		dir := filepath.Join(root, "examples", "aws", "products", product, service)
+		if err := os.MkdirAll(filepath.Join(dir, "envs"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "envs", "dev.tfvars-example"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte("# root\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("midaz", "valkey", "mode = \"dedicated\"\n")
+	mk("shared-resources", "valkey", "name = \"<PUT-YOUR-CLUSTER-NAME-HERE>\"\n")
+
+	var out, errOut bytes.Buffer
+	err := runInit(context.Background(), []string{
+		"--repo", root, "--env", "dev", "--profile", "acme",
+		"--account", "123456789012", "--region", "us-east-2",
+		"--targets", "midaz", "--mode", "shared",
+		"--set", "<PUT-YOUR-CLUSTER-NAME-HERE>=shared-valkey-dev",
+		"--auto-approve",
+	}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, out.String())
+	}
+
+	tier := filepath.Join(root, "examples", "aws", "products", "shared-resources", "valkey", "envs", "dev.tfvars")
+	written, err := os.ReadFile(tier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(written), "<PUT-YOUR-CLUSTER-NAME-HERE>") {
+		t.Errorf("--set did not reach the shared tier; the token is still there:\n%s", written)
+	}
+	if !strings.Contains(string(written), "shared-valkey-dev") {
+		t.Errorf("the tier tfvars did not get the value:\n%s", written)
+	}
+}
+
+// The egress scan walked only the product units, so a placeholder living only in
+// a tier root never triggered the --api-cidr resolution, and the token survived
+// into the written tfvars.
+func TestInitResolvesTheEgressAddressForATierOnlyPlaceholder(t *testing.T) {
+	root := initCheckout(t)
+
+	mk := func(product, service, body string) {
+		dir := filepath.Join(root, "examples", "aws", "products", product, service)
+		if err := os.MkdirAll(filepath.Join(dir, "envs"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "envs", "dev.tfvars-example"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte("# root\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The product asks for nothing; only the tier carries the egress token.
+	mk("midaz", "valkey", "mode = \"dedicated\"\n")
+	mk("shared-resources", "valkey", "allowed_cidr = \"<PUT-YOUR-EGRESS-IP-HERE>/32\"\n")
+
+	var out, errOut bytes.Buffer
+	err := runInit(context.Background(), []string{
+		"--repo", root, "--env", "dev", "--profile", "acme",
+		"--account", "123456789012", "--region", "us-east-2",
+		"--targets", "midaz", "--mode", "shared",
+		"--api-cidr", "203.0.113.7", "--auto-approve",
+	}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, out.String())
+	}
+
+	tier := filepath.Join(root, "examples", "aws", "products", "shared-resources", "valkey", "envs", "dev.tfvars")
+	written, err := os.ReadFile(tier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(written), "<PUT-YOUR-EGRESS-IP-HERE>") {
+		t.Errorf("the tier-only egress placeholder was never resolved:\n%s", written)
+	}
+	if !strings.Contains(string(written), "203.0.113.7/32") {
+		t.Errorf("the tier tfvars did not get the address:\n%s", written)
+	}
+}
+
+// Every exit of resolveAPICIDR ends in validateBareAddress except one: the branch
+// where detection fails and the operator types the address returned the answer
+// raw. A typed "203.0.113.0/24" was then substituted into
+// "<PUT-YOUR-EGRESS-IP-HERE>/32", producing "203.0.113.0/24/32" — which fails only
+// at plan time, long after init reported success.
+func TestAPICIDRValidatesTheTypedAddressWhenDetectionFails(t *testing.T) {
+	// A canceled context makes DetectEgressIP fail without touching the network.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for _, typed := range []string{"203.0.113.0/24", "not-an-address", "2001:db8::1"} {
+		t.Run(typed, func(t *testing.T) {
+			var out bytes.Buffer
+			ask := &prompter{
+				interactive: true,
+				in:          bufio.NewReader(strings.NewReader(typed + "\n")),
+				out:         &out,
+			}
+			got, err := resolveAPICIDR(ctx, initOptions{}, ask)
+			if err == nil {
+				t.Fatalf("a typed %q was accepted and would be written as %q/32", typed, got)
+			}
+		})
+	}
+}
+
+// The same branch must still accept what it is supposed to accept.
+func TestAPICIDRTakesATypedBareAddressWhenDetectionFails(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var out bytes.Buffer
+	ask := &prompter{
+		interactive: true,
+		in:          bufio.NewReader(strings.NewReader("203.0.113.7\n")),
+		out:         &out,
+	}
+	got, err := resolveAPICIDR(ctx, initOptions{}, ask)
+	if err != nil {
+		t.Fatalf("a bare address was refused: %v", err)
+	}
+	if got != "203.0.113.7" {
+		t.Errorf("got %q, want %q", got, "203.0.113.7")
+	}
 }
