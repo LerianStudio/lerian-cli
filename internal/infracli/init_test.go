@@ -833,7 +833,7 @@ func TestInitResolvesTheEgressAddressForATierOnlyPlaceholder(t *testing.T) {
 // "<PUT-YOUR-EGRESS-IP-HERE>/32", producing "203.0.113.0/24/32" — which fails only
 // at plan time, long after init reported success.
 func TestAPICIDRValidatesTheTypedAddressWhenDetectionFails(t *testing.T) {
-	// A cancelled context makes DetectEgressIP fail without touching the network.
+	// A canceled context makes DetectEgressIP fail without touching the network.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
