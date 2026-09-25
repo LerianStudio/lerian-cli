@@ -988,7 +988,7 @@ func TestSectionDiffersSeesAChangeBehindAnInlineComment(t *testing.T) {
 }
 
 // The guarantee is byte for byte, and ignoring inline comments in the comparison
-// is only half of honouring it: if the upsert then rewrites the section anyway,
+// is only half of honoring it: if the upsert then rewrites the section anyway,
 // the comment is deleted — and worse than before, because sectionDiffers no longer
 // reports a conflict, so the write is permitted without Force.
 func TestUpsertLeavesAnEquivalentSectionExactlyAsItIs(t *testing.T) {
