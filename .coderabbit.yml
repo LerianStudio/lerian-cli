@@ -1,0 +1,10 @@
+reviews:
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  auto_review:
+    enabled: false
+    base_branches:
+      - "develop"
+      - "main"
+  path_filters:
+    - "!.coderabbit.yml"

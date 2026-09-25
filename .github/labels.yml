@@ -1,0 +1,130 @@
+# Label definitions for lerian-cli
+# Synced via .github/workflows/routine.yml -> shared labels-sync.
+
+# ── Areas (aligned with .github/labeler.yml) ──────────────────────────────────
+
+- name: "area: auth"
+  color: "1d76db"
+  description: Authentication commands and API client
+
+- name: "area: ledger"
+  color: "0e8a16"
+  description: Midaz ledger commands
+
+- name: "area: config"
+  color: "bfd4f2"
+  description: CLI configuration handling
+
+- name: "area: kubectl"
+  color: "326ce5"
+  description: Kubernetes integration layer
+
+- name: "area: output"
+  color: "c5def5"
+  description: Output formatting and rendering
+
+- name: "area: cli"
+  color: "5319e7"
+  description: Root command, command tree and UX
+
+- name: "area: version"
+  color: "7c3aed"
+  description: Version command and build metadata
+
+- name: "area: scripts"
+  color: "f9d0c4"
+  description: Build and tooling scripts
+
+- name: "area: examples"
+  color: "fbca04"
+  description: Usage examples and sample configuration
+
+- name: "area: documentation"
+  color: "0075ca"
+  description: Documentation and markdown content
+
+- name: "area: ci/cd"
+  color: "2088FF"
+  description: Continuous integration and release pipelines
+
+- name: "area: dependencies"
+  color: "ededed"
+  description: Go module dependencies (usually opened by Dependabot)
+
+- name: "area: build"
+  color: "d4c5f9"
+  description: Makefile, GoReleaser and build configuration
+
+- name: "area: tests"
+  color: "00ADD8"
+  description: Unit, integration and end-to-end tests
+
+# ── Change types ──────────────────────────────────────────────────────────────
+
+- name: bug
+  color: "d73a4a"
+  description: Something is not working
+
+- name: enhancement
+  color: "a2eeef"
+  description: New feature or capability
+
+- name: dependencies
+  color: "ededed"
+  description: Dependency updates
+
+- name: github-actions
+  color: "2088FF"
+  description: GitHub Actions workflow changes
+
+- name: breaking-change
+  color: "b60205"
+  description: Consumers must update their integration
+
+- name: skip-changelog
+  color: "e4e669"
+  description: Excluded from the generated changelog
+
+# ── Size ──────────────────────────────────────────────────────────────────────
+
+- name: size/XS
+  color: "3cbf00"
+  description: Extra small change
+- name: size/S
+  color: "5d9801"
+  description: Small change
+- name: size/M
+  color: "7f7203"
+  description: Medium change
+- name: size/L
+  color: "a14c05"
+  description: Large change
+- name: size/XL
+  color: "c32607"
+  description: Extra large change — consider splitting
+
+# ── Triage and automation ─────────────────────────────────────────────────────
+
+- name: triage
+  color: "fef2c0"
+  description: Awaiting triage
+
+- name: stale
+  color: "795548"
+  description: Inactive for too long
+
+- name: no-stale
+  color: "0e8a16"
+  description: Exempt from the stale routine
+
+- name: work-in-progress
+  color: "fbca04"
+  description: Not ready for review
+
+- name: pinned
+  color: "1d76db"
+  description: Never marked stale
+
+- name: review-ready
+  color: "0e8a16"
+  description: CI passed — marker applied by the CodeRabbit review gate

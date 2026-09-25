@@ -63,3 +63,20 @@
   - changed-files:
       - any-glob-to-any-file:
           - '**/*_test.go'
+
+'area: version':
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/version/**/*
+          - cmd/version.go
+
+'area: scripts':
+  - changed-files:
+      - any-glob-to-any-file:
+          - scripts/**/*
+
+'area: examples':
+  - changed-files:
+      - any-glob-to-any-file:
+          - examples/**/*
+          - configs/**/*

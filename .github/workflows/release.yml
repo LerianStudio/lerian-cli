@@ -1,34 +1,38 @@
 name: Release
 
-# This workflow creates releases based on conventional commits
-# It triggers on push to release branches and waits for CI Gate to pass
-# Semantic-release will analyze commits and only create a release if needed
-
 on:
   push:
-    branches:
-      - develop
-      - release-candidate
-      - main
+    branches: [develop, release-candidate, main]
     paths-ignore:
       - '**.md'
       - 'docs/**'
       - '.github/**'
       - 'LICENSE'
-      - 'CODEOWNERS'
       - '.gitignore'
-      - 'images/**'
-      - '*.txt'
+      - '.golangci.yml'
+      - '.goreleaser.yml'
+      - '.coderabbit.yml'
+      - '.coderabbit.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
+  id-token: write
   contents: write
   issues: write
   pull-requests: write
 
 jobs:
   release:
-    name: Create Release
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@v1.3.5
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@tier-1
     with:
-      runner_type: "blacksmith-4vcpu-ubuntu-2404"
+      enable_changelog: ${{ github.ref == 'refs/heads/main' }}
+      shared_paths: |
+        go.mod
+        go.sum
+        cmd/
+        internal/
+        Makefile
     secrets: inherit
