@@ -39,6 +39,10 @@
   color: "fbca04"
   description: Usage examples and sample configuration
 
+- name: "area: infra"
+  color: "844FBA"
+  description: Terraform deployment commands (lerian infra)
+
 - name: "area: documentation"
   color: "0075ca"
   description: Documentation and markdown content

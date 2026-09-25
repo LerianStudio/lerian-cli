@@ -133,6 +133,22 @@ linters:
         linters:
           - noctx
 
+      # The infra commands answer an operator at a terminal, so an error there is
+      # two lines: what failed, then the command that fixes it. ST1005 and revive's
+      # error-strings both assume a single lowercase fragment meant to be wrapped by
+      # a caller, which is not what these are — and collapsing them would rewrite
+      # output that the port to `lerian infra` is verified to reproduce. 69 sites
+      # follow this convention; the exclusion belongs here rather than on each one.
+      - path: internal/(infra|infracli)/
+        linters:
+          - staticcheck
+        text: "ST1005:"
+
+      - path: internal/(infra|infracli)/
+        linters:
+          - revive
+        text: "error-strings:"
+
       - linters:
           - errcheck
         text: Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*print(f|ln)?|os\.(Un)?Setenv). is not checked

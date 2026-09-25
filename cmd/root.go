@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/lerian-studio/lerian-cli/cmd/auth"
+	"github.com/lerian-studio/lerian-cli/cmd/infra"
 	"github.com/lerian-studio/lerian-cli/cmd/midaz"
 	"github.com/lerian-studio/lerian-cli/internal/version"
 )
@@ -63,4 +64,5 @@ func init() {
 	// Add subcommands
 	rootCmd.AddCommand(auth.AuthCmd)
 	rootCmd.AddCommand(midaz.MidazCmd)
+	rootCmd.AddCommand(infra.InfraCmd)
 }
