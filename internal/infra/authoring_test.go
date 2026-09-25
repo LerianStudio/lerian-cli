@@ -964,3 +964,25 @@ func TestPlaceholderTokensAgreesWithTheCommentScanner(t *testing.T) {
 		})
 	}
 }
+
+// parseINI truncates every value at "#", so an inline note is not part of the
+// value. The comparison has to agree, or a re-run with identical inputs is
+// refused because of a note the operator wrote beside a line.
+func TestSectionDiffersIgnoresAnInlineComment(t *testing.T) {
+	content := []byte("[dev]\naccount_id = 123456789012 # ask before touching this one\nprofile    = acme-dev\n")
+	body := []string{"[dev]", "account_id = 123456789012", "profile    = acme-dev"}
+
+	if sectionDiffers(content, "dev", body) {
+		t.Error("an inline comment was counted as a difference in the value")
+	}
+}
+
+// And the value before the comment still has to be compared.
+func TestSectionDiffersSeesAChangeBehindAnInlineComment(t *testing.T) {
+	content := []byte("[dev]\naccount_id = 123456789012 # a note\n")
+	body := []string{"[dev]", "account_id = 999999999999"}
+
+	if !sectionDiffers(content, "dev", body) {
+		t.Error("a changed value was hidden by the inline comment")
+	}
+}

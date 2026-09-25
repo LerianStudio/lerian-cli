@@ -479,12 +479,22 @@ func sectionDiffers(content []byte, name string, body []string) bool {
 }
 
 // significantLines keeps the lines that carry configuration: neither blank nor a
-// comment, and trimmed so indentation never counts as a difference.
+// comment, trimmed so indentation never counts as a difference, and with any
+// trailing comment removed.
+//
+// Cutting at "#" mid-line is not a choice made here — it is what parseINI already
+// does to every value it reads. Keeping the comment would mean the two disagree
+// about the same file: "account_id = 123456789012 # ask before touching" parses to
+// the same value as the generated line, while the comparison called it a
+// difference and refused a re-run with identical inputs.
 func significantLines(lines []string) []string {
 	var kept []string
 	for _, line := range lines {
+		if comment := strings.Index(line, "#"); comment >= 0 {
+			line = line[:comment]
+		}
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		if trimmed == "" {
 			continue
 		}
 		kept = append(kept, trimmed)
