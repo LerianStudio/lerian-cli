@@ -590,3 +590,69 @@ func TestSkipUnconfiguredSharedOnlySkipsMissingFiles(t *testing.T) {
 		t.Errorf("postgres must reach readiness validation, which reports the real cause")
 	}
 }
+
+// The safety property the doc above resolveComposite states is that no spelling of
+// a composite target can produce a run that applies a product before what it
+// depends on. Single-service stages used to be appended after every canonical
+// stage, which broke it for the shared tier: a product root in shared mode
+// resolves that tier, so scheduling the product first fails the apply.
+func TestCompositePutsTheSharedTierBeforeTheProductThatResolvesIt(t *testing.T) {
+	layout := fakeRepo(t, map[string][]string{
+		"shared-resources": {"postgres", "valkey"},
+		"midaz":            {"postgres"},
+	})
+	catalog, err := Discover(layout)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	// Both spellings must produce the same run: the order typed cannot reorder it.
+	for _, target := range []string{"shared-resources/postgres,midaz", "midaz,shared-resources/postgres"} {
+		t.Run(target, func(t *testing.T) {
+			stages, err := Resolve(layout, catalog, target)
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			got := stageNames(stages)
+
+			tier, product := -1, -1
+			for i, name := range got {
+				switch name {
+				case "shared-resources/postgres":
+					tier = i
+				case "midaz":
+					product = i
+				}
+			}
+			if tier < 0 || product < 0 {
+				t.Fatalf("both stages must be in the run, got %v", got)
+			}
+			if tier > product {
+				t.Errorf("the tier is applied after the product that resolves it: %v", got)
+			}
+		})
+	}
+}
+
+// A single-service stage of a product still belongs where that product sits, which
+// is after infra-base and after the shared tier.
+func TestCompositeKeepsASingleServiceInItsProductSlot(t *testing.T) {
+	layout := fakeRepo(t, map[string][]string{
+		"shared-resources": {"postgres"},
+		"midaz":            {"postgres", "valkey"},
+	})
+	catalog, err := Discover(layout)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	stages, err := Resolve(layout, catalog, "midaz/valkey,infra-base")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	got := stageNames(stages)
+	want := []string{"infra-base/vpc", "infra-base/eks", "midaz/valkey"}
+	if strings.Join(got, " -> ") != strings.Join(want, " -> ") {
+		t.Errorf("order = %v,\nwant     %v", got, want)
+	}
+}
