@@ -22,11 +22,13 @@ package infra
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Credentials is a resolved, short-lived AWS credential set.
@@ -34,6 +36,23 @@ type Credentials struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	SessionToken    string
+
+	// Expiration is when the session dies, zero when the profile yielded a
+	// credential that does not expire. It matters because these credentials are
+	// resolved ONCE for the whole run: whatever lifetime was left at the start is
+	// all the run gets, and an apply that outlives it loses the state write while
+	// AWS goes on to finish the change.
+	Expiration time.Time
+}
+
+// RemainingLifetime is how long the session still has, and whether that is known
+// at all. A zero Expiration means it does not expire, so there is nothing to
+// warn about.
+func (c Credentials) RemainingLifetime(now time.Time) (time.Duration, bool) {
+	if c.Expiration.IsZero() {
+		return 0, false
+	}
+	return c.Expiration.Sub(now), true
 }
 
 // Environment renders the credentials as environment variables for a child
@@ -148,8 +167,12 @@ func ResolveCredentials(ctx context.Context, profile string) (Credentials, error
 		return Credentials{}, nil
 	}
 
+	// --format process, not env-no-export: it is the only shape that carries
+	// Expiration, and the lifetime left is what decides whether an apply should
+	// start at all. The payload is the credential_process contract, so the field
+	// names are fixed by AWS rather than by this code.
 	command := exec.CommandContext(ctx, "aws", "configure", "export-credentials",
-		"--profile", profile, "--format", "env-no-export")
+		"--profile", profile, "--format", "process")
 	// stdout and stderr are kept apart, and only stdout is parsed. Merging them had
 	// two consequences: a stderr line shaped like KEY=VALUE was read as a credential,
 	// and a non-zero exit after the CLI had already printed credentials put
@@ -163,25 +186,35 @@ func ResolveCredentials(ctx context.Context, profile string) (Credentials, error
 			profile, err, strings.TrimSpace(stderr.String()), profile)
 	}
 
-	var credentials Credentials
-	for _, line := range strings.Split(string(output), "\n") {
-		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
-		if !found {
-			continue
-		}
-		switch key {
-		case "AWS_ACCESS_KEY_ID":
-			credentials.AccessKeyID = value
-		case "AWS_SECRET_ACCESS_KEY":
-			credentials.SecretAccessKey = value
-		case "AWS_SESSION_TOKEN":
-			credentials.SessionToken = value
+	var payload struct {
+		AccessKeyID     string `json:"AccessKeyId"`
+		SecretAccessKey string `json:"SecretAccessKey"`
+		SessionToken    string `json:"SessionToken"`
+		Expiration      string `json:"Expiration"`
+	}
+	if err := json.Unmarshal(output, &payload); err != nil {
+		return Credentials{}, fmt.Errorf("infra: cannot read the credentials of profile %q: %w\n"+
+			"  aws configure export-credentials --profile %s --format process",
+			profile, err, profile)
+	}
+	credentials := Credentials{
+		AccessKeyID:     payload.AccessKeyID,
+		SecretAccessKey: payload.SecretAccessKey,
+		SessionToken:    payload.SessionToken,
+	}
+	// A profile backed by a long-lived access key has no Expiration, and that is
+	// not an error: it is a session that never dies. An unparseable one is left
+	// zero for the same reason — a lifetime this code cannot read must not become
+	// a reason to refuse a run.
+	if payload.Expiration != "" {
+		if when, err := time.Parse(time.RFC3339, payload.Expiration); err == nil {
+			credentials.Expiration = when
 		}
 	}
 	if credentials.AccessKeyID == "" {
 		return Credentials{}, fmt.Errorf(
 			"infra: profile %q produced no credentials\n"+
-				"  aws configure export-credentials --profile %s --format env-no-export",
+				"  aws configure export-credentials --profile %s --format process",
 			profile, profile)
 	}
 	return credentials, nil

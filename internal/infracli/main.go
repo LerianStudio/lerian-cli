@@ -47,16 +47,17 @@ type options struct {
 	repo string
 	// templatesDir relocates the managed checkout. A read-only home, a network
 	// home, or an operator who keeps tooling under XDG all need it somewhere else.
-	templatesDir string
-	environment  string
-	target       string
-	action       string
-	format       string
-	jobs         int
-	autoApprove  bool
-	dryRun       bool
-	list         bool
-	showVersion  bool
+	templatesDir          string
+	environment           string
+	target                string
+	action                string
+	format                string
+	jobs                  int
+	minCredentialLifetime time.Duration
+	autoApprove           bool
+	dryRun                bool
+	list                  bool
+	showVersion           bool
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -88,6 +89,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags.StringVar(&opts.format, "format", "json", "json or yaml, for --action helm-values")
 	flags.IntVar(&opts.jobs, "jobs", 4, "how many services of one product run at once")
 	flags.BoolVar(&opts.autoApprove, "auto-approve", false, "skip the confirmation before apply/destroy")
+	flags.DurationVar(&opts.minCredentialLifetime, "min-credential-lifetime", 0,
+		"refuse to start apply/destroy when the credential has less than this left (e.g. 2h); 0 only warns")
 	flags.BoolVar(&opts.dryRun, "dry-run", false, "resolve and print the execution plan, then exit")
 	flags.BoolVar(&opts.list, "list", false, "list discoverable targets and exit")
 	flags.BoolVar(&opts.showVersion, "version", false, "print the version and exit")
@@ -257,6 +260,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		terraform.Credentials = credentials
+
+		err = guardCredentialLifetime(
+			progressOut, credentials, action, opts.minCredentialLifetime, config.Profile)
+		if err != nil {
+			return err
+		}
 	}
 
 	// The account check is part of the preflight, so it is resolved here too and
@@ -327,7 +336,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case infra.ActionOutput:
 		return writeOutputs(ctx, runner, allUnits, stdout)
 	default:
-		return execute(ctx, runner, stages, action, opts, config, runDir, logs, progressOut)
+		return execute(ctx, runner, stages, action, opts, config, runDir, logs, terraform.Credentials, progressOut)
 	}
 }
 
@@ -571,11 +580,19 @@ func execute(
 	config infra.EnvConfig,
 	runDir string,
 	logs *infra.FileLogs,
+	credentials infra.Credentials,
 	out io.Writer,
 ) error {
 	started := time.Now()
 
 	confirm := func(stage infra.Stage, plans []infra.UnitResult) error {
+		// Asked again here, not only in the preflight: this runs after the stage
+		// was planned and, without --auto-approve, after a human took as long as
+		// they took to answer. The session that was long enough to start may not be
+		// long enough to write.
+		if err := credentialLifetimeError(credentials, action, opts.minCredentialLifetime, config.Profile); err != nil {
+			return err
+		}
 		if opts.autoApprove {
 			return nil
 		}
@@ -747,6 +764,105 @@ func printFailureLogs(out io.Writer, results []infra.StageResult, logs *infra.Fi
 			}
 		}
 	}
+}
+
+// guardCredentialLifetime says out loud how long the run's credentials have, and
+// refuses to start a write when that is less than the operator demanded.
+//
+// The credentials are resolved ONCE for the whole run — see credentials.go for the
+// SSO cache race that forces it — so whatever is left at this moment is all the run
+// gets. An apply that outlives it is not a clean failure: AWS finishes the change,
+// the state write loses its credential, the lock stays held by a dead process and
+// an errored.tfstate is left in the root. Recovery is force-unlock plus state push,
+// by hand, on a root that may be a money path.
+//
+// Only apply and destroy are gated. A plan is short and writes no state, so
+// blocking one because a session expires in twenty minutes would cost more than it
+// protects. And a session with no expiry is not a session at risk: nothing is said.
+func guardCredentialLifetime(
+	out io.Writer,
+	credentials infra.Credentials,
+	action infra.Action,
+	floor time.Duration,
+	profile string,
+) error {
+	if err := credentialLifetimeError(credentials, action, floor, profile); err != nil {
+		return err
+	}
+	left, known := credentials.RemainingLifetime(time.Now())
+	if !known || (action != infra.ActionApply && action != infra.ActionDestroy) {
+		return nil
+	}
+	fmt.Fprintf(out, "  credential  %s left%s\n", roundLifetime(left), lifetimeNote(left, floor))
+	return nil
+}
+
+// credentialLifetimeError is the check on its own, so it can run again at the
+// moment of each write without printing the preflight line a second time.
+//
+// Checking once before planning is not enough: planning a large target and then
+// waiting for a human to type yes can burn most of a session, and later stages of
+// the same run start later still. The refusal has to be asked the question again
+// right before each stage that writes.
+func credentialLifetimeError(
+	credentials infra.Credentials,
+	action infra.Action,
+	floor time.Duration,
+	profile string,
+) error {
+	if floor <= 0 {
+		return nil
+	}
+	if action != infra.ActionApply && action != infra.ActionDestroy {
+		return nil
+	}
+	left, known := credentials.RemainingLifetime(time.Now())
+	if !known || left >= floor {
+		return nil
+	}
+	return fmt.Errorf("the credential has %s left, less than the %s this run requires\n"+
+		"The credentials are resolved once for the whole run, so an apply that\n"+
+		"outlives them loses the state write while AWS finishes the change.\n\n"+
+		"Refresh the session and start again. %s",
+		roundLifetime(left), roundLifetime(floor), refreshHint(profile))
+}
+
+// refreshHint names the command for the profile in hand rather than assuming one.
+// "aws sso login" is right only for an IAM Identity Center profile; an assume-role
+// or credential_process profile refreshes another way, and a run that names the
+// wrong command sends the operator down a path that cannot work.
+func refreshHint(profile string) string {
+	if profile == "" {
+		return "How depends on how the profile is configured:\n" +
+			"  IAM Identity Center:  aws sso login --profile <profile>\n" +
+			"  anything else:        re-run whatever issues the session for it"
+	}
+	return fmt.Sprintf("How depends on how %q is configured:\n"+
+		"  IAM Identity Center:  aws sso login --profile %s\n"+
+		"  anything else:        re-run whatever issues the session for it",
+		profile, profile)
+}
+
+// lifetimeNote nudges when nothing was demanded and the session is short anyway.
+// Without --min-credential-lifetime nothing refuses, so the only thing left to do
+// is make the number impossible to miss.
+func lifetimeNote(left, floor time.Duration) string {
+	if floor > 0 || left >= time.Hour {
+		return ""
+	}
+	return "  (short — a long apply may outlive it; see --min-credential-lifetime)"
+}
+
+// roundLifetime prints a duration the way an operator reads a clock, not the way
+// Go prints nanoseconds.
+func roundLifetime(d time.Duration) string {
+	if d < 0 {
+		return "0s"
+	}
+	if d >= time.Hour {
+		return d.Round(time.Minute).String()
+	}
+	return d.Round(time.Second).String()
 }
 
 // printPreflight writes the whole block at once. Every value it names is already

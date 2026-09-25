@@ -108,6 +108,28 @@ FLAGS
                           Terraform still applies a saved plan file, so what runs
                           is exactly what was shown.
 
+  --min-credential-lifetime <d>
+                          Refuse to START an apply or a destroy when the credential
+                          has less than this left, e.g. 2h. Default 0: the lifetime
+                          is printed in the preflight and nothing is refused.
+
+                          It exists because the credentials are resolved ONCE for
+                          the whole run — every Terraform process gets the same
+                          keys, which is what keeps four of them from fighting over
+                          the SSO cache. Whatever lifetime was left when the run
+                          started is all it has. An apply that outlives it does not
+                          fail cleanly: AWS finishes the change, the state write
+                          loses its credential, the lock stays held by a dead
+                          process, and an errored.tfstate is left in the root.
+                          Recovery is force-unlock and state push, by hand.
+
+                          A plan is never refused: it is short and writes no state.
+
+                          The check runs in the preflight AND again immediately
+                          before each stage that writes, because planning a large
+                          target and waiting for a confirmation can burn most of a
+                          session.
+
   --jobs <n>              Services inside one product run in parallel. Default 4.
                           Ordered stages (bootstrap, vpc, eks) are always
                           sequential regardless of this.
