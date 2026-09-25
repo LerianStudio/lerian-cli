@@ -1001,6 +1001,19 @@ func TestUpsertLeavesAnEquivalentSectionExactlyAsItIs(t *testing.T) {
 	}
 }
 
+// Byte for byte includes the last byte. splitLines drops a trailing newline and
+// joinLines adds one unconditionally, so a round trip through them rewrites a file
+// that ended without one — on the very path that exists to leave the file alone.
+func TestUpsertPreservesAFileWithNoTrailingNewline(t *testing.T) {
+	content := []byte("[dev]\naccount_id = 123456789012 # ask before touching\nprofile    = acme-dev")
+	body := []string{"[dev]", "account_id = 123456789012", "profile    = acme-dev"}
+
+	got := upsertINISection(content, "dev", body)
+	if string(got) != string(content) {
+		t.Errorf("the file gained bytes it did not have:\ngot:  %q\nwant: %q", got, content)
+	}
+}
+
 // And a section that really differs is still rewritten.
 func TestUpsertStillRewritesAChangedSection(t *testing.T) {
 	content := []byte("[dev]\naccount_id = 123456789012 # a note\n")

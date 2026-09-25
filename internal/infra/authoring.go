@@ -543,7 +543,10 @@ func upsertINISection(content []byte, name string, body []string) []byte {
 	// when deciding whether there is a conflict, so without this the write would be
 	// permitted without Force and the comment would vanish silently.
 	if slices.Equal(significantLines(lines[start:end]), significantLines(body)) {
-		return joinLines(lines)
+		// content, not joinLines(lines): splitLines drops a trailing newline and
+		// joinLines always adds one back, so a file that had none would come out of
+		// this "leave it alone" path one byte different from how it went in.
+		return content
 	}
 
 	// Present and genuinely different: keep the trailing blank lines AND comments
