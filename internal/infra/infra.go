@@ -6,12 +6,15 @@
 // the script's flag surface was kept so that anything written against it keeps
 // working.
 //
-// It exists as a package rather than a program because two faces need it:
-// internal/infracli, which is the terminal face, and the wizard
-// (github.com/LerianStudio/lerian-wizzard), which imports this package as a
-// library — not as a subprocess — so that a run cannot behave differently
-// depending on which face started it. That is why it lives under pkg/ rather than
-// internal/: internal/ does not cross a module boundary.
+// It exists as a package rather than a program so that the terminal face,
+// internal/infracli, holds no logic of its own: a run cannot behave differently
+// depending on what started it. It was shaped that way for a second consumer, the
+// wizard (github.com/LerianStudio/lerian-wizzard), which imported it as a library
+// rather than shelling out to it, back when it lived in a module of its own.
+//
+// Nothing outside this module imports it today, which is why it sits under
+// internal/. Should the wizard need it again, the package has to move out of
+// internal/ first — internal/ does not cross a module boundary.
 //
 // Everything operator-facing therefore travels through the Progress interface
 // instead of being printed here, and nothing in this package imports anything of
