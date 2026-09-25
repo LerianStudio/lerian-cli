@@ -36,9 +36,23 @@ func isolateAWS(t *testing.T) {
 	for _, name := range []string{
 		"AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION",
 		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+		// The key variables are not the only source the AWS CLI tries. On an EC2
+		// or EKS runner it falls through to the instance role, the container
+		// credential endpoint and web identity, and then a test that passes
+		// --profile '' resolves real credentials: resolveCredentials calls STS
+		// whenever the profile is set, and buildInitPlan fails on the account
+		// mismatch. Tests with a named profile stall on IMDS timeouts instead.
+		// This is why it has not bitten us: CI runs on Blacksmith, not EC2.
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI",
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN",
+		"AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN",
 	} {
 		t.Setenv(name, "")
 	}
+	// IMDS is reached by address, not by variable, so emptying something does not
+	// switch it off. This is the documented kill switch.
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 }
 
 // initCheckout builds a repository with committed examples and no real config,
