@@ -885,3 +885,82 @@ func TestSupportsModeIgnoresCommentedAssignments(t *testing.T) {
 		}
 	}
 }
+
+// The contract above WriteEnvironmentsConfig promises that everything outside the
+// named sections survives byte for byte, "including the operator's own comments".
+// sectionDiffers counted comment lines as body, so a file carrying a comment above
+// the next header reported a conflict when re-run with identical values: current
+// had one entry more than proposed.
+func TestSectionDiffersIgnoresTheOperatorsComments(t *testing.T) {
+	content := []byte(`[dev]
+account_id = 123456789012
+profile    = acme-dev
+
+# staging is a different account, ask before touching it
+[stg]
+account_id = 210987654321
+`)
+	body := []string{"[dev]", "account_id = 123456789012", "profile    = acme-dev"}
+
+	if sectionDiffers(content, "dev", body) {
+		t.Error("identical values reported as a conflict because of a comment in the section's range")
+	}
+}
+
+// And a real difference must still be seen.
+func TestSectionDiffersStillSeesAChangedValue(t *testing.T) {
+	content := []byte("[dev]\naccount_id = 123456789012\n# a comment\n")
+	body := []string{"[dev]", "account_id = 999999999999"}
+
+	if !sectionDiffers(content, "dev", body) {
+		t.Error("a changed account_id was not reported")
+	}
+}
+
+// With --force the upsert replaced the whole range, so a comment the operator
+// wrote above the next header was deleted.
+func TestUpsertKeepsACommentThatPrecedesTheNextSection(t *testing.T) {
+	content := []byte(`[dev]
+account_id = 123456789012
+
+# staging is a different account, ask before touching it
+[stg]
+account_id = 210987654321
+`)
+	body := []string{"[dev]", "account_id = 999999999999"}
+
+	got := string(upsertINISection(content, "dev", body))
+	if !strings.Contains(got, "# staging is a different account") {
+		t.Errorf("the operator's comment was swallowed by the rewrite:\n%s", got)
+	}
+	if !strings.Contains(got, "account_id = 999999999999") {
+		t.Errorf("the new value was not written:\n%s", got)
+	}
+	if !strings.Contains(got, "[stg]") {
+		t.Errorf("the next section was damaged:\n%s", got)
+	}
+}
+
+// placeholderTokens tested for a leading "#", while placeholderLines — which
+// CheckReadiness uses — goes through commentScanner. One file, two verdicts.
+func TestPlaceholderTokensAgreesWithTheCommentScanner(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool // want the token reported as pending
+	}{
+		{"trailing hash comment", "vpc_id = \"vpc-0a1b\" # was <PUT-YOUR-VPC-ID>\n", false},
+		{"double slash comment", "// see <PUT-YOUR-VPC-ID>\nvpc_id = \"vpc-0a1b\"\n", false},
+		{"block comment", "/*\n  <PUT-YOUR-VPC-ID>\n*/\nvpc_id = \"vpc-0a1b\"\n", false},
+		{"live value", "vpc_id = \"<PUT-YOUR-VPC-ID>\"\n", true},
+		{"hash inside a string is not a comment", "name = \"bucket#1-<PUT-YOUR-VPC-ID>\"\n", true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := len(placeholderTokens([]byte(test.content))) > 0
+			if got != test.want {
+				t.Errorf("reported pending = %v, want %v, for:\n%s", got, test.want, test.content)
+			}
+		})
+	}
+}

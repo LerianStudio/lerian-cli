@@ -459,20 +459,14 @@ func sectionDiffers(content []byte, name string, body []string) bool {
 		}
 	}
 
-	var current []string
-	for _, line := range lines[start:end] {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		current = append(current, strings.TrimSpace(line))
-	}
-	var proposed []string
-	for _, line := range body {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		proposed = append(proposed, strings.TrimSpace(line))
-	}
+	// Comments are not part of the body. The file this compares against is the
+	// operator's, and the contract above it promises that everything outside the
+	// named sections survives byte for byte, "including the operator's own
+	// comments". Counting them made a re-run with identical inputs report a
+	// conflict, because a "# staging account" sitting above the next header is
+	// inside this section's range.
+	current := significantLines(lines[start:end])
+	proposed := significantLines(body)
 	if len(current) != len(proposed) {
 		return true
 	}
@@ -482,6 +476,20 @@ func sectionDiffers(content []byte, name string, body []string) bool {
 		}
 	}
 	return false
+}
+
+// significantLines keeps the lines that carry configuration: neither blank nor a
+// comment, and trimmed so indentation never counts as a difference.
+func significantLines(lines []string) []string {
+	var kept []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		kept = append(kept, trimmed)
+	}
+	return kept
 }
 
 // upsertINISection replaces the [name] section of content with body, or appends it
@@ -517,10 +525,16 @@ func upsertINISection(content []byte, name string, body []string) []byte {
 		return joinLines(out)
 	}
 
-	// Present: keep any trailing blank lines that belonged to the old section, so
-	// repeated upserts do not slowly collapse the file's spacing.
+	// Present: keep the trailing blank lines AND comments that belonged to the old
+	// section, so repeated upserts do not slowly collapse the file's spacing, and
+	// so a comment the operator wrote above the next header is not swallowed by a
+	// --force rewrite of this one.
 	tail := end
-	for tail > start+1 && strings.TrimSpace(lines[tail-1]) == "" {
+	for tail > start+1 {
+		trimmed := strings.TrimSpace(lines[tail-1])
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			break
+		}
 		tail--
 	}
 	out := make([]string, 0, len(lines)-(tail-start)+len(body))
@@ -785,18 +799,22 @@ func PlaceholdersIn(unit Unit, env string) ([]string, error) {
 	return placeholderTokens(content), nil
 }
 
-// placeholderTokens lists the distinct tokens outside comment lines, sorted. The
+// placeholderTokens lists the distinct tokens outside comments, sorted. The
 // examples legitimately write things like "<that address>" in their prose, so a
-// comment line is not evidence of an unresolved value.
+// comment is not evidence of an unresolved value.
+//
+// It goes through commentScanner rather than testing for a leading "#", because
+// CheckReadiness reads the same files through placeholderLines, which does. Two
+// spellings of "this is a comment" meant two verdicts for one file: a trailing
+// "# was <PUT-YOUR-VPC-ID>" was reported as pending here and accepted there, and a
+// token living only inside a // or /* */ comment made buildInitPlan ask for
+// --api-cidr when no live value needed it.
 func placeholderTokens(content []byte) []string {
 	seen := map[string]bool{}
+	var comments commentScanner
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
-		}
-		for _, match := range placeholderPattern.FindAllString(line, -1) {
+		for _, match := range placeholderPattern.FindAllString(comments.code(scanner.Text()), -1) {
 			seen[match] = true
 		}
 	}
