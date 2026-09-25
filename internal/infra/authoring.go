@@ -82,7 +82,7 @@ type AWSProfile struct {
 	// exists only in ~/.aws/credentials has no SSO session to expire.
 	Source string
 	// SSOSession is the [sso-session <name>] this profile logs in through, when it
-	// uses one. Profiles that share a session share a login: an organisation with a
+	// uses one. Profiles that share a session share a login: an organization with a
 	// dozen account profiles behind one SSO session needs one command to revive all
 	// of them, not one per profile.
 	SSOSession string
@@ -184,7 +184,7 @@ func (r ResolvedProfile) Usable() bool { return r.Err == nil && r.Caller.Account
 //
 // It exists because the obvious message is the wrong one. Suggesting
 // "aws sso login --profile X" once per profile produces a dozen identical-looking
-// lines for an organisation whose profiles all sit behind one SSO session, and
+// lines for an organization whose profiles all sit behind one SSO session, and
 // hides the fact that one login fixes every one of them.
 func LoginHint(resolved []ResolvedProfile) string {
 	sessions := map[string]bool{}
@@ -283,6 +283,9 @@ func DetectEgressIP(ctx context.Context, client HTTPDoer) (string, error) {
 	}
 	response, err := client.Do(request)
 	if err != nil {
+		//nolint:staticcheck // ST1005: the second line is a remediation sentence aimed at
+		// the operator, and it is punctuated as prose on purpose. Collapsing it into a
+		// lowercase fragment would change output this port is verified to reproduce.
 		return "", fmt.Errorf("infra: cannot reach %s to detect this machine's egress address: %w\n"+
 			"Pass the address explicitly instead of detecting it (see --api-cidr).",
 			egressIPService, err)
@@ -290,6 +293,9 @@ func DetectEgressIP(ctx context.Context, client HTTPDoer) (string, error) {
 	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != http.StatusOK {
+		//nolint:staticcheck // ST1005: the second line is a remediation sentence aimed at
+		// the operator, and it is punctuated as prose on purpose. Collapsing it into a
+		// lowercase fragment would change output this port is verified to reproduce.
 		return "", fmt.Errorf("infra: %s answered %s\n"+
 			"Pass the address explicitly instead of detecting it (see --api-cidr).",
 			egressIPService, response.Status)
@@ -366,6 +372,9 @@ func (s EnvSpec) Validate() error {
 	// The same rule the loader enforces when it reads the file back, so a file this
 	// package writes can never fail this package's own validation.
 	if !isTwelveDigits(s.AccountID) {
+		//nolint:staticcheck // ST1005: the second line is a remediation sentence aimed at
+		// the operator, and it is punctuated as prose on purpose. Collapsing it into a
+		// lowercase fragment would change output this port is verified to reproduce.
 		return fmt.Errorf("infra: invalid account_id for [%s]: %q\n"+
 			"An AWS account id is exactly 12 digits, no dashes and no quotes.",
 			s.Environment, s.AccountID)
@@ -530,7 +539,7 @@ func upsertINISection(content []byte, name string, body []string) []byte {
 	return joinLines(out)
 }
 
-// VarFileRequest asks for one root's envs/<env>.tfvars to be materialised from the
+// VarFileRequest asks for one root's envs/<env>.tfvars to be materialized from the
 // committed envs/<env>.tfvars-example next to it.
 type VarFileRequest struct {
 	Unit Unit
@@ -544,7 +553,7 @@ type VarFileRequest struct {
 	//
 	// This is not cosmetic. environments.conf records a region but does not inject
 	// it into Terraform — every root takes its region from its own tfvars — so a
-	// checkout configured for one region and materialised from a template that
+	// checkout configured for one region and materialized from a template that
 	// hardcodes another deploys to the template's region while every guard reports
 	// agreement. Availability zones are rewritten with it, because their names
 	// embed the region and a zone from the wrong one fails only at apply time.
@@ -925,7 +934,10 @@ func writeAtomic(path string, content []byte) error {
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("infra: cannot close %s: %w", name, err)
 	}
-	if err := os.Chmod(name, 0o644); err != nil {
+	// 0600, not 0644: what this writes is environments.conf and the per-environment
+	// tfvars, and both carry an AWS account id — which is why the repository
+	// gitignores them. There is no reader but the operator running terraform.
+	if err := os.Chmod(name, 0o600); err != nil {
 		return fmt.Errorf("infra: cannot set the mode of %s: %w", name, err)
 	}
 	if err := os.Rename(name, path); err != nil {

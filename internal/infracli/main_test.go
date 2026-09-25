@@ -30,7 +30,7 @@ func fakeCheckout(t *testing.T, config, backend string) string {
 		filepath.Join(aws, "products", "midaz", "postgres", "envs"),
 		filepath.Join(aws, "products", "midaz", "valkey", "envs"),
 		filepath.Join(aws, "backend"),
-		// _modules and backend are the pair resolveLayout recognises a checkout by,
+		// _modules and backend are the pair resolveLayout recognizes a checkout by,
 		// so a fake that omits either one is not a checkout as far as the CLI is
 		// concerned — which is exactly what TestRepoMustPointAtACheckout relies on.
 		filepath.Join(aws, "_modules", "postgres-rds"),
@@ -217,7 +217,7 @@ func TestEnvironmentVariableLocatesTheRepo(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	if !strings.Contains(stdout, "midaz") {
-		t.Errorf("$LERIAN_TF_REPO was not honoured:\n%s", stdout)
+		t.Errorf("$LERIAN_TF_REPO was not honored:\n%s", stdout)
 	}
 }
 
@@ -304,7 +304,7 @@ func TestProviderPositionalRedirect(t *testing.T) {
 	}
 }
 
-// checkoutTree builds a minimal directory that IsCheckout recognises.
+// checkoutTree builds a minimal directory that IsCheckout recognizes.
 func checkoutTree(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()

@@ -32,7 +32,7 @@ type CLI struct {
 
 	// Logs says where the raw Terraform output of one unit goes. It is called from
 	// several goroutines at once, one per unit in flight, so an implementation that
-	// shares a writer must serialise it. A nil Logs discards the output, which is
+	// shares a writer must serialize it. A nil Logs discards the output, which is
 	// what a caller that only wants the plan counts wants.
 	Logs func(unit Unit) io.Writer
 
@@ -149,11 +149,11 @@ func (c *CLI) terraform(unit Unit) (*tfexec.Terraform, error) {
 	return client, nil
 }
 
-// Init initialises one root.
+// Init initializes one root.
 //
 // -reconfigure is passed on every non-bootstrap init and that is not a
 // preference. .terraform/ caches the resolved backend, including the bucket of
-// whichever environment was initialised in this checkout last. Without it,
+// whichever environment was initialized in this checkout last. Without it,
 // switching environments keeps the stale bucket and the run dies with a 403 at
 // apply time — long after the plan looked healthy, and with an error that says
 // nothing about the cause.

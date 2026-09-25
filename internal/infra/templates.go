@@ -60,7 +60,7 @@ const TemplatesMinRef = "v1.6.0"
 // TemplatesRepoEnv overrides where the templates are cloned from.
 //
 // It exists for the deployments that cannot reach github.com: an air-gapped client
-// with an internal mirror, or an organisation that vendors the templates into its
+// with an internal mirror, or an organization that vendors the templates into its
 // own git server. Those are ordinary BYOC situations, and without an override the
 // managed checkout would be unavailable to exactly the clients most likely to need
 // a supported path. It is a variable rather than a build flag so a mirror does not
@@ -433,7 +433,7 @@ func porcelainPath(line string) string {
 type CheckoutState struct {
 	// Path is where it is, or would be.
 	Path string
-	// Exists reports whether Path holds a checkout this tool recognises.
+	// Exists reports whether Path holds a checkout this tool recognizes.
 	Exists bool
 	// Ref is the tag it is on, or "" when it is on a branch or an untagged commit.
 	Ref string
@@ -463,16 +463,16 @@ func InspectCheckout(ctx context.Context, git Git, path string, managed bool) Ch
 }
 
 // checkoutMarkers are the directories a lerian-terraform-foundation checkout is
-// recognised by. ALL of them must be present, and they are deliberately the two
+// recognized by. ALL of them must be present, and they are deliberately the two
 // the tool itself depends on rather than a name that merely looks distinctive:
 //
 //	examples/aws/_modules   what every root's source = "../../../_modules/..."
 //	                        resolves to, so its absence means the roots below it
-//	                        cannot initialise at all;
+//	                        cannot initialize at all;
 //	examples/aws/backend    where LoadBackend reads <env>.hcl.
 //
 // Both are tracked in git — _modules holds the module sources, backend/ holds
-// .gitkeep and README.md — so a fresh clone is recognised before Terraform has
+// .gitkeep and README.md — so a fresh clone is recognized before Terraform has
 // ever run in it. That is why the marker is not environments.conf or
 // backend/<env>.hcl: both are gitignored, so a marker built on them would fail on
 // exactly the checkout that has not been bootstrapped yet. It is not products/
@@ -489,6 +489,9 @@ func IsCheckout(dir string) bool {
 		return false
 	}
 	for _, marker := range checkoutMarkers {
+		//nolint:gosec // G703: dir is the checkout the operator selected with --repo or
+		// $LERIAN_TF_REPO. They already own the process; a read-only Stat on a path they
+		// chose crosses no trust boundary.
 		info, err := os.Stat(filepath.Join(append([]string{dir}, marker...)...))
 		if err != nil || !info.IsDir() {
 			return false

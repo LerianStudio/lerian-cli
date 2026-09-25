@@ -19,7 +19,7 @@ type fakeTerraform struct {
 
 	// calls is every call in the order it happened, as "<phase> <unit>".
 	calls []string
-	// initOptions is the InitOptions each unit was initialised with.
+	// initOptions is the InitOptions each unit was initialized with.
 	initOptions map[string]InitOptions
 	// planOptions is the PlanOptions each unit was planned with.
 	planOptions map[string]PlanOptions

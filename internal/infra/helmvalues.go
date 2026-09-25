@@ -81,7 +81,7 @@ func CollectHelmValues(
 // has been ported to Go (see chartmap.go), the facts are read straight from the
 // tier's state and the product root is not touched at all.
 //
-// A zero Layout disables that redirection, so the old behaviour is one call away
+// A zero Layout disables that redirection, so the old behavior is one call away
 // and callers that have no Layout keep working.
 func CollectHelmValuesFrom(
 	ctx context.Context,

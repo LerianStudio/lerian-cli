@@ -31,7 +31,7 @@ type checklist struct {
 	// width is the label column, sized to the longest short name so no line is
 	// padded to an arbitrary constant.
 	width int
-	// style decides whether headings may be emphasised.
+	// style decides whether headings may be emphasized.
 	style style
 	// spin is the in-flight repaint, nil when the destination is not a terminal.
 	spin *spinner
@@ -184,7 +184,7 @@ func (c *checklist) Update(unit string, status infra.Status, detail, remediation
 		}
 		if c.style.enabled {
 			// The previous one is stopped first, or its painting goroutine outlives a
-			// cancelled run and keeps writing to c.out. It has to be stopped WITHOUT
+			// canceled run and keeps writing to c.out. It has to be stopped WITHOUT
 			// holding c.mu — see stopSpinner.
 			c.stopSpinner()
 			c.spin = newSpinner(&c.mu, c.out, label)

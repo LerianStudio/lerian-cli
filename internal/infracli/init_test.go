@@ -126,7 +126,7 @@ func TestInitWritesConfigAndVarFiles(t *testing.T) {
 		t.Errorf("the egress placeholder was not filled:\n%s", eks)
 	}
 
-	// The product named in --targets must be materialised too, not just infra-base.
+	// The product named in --targets must be materialized too, not just infra-base.
 	if _, err := os.Stat(filepath.Join(root, "examples", "aws", "products", "midaz", "valkey", "envs", "dev.tfvars")); err != nil {
 		t.Errorf("the product's tfvars was not written: %v", err)
 	}
@@ -716,7 +716,7 @@ func TestOmittedProfileIsNotTheSameAsAnEmptyOne(t *testing.T) {
 			"--profile", "", "--account", "123456789012", "--region", "us-east-2",
 			"--targets", "infra-base", "--api-cidr", "203.0.113.7", "--auto-approve")
 		if err != nil {
-			t.Fatalf("--profile '' is a decision and must be honoured: %v\n%s", err, stderr)
+			t.Fatalf("--profile '' is a decision and must be honored: %v\n%s", err, stderr)
 		}
 		config, readErr := os.ReadFile(filepath.Join(root, "examples", "aws", "environments.conf"))
 		if readErr != nil {

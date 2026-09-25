@@ -9,11 +9,11 @@ import (
 //
 // Three conditions, all of which must hold, because the same output is routinely
 // redirected: `--action helm-values > values.yaml` must produce a YAML file with
-// no escape sequences in it, and a CI log full of colour codes is worse than a
+// no escape sequences in it, and a CI log full of color codes is worse than a
 // plain one.
 //
 //   - the destination is a terminal;
-//   - NO_COLOR is unset (https://no-color.org, honoured by convention);
+//   - NO_COLOR is unset (https://no-color.org, honored by convention);
 //   - TERM is not "dumb", which is what an editor's shell reports.
 type style struct{ enabled bool }
 
@@ -31,10 +31,10 @@ func newStyle(out io.Writer) style {
 	return style{enabled: true}
 }
 
-// bold marks a section heading. Headings are the only thing emphasised: colour
+// bold marks a section heading. Headings are the only thing emphasized: color
 // used to carry meaning (green for ok, red for fail) reads as decoration once a
 // run has forty lines, and it disappears entirely for the readers who need it
-// most — colour-blind operators and anyone reading the piped log.
+// most — color-blind operators and anyone reading the piped log.
 func (s style) bold(text string) string {
 	if !s.enabled {
 		return text
@@ -42,13 +42,13 @@ func (s style) bold(text string) string {
 	return "\x1b[1m" + text + "\x1b[0m"
 }
 
-// alert is bold red, and it is the only place colour carries meaning in this tool.
+// alert is bold red, and it is the only place color carries meaning in this tool.
 //
 // It is reserved for a choice the operator is allowed to make and will own the
 // consequences of — shared datastores in production being the case it was added
-// for. Everything else that colour could mark (ok, failed, skipped) is already
-// spelled out in words, so that a reader without colour, or reading a saved log,
-// loses nothing. Here the words are still complete; the colour only makes them
+// for. Everything else that color could mark (ok, failed, skipped) is already
+// spelled out in words, so that a reader without color, or reading a saved log,
+// loses nothing. Here the words are still complete; the color only makes them
 // impossible to scroll past.
 func (s style) alert(text string) string {
 	if !s.enabled {

@@ -43,7 +43,7 @@ type spinner struct {
 	once sync.Once
 }
 
-// brailleFrames is the dot_cycle from the gist this was modelled on: a 2x4 braille
+// brailleFrames is the dot_cycle from the gist this was modeled on: a 2x4 braille
 // cell with the filled dots rotating, which reads as continuous motion rather than
 // a character being swapped.
 //
@@ -84,7 +84,7 @@ func newSpinner(mu *sync.Mutex, out io.Writer, label string) *spinner {
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
 	}
-	// Same three conditions the colour decision uses: a terminal, NO_COLOR unset,
+	// Same three conditions the color decision uses: a terminal, NO_COLOR unset,
 	// and TERM not "dumb". Anything that cannot take ANSI cannot take a repaint.
 	if !newStyle(out).enabled {
 		s.inert = true

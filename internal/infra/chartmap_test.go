@@ -288,7 +288,7 @@ func TestReadDatastoreMode(t *testing.T) {
 	for _, test := range []struct{ body, want string }{
 		{"mode = \"shared\"\n", SharedMode},
 		{"mode = \"dedicated\"\n", DedicatedMode},
-		// The neighbouring key must not be mistaken for the switch.
+		// The neighboring key must not be mistaken for the switch.
 		{"transit_encryption_mode = \"preferred\"\n", DedicatedMode},
 		// Prose describing the other mode is not a choice.
 		{"# with mode = \"shared\" nothing is created\nmode = \"dedicated\"\n", DedicatedMode},
@@ -392,7 +392,7 @@ func TestHelmValuesReadsTheProductInDedicatedMode(t *testing.T) {
 }
 
 // A zero Layout turns the redirection off, so the original entry point and any
-// caller without a Layout keeps its old behaviour.
+// caller without a Layout keeps its old behavior.
 func TestHelmValuesWithoutALayoutNeverRedirects(t *testing.T) {
 	_, product := sharedCheckout(t, SharedMode)
 

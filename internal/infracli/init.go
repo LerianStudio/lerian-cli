@@ -50,7 +50,7 @@ Flags:
                         THE AWS CLI below.
   --region <name>       AWS region for this environment.
   --account <id>        Expected 12-digit account. Verified against the profile.
-  --targets <list>      Comma-separated roots to materialise tfvars for,
+  --targets <list>      Comma-separated roots to materialize tfvars for,
                         e.g. infra-base,midaz. Default: infra-base.
   --api-cidr <v>        'auto' to detect this machine's egress address, or an
                         explicit address for the EKS API allow-list.
@@ -62,7 +62,7 @@ Flags:
                         escape hatch for any token this build does not know.
   --force               Replace configuration that already exists and differs.
   --dry-run             Show what would be written, write nothing.
-  --auto-approve        Skip the confirmation before writing. It does NOT authorise
+  --auto-approve        Skip the confirmation before writing. It does NOT authorize
                         a clone — see --clone.
   --repo <path>         The checkout to configure. Using it turns the clone off:
                         you are saying where the templates already are.
@@ -124,7 +124,7 @@ THE TEMPLATES
   repository by accident.
 
   LERIAN_TEMPLATES_REPO overrides where the clone comes from, for an air-gapped
-  client with an internal mirror or an organisation that vendors the templates into
+  client with an internal mirror or an organization that vendors the templates into
   its own git server.
 
 Examples:
@@ -498,7 +498,7 @@ func buildInitPlan(
 	// The roots are added here; applying them is still an explicit, separate step,
 	// because the shared tier is a blast radius the operator opts into knowingly.
 	if plan.mode == infra.SharedMode {
-		plan.sharedUnits, err = sharedTierUnits(layout, catalog, plan.units, environment)
+		plan.sharedUnits, err = sharedTierUnits(layout, catalog, plan.units)
 		if err != nil {
 			return plan, err
 		}
@@ -951,7 +951,6 @@ func sharedTierUnits(
 	layout infra.Layout,
 	catalog infra.Catalog,
 	products []infra.Unit,
-	env string,
 ) ([]infra.Unit, error) {
 	available := map[string]bool{}
 	for _, service := range catalog.Products["shared-resources"] {
@@ -1041,8 +1040,8 @@ func printModeDisclaimer(out io.Writer, plan initPlan) {
 				"others.", "    ", 76)+"\n")
 
 		// Not blocked: an operator may have reasons, and this tool does not get to
-		// overrule them. Made impossible to miss instead — the one use of colour in
-		// the whole CLI, and the words carry it alone when colour is unavailable.
+		// overrule them. Made impossible to miss instead — the one use of color in
+		// the whole CLI, and the words carry it alone when color is unavailable.
 		if plan.env.Environment == "prd" {
 			fmt.Fprintf(out, "\n  %s\n", theme.alert(
 				"WARNING: you are choosing shared datastores for PRODUCTION."))

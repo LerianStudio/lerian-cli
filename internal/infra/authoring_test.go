@@ -392,7 +392,7 @@ func TestMaterializeVarFileKeepsCommentsAndSubstitutes(t *testing.T) {
 
 	got := readFile(t, VarFile(unit, "dev"))
 	if !strings.Contains(got, "US$100/month") {
-		t.Error("the cost comment was lost; materialise must copy, not regenerate")
+		t.Error("the cost comment was lost; materialize must copy, not regenerate")
 	}
 	if !strings.Contains(got, `"203.0.113.7/32"`) {
 		t.Errorf("substitution produced the wrong CIDR:\n%s", got)
@@ -563,7 +563,7 @@ func TestEveryTemplatePlaceholderIsKnown(t *testing.T) {
 	}
 }
 
-// An organisation with a dozen account profiles behind one SSO session needs one
+// An organization with a dozen account profiles behind one SSO session needs one
 // login, not a dozen. Suggesting a per-profile command for each of them was
 // technically correct and practically useless.
 func TestLoginHintCollapsesASharedSSOSession(t *testing.T) {
@@ -629,7 +629,7 @@ func TestListAWSProfilesReadsSSOSession(t *testing.T) {
 }
 
 // environments.conf records a region but does not inject it into Terraform: each
-// root takes its region from its own tfvars. Materialising a us-east-1 template
+// root takes its region from its own tfvars. Materializing a us-east-1 template
 // into a checkout configured for us-east-2 therefore deployed to us-east-1 while
 // every guard reported agreement, because the guards only compare environments.conf
 // with backend/<env>.hcl and never look at the tfvars.
@@ -684,7 +684,7 @@ func TestMaterializeVarFileLeavesMatchingRegionAlone(t *testing.T) {
 // nothing ever asked.
 func TestMaterializeVarFileSetsMode(t *testing.T) {
 	layout := authoringCheckout(t)
-	// The neighbouring key is the trap: an unanchored pattern for "mode =" also
+	// The neighboring key is the trap: an unanchored pattern for "mode =" also
 	// matches transit_encryption_mode and would silently rewrite the TLS setting.
 	example := "mode = \"dedicated\"\n" +
 		"transit_encryption_mode    = \"preferred\"\n" +

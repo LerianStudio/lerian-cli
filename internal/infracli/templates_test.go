@@ -46,7 +46,7 @@ func TestContradictoryTemplateFlagsAreRefused(t *testing.T) {
 }
 
 // --auto-approve means "skip the confirmation before writing the files I asked
-// for", and CI passes it as a matter of routine. If it also authorised a clone,
+// for", and CI passes it as a matter of routine. If it also authorized a clone,
 // every CI run would be able to download a repository nobody asked it to fetch.
 func TestAutoApproveDoesNotAuthoriseACloneOutsideATerminal(t *testing.T) {
 	// acquireTemplates looks git up before it reaches the clone decision, so without
@@ -273,7 +273,7 @@ func TestWarningFiresOnlyBelowTheFloorAndDoesNotBlock(t *testing.T) {
 	}
 }
 
-// A mirror is an ordinary BYOC situation: an air-gapped client, or an organisation
+// A mirror is an ordinary BYOC situation: an air-gapped client, or an organization
 // that vendors the templates into its own git server. Without the override the
 // managed checkout would be unavailable to exactly those clients.
 func TestTemplatesRepoOverrideIsHonoured(t *testing.T) {

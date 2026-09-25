@@ -29,7 +29,7 @@ type Catalog struct {
 // Discover walks examples/aws/products for Terraform roots. A directory counts
 // when it is exactly products/<product>/<service> and holds a main.tf; pinning
 // both ends of the depth is what keeps _modules, .terraform and any future
-// nesting out of the catalogue.
+// nesting out of the catalog.
 //
 // Nothing here is hardcoded: a new product is deployable the moment its directory
 // exists.

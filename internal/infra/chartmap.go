@@ -9,7 +9,7 @@ package infra
 // reads state. In shared mode a product root creates nothing at all — every
 // resource is count = 0 and the root exists purely to compute this map — so an
 // operator was made to run an apply that built no infrastructure, just to
-// materialise an expression into a state file.
+// materialize an expression into a state file.
 //
 // With the mapping here, values can be built from whichever root OWNS the
 // datastore. In shared mode that is products/shared-resources/<engine>, and the

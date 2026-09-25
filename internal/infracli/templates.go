@@ -17,12 +17,7 @@ import (
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
-// devVersion is what a binary built without the release ldflag reports. It is not a
-// tag, so there is nothing to pin to, and every path that assumes a tag has to say
-// so instead of pretending.
-const devVersion = "dev"
-
-// validateTemplateFlags rejects combinations that cannot both be honoured.
+// validateTemplateFlags rejects combinations that cannot both be honored.
 //
 // Each of these is an error rather than a precedence rule. An operator who typed
 // --clone --no-clone does not know which they want, and choosing for them buries the
@@ -84,11 +79,11 @@ func acquireTemplates(
 	// WHETHER to clone is settled before WHAT to clone. A run with neither flag is
 	// missing both answers, and the decision to download a repository at all is the
 	// one that has to be made first — telling a CI job to pick a tag for a clone it
-	// never authorised would be answering the second question first.
+	// never authorized would be answering the second question first.
 	//
-	// --auto-approve deliberately does NOT authorise this. It means "skip the
+	// --auto-approve deliberately does NOT authorize this. It means "skip the
 	// confirmation before writing the files I asked for", and CI passes it as a
-	// matter of routine. Letting it also authorise a clone would make every CI run
+	// matter of routine. Letting it also authorize a clone would make every CI run
 	// capable of downloading a repository nobody asked it to fetch — the precise
 	// accident the explicit flags exist to prevent.
 	if !opts.clone && !ask.interactive {

@@ -48,7 +48,7 @@ func (c Changes) Empty() bool { return c.Create == 0 && c.Update == 0 && c.Delet
 // tested without Terraform, credentials or an AWS account — the shell version could
 // only be tested by stubbing the binary and reading back the argv it recorded.
 type Terraform interface {
-	// Init initialises one root. A call that carries a BackendFile passes
+	// Init initializes one root. A call that carries a BackendFile passes
 	// -reconfigure — see the note on the implementation for why that is not
 	// optional there. The bootstrap stack owns its state locally and has no backend
 	// file, so its Init carries no options at all.

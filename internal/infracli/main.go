@@ -162,9 +162,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if opts.format != "json" && opts.format != "yaml" {
+		//nolint:revive // error-strings: the second line is a remediation sentence aimed
+		// at the operator, punctuated as prose on purpose. Collapsing it would change
+		// output this port is verified to reproduce byte for byte.
 		return fmt.Errorf("invalid --format %q\nValid values: json, yaml.", opts.format)
 	}
 	if opts.jobs < 1 {
+		//nolint:revive // error-strings: the second line is a remediation sentence aimed
+		// at the operator, punctuated as prose on purpose. Collapsing it would change
+		// output this port is verified to reproduce byte for byte.
 		return fmt.Errorf("invalid --jobs %d\nMust be at least 1. Default 4; use 1 to run sequentially.",
 			opts.jobs)
 	}
@@ -219,6 +225,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	allUnits := infra.Units(stages)
 	if len(allUnits) == 0 {
+		//nolint:revive // error-strings: the second line is a remediation sentence aimed
+		// at the operator, punctuated as prose on purpose. Collapsing it would change
+		// output this port is verified to reproduce byte for byte.
 		return fmt.Errorf("target %q resolved to no Terraform root\nRun lerian infra --list.", opts.target)
 	}
 
@@ -294,6 +303,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("cannot create the run directory: %w", err)
 	}
+	//nolint:gosec // G302 is written for files; a directory without the execute bit
+	// cannot be traversed, so 0700 is already the tightest usable mode here.
 	if err := os.Chmod(runDir, 0o700); err != nil {
 		return fmt.Errorf("cannot restrict the run directory: %w", err)
 	}
@@ -436,7 +447,7 @@ func templatesLine(ctx context.Context, layout infra.Layout, source checkoutSour
 // they did not use, which is the whole reason this error exists.
 func notACheckout(path, source string) error {
 	return fmt.Errorf("no lerian-terraform-foundation checkout at %s (resolved from %s)\n"+
-		"A checkout is recognised by the directories examples/aws/_modules and\n"+
+		"A checkout is recognized by the directories examples/aws/_modules and\n"+
 		"examples/aws/backend; at least one of them is missing there.\n\n"+
 		"%s", path, source, pointingOptions())
 }
@@ -629,7 +640,7 @@ func execute(
 		if errors.Is(err, infra.ErrAborted) {
 			return err
 		}
-		return reported{summary: summarise(err)}
+		return reported{summary: summarize(err)}
 	}
 
 	printClusterHandoff(ctx, out, runner, results, action, config)
@@ -929,7 +940,7 @@ func roundDuration(d time.Duration) time.Duration {
 // changeSummary is the counts with the zeros left in, unlike the per-stack lines.
 //
 // A stack line is one of six being scanned, so the zeros are noise there. This
-// line is read once, deliberately, before authorising a spend — and "0 to destroy"
+// line is read once, deliberately, before authorizing a spend — and "0 to destroy"
 // is exactly the reassurance an operator wants stated rather than inferred from
 // its absence.
 func changeSummary(create, update, destroy int) string {
@@ -965,7 +976,8 @@ func explainStages(out io.Writer, stages []infra.Stage, action infra.Action) {
 	var lines []string
 	for _, stage := range stages {
 		if note, ok := notes[stage.Name]; ok {
-			lines = append(lines, fmt.Sprintf("  %s\n%s\n", newStyle(out).bold(stage.Name), wrapIndent(note, "    ", 76)))
+			lines = append(lines, fmt.Sprintf("  %s\n%s\n",
+				newStyle(out).bold(stage.Name), wrapIndent(note, "    ", 76)))
 			continue
 		}
 		if stage.Name == "shared-resources" {
@@ -1120,9 +1132,9 @@ type reported struct{ summary string }
 
 func (r reported) Error() string { return r.summary }
 
-// summarise keeps the first line of a Terraform failure, which names what broke,
+// summarize keeps the first line of a Terraform failure, which names what broke,
 // and drops the body that was already printed above.
-func summarise(err error) string {
+func summarize(err error) string {
 	line := firstLine(err.Error())
 	// The wrapped chain ends in the raw terraform output; the part before the last
 	// ": " is this package's own explanation, which is the useful half. Both

@@ -72,7 +72,7 @@ func enginesUnderTest() []string {
 	for engine := range secretPayloadProperty {
 		seen[engine] = true
 	}
-	var out []string
+	out := make([]string, 0, len(seen))
 	for engine := range seen {
 		out = append(out, engine)
 	}

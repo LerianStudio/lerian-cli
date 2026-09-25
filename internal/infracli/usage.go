@@ -23,7 +23,7 @@ FIRST RUN
     lerian infra init --env dev
 
   It lists the AWS profiles it found with the account each one reaches, detects
-  this machine's egress address for the cluster's API allow-list, and materialises
+  this machine's egress address for the cluster's API allow-list, and materializes
   one tfvars per root from the committed *.tfvars-example next to it. Nothing it
   does touches an AWS resource. Run 'lerian infra init --help' for its flags —
   every question it asks has one, so CI never has to answer a prompt.
@@ -171,7 +171,7 @@ ORDER
 
 WHY -reconfigure IS ALWAYS PASSED
   .terraform/ caches the resolved backend, including the bucket of whichever
-  environment was initialised last. Without -reconfigure, switching environments
+  environment was initialized last. Without -reconfigure, switching environments
   in the same checkout keeps the stale bucket and the run dies with a 403 at apply
   time — long after the plan looked fine. Every init here passes it.
 
@@ -179,9 +179,9 @@ ENVIRONMENT VARIABLES
   LERIAN_TF_REPO      The checkout to drive, when not running inside one.
   LERIAN_TEMPLATES_REPO
                       Where init --clone clones from, for an air-gapped client
-                      with an internal mirror or an organisation that vendors the
+                      with an internal mirror or an organization that vendors the
                       templates into its own git server.
-  NO_COLOR            Set to anything to disable bold and colour. Colour is also
+  NO_COLOR            Set to anything to disable bold and color. Color is also
                       off automatically when the output is not a terminal, so a
                       redirected file or a CI log never contains escape codes.
   LERIAN_SPINNER      ascii falls back from the braille progress spinner to

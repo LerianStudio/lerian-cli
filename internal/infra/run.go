@@ -125,8 +125,9 @@ func (r *Runner) Execute(
 ) ([]StageResult, error) {
 	progress := r.opts.Progress
 
-	names := make([]string, 0)
-	for _, unit := range Units(stages) {
+	units := Units(stages)
+	names := make([]string, 0, len(units))
+	for _, unit := range units {
 		names = append(names, unit.Name)
 	}
 	progress.Start(names)
@@ -232,7 +233,7 @@ func (r *Runner) Execute(
 	return results, nil
 }
 
-// planUnit initialises the root and writes its saved plan.
+// planUnit initializes the root and writes its saved plan.
 func (r *Runner) planUnit(ctx context.Context, unit Unit, destroy bool) (Changes, error) {
 	if err := r.opts.Terraform.Init(ctx, unit, initOptionsFor(unit, r.opts.Backend, r.opts.Env)); err != nil {
 		return Changes{}, err
@@ -398,7 +399,7 @@ func applyVerb(destroy bool) string {
 	return "applying"
 }
 
-// initOptionsFor picks how a root is initialised. bootstrap is the exception in
+// initOptionsFor picks how a root is initialized. bootstrap is the exception in
 // the whole repository: it creates the backend, so it cannot use it, and runs on
 // local state with one workspace per environment instead.
 func initOptionsFor(unit Unit, backend Backend, env string) InitOptions {

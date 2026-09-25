@@ -70,7 +70,7 @@ func TestRequireAWSCLIRejectsVersionOne(t *testing.T) {
 	}
 }
 
-// A banner this parser does not recognise is ACCEPTED. A wrapper, a shim or a future
+// A banner this parser does not recognize is ACCEPTED. A wrapper, a shim or a future
 // format change must not be refused by a parser guessing at it — the real command's
 // own error is a better last word than a false one here.
 func TestRequireAWSCLIAcceptsAnUnreadableVersion(t *testing.T) {

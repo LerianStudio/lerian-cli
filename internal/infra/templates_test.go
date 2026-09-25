@@ -99,7 +99,7 @@ func TestCloneTemplatesPinsTheRequestedTag(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !IsCheckout(dest) {
-		t.Fatal("the clone should be recognised as a checkout")
+		t.Fatal("the clone should be recognized as a checkout")
 	}
 	state := InspectCheckout(context.Background(), git, dest, true)
 	if !state.AtVersion(fixturePinnedTag) {
