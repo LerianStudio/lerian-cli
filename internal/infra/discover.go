@@ -236,52 +236,63 @@ func resolveComposite(layout Layout, catalog Catalog, target string) ([]Stage, e
 	}
 
 	// A single-service target names a stage that "all" does not contain, because
-	// "all" groups a product's services into one stage. Keep those verbatim, after
-	// the canonical stages they cannot precede.
+	// "all" groups a product's services into one stage. Each one is placed in the
+	// slot its OWN product occupies in the canonical order, not at the end.
+	//
+	// Appending them last was wrong for the shared tier. "shared-resources" sits
+	// before the products in the canonical order precisely because a product root
+	// in shared mode resolves it, so "--target shared-resources/postgres,midaz"
+	// scheduled midaz first and the apply failed against a tier that did not exist
+	// yet — the exact class of run the doc above says no spelling can produce.
+	canonical := make(map[string]bool, len(everything))
+	for _, stage := range everything {
+		canonical[stage.Name] = true
+	}
+	verbatim := map[string][]Stage{}
+	for _, part := range parts {
+		stages, err := Resolve(layout, catalog, part)
+		if err != nil {
+			return nil, err
+		}
+		for _, stage := range stages {
+			if canonical[stage.Name] || !wanted[stage.Name] {
+				continue
+			}
+			product, _, _ := strings.Cut(stage.Name, "/")
+			verbatim[product] = append(verbatim[product], stage)
+		}
+	}
+
 	ordered := make([]Stage, 0, len(wanted))
 	// seen tracks units already scheduled, so a verbatim stage cannot re-run a root
 	// a canonical stage has already taken.
 	seen := map[string]bool{}
 	for _, stage := range everything {
-		if !wanted[stage.Name] {
-			continue
-		}
-		delete(wanted, stage.Name)
-		for _, unit := range stage.Units {
-			seen[unit.Name] = true
-		}
-		ordered = append(ordered, stage)
-	}
-	if len(wanted) > 0 {
-		for _, part := range parts {
-			stages, err := Resolve(layout, catalog, part)
-			if err != nil {
-				return nil, err
+		if wanted[stage.Name] {
+			for _, unit := range stage.Units {
+				seen[unit.Name] = true
 			}
-			for _, stage := range stages {
-				if !wanted[stage.Name] {
+			ordered = append(ordered, stage)
+		}
+		for _, extra := range verbatim[stage.Name] {
+			// A unit already covered by an accepted stage is dropped rather than run
+			// twice: "--target midaz,midaz/postgres" produced the canonical midaz
+			// stage AND the verbatim midaz/postgres one, so the same root applied
+			// twice and Progress.Start received a duplicate name, which makes every
+			// later Update ambiguous for the checklist consumers.
+			var fresh []Unit
+			for _, unit := range extra.Units {
+				if seen[unit.Name] {
 					continue
 				}
-				delete(wanted, stage.Name)
-				// A unit already covered by an accepted stage is dropped rather than
-				// run twice: "--target midaz,midaz/postgres" produced the canonical
-				// midaz stage AND the verbatim midaz/postgres one, so the same root
-				// applied twice and Progress.Start received a duplicate name, which
-				// makes every later Update ambiguous for the checklist consumers.
-				var fresh []Unit
-				for _, unit := range stage.Units {
-					if seen[unit.Name] {
-						continue
-					}
-					seen[unit.Name] = true
-					fresh = append(fresh, unit)
-				}
-				if len(fresh) == 0 {
-					continue
-				}
-				stage.Units = fresh
-				ordered = append(ordered, stage)
+				seen[unit.Name] = true
+				fresh = append(fresh, unit)
 			}
+			if len(fresh) == 0 {
+				continue
+			}
+			extra.Units = fresh
+			ordered = append(ordered, extra)
 		}
 	}
 	return ordered, nil
