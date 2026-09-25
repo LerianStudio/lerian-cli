@@ -80,3 +80,10 @@
       - any-glob-to-any-file:
           - examples/**/*
           - configs/**/*
+
+'area: infra':
+  - changed-files:
+      - any-glob-to-any-file:
+          - cmd/infra/**/*
+          - internal/infra/**/*
+          - internal/infracli/**/*

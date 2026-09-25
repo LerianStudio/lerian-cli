@@ -1,7 +1,7 @@
 # Lerian CLI
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](https://go.dev/)
 [![GitHub Release](https://img.shields.io/badge/release-v1.0.0--beta-green.svg)](https://github.com/lerian-studio/lerian-cli/releases)
 
 Official command-line interface for the Lerian platform. Manage your infrastructure products and deployments.
@@ -18,6 +18,21 @@ Midaz is a ledger system for managing assets, operations, and multi-tenancy envi
 - **Multiple Deployment Modes** - SaaS, private, and sandbox environments
 - **Operations Tools** - Logs, port-forwarding, SQL execution, backups, and events
 - **Kubernetes Integration** - Direct access to deployed resources
+
+### Infrastructure (Available Now)
+
+Drive the Terraform roots of
+[lerian-terraform-foundation](https://github.com/LerianStudio/lerian-terraform-foundation)
+on AWS, from bootstrap to the per-product services.
+
+**Features:**
+- **Environment Bootstrap** - State bucket and lock table, then the VPC and the EKS cluster
+- **Target Resolution** - Products and services discovered from the checkout; combine with commas
+- **Account Guard** - Three checks before anything runs, with no flag to bypass them
+- **Dry Run** - Resolve and print the whole execution plan without a single AWS call
+- **Helm Values** - Read `helm_values` back out of the applied state
+
+Ported from `lerian-infra-cli`, which this CLI replaces.
 
 ### Future Products
 
@@ -199,6 +214,38 @@ lerian auth login \
 # Logout from current profile
 lerian auth logout
 ```
+
+### Infrastructure Commands
+
+All infrastructure commands start with `lerian infra`. Unlike the rest of the CLI,
+this group takes flags rather than subcommands — it kept the command line of the
+`lerian-infra` binary it replaces, so anything written against that binary keeps
+working with `lerian infra` in front of it.
+
+```bash
+# Verify this machine: dependencies, checkout, and what it would use
+lerian infra check
+
+# Write the configuration a fresh checkout needs
+lerian infra init --env dev
+
+# List the discoverable targets (no AWS call, no configuration read)
+lerian infra --list
+
+# Resolve and print the execution plan, touching nothing
+lerian infra --env dev --target all --dry-run
+
+# Stand up an environment, in order
+lerian infra --env dev --target bootstrap        --action apply
+lerian infra --env dev --target infra-base       --action apply
+lerian infra --env dev --target shared-resources --action apply
+
+# Read the helm values of a product back out
+lerian infra --env dev --target midaz --action helm-values --format yaml
+```
+
+Run `lerian infra --help` for the full reference: every flag, the account guard,
+the ordering rules, and the environment variables it reads.
 
 ### Midaz Product Commands
 

@@ -27,6 +27,7 @@ jobs:
         deps
         docs
         examples
+        infra
         kubectl
         ledger
         output
@@ -34,8 +35,9 @@ jobs:
         tests
         version
       app_name_prefix: "lerian-cli"
-      go_version: "1.25"
+      go_version: "1.26"
       golangci_lint_version: "v2.12.2"
+      coverage_threshold: 55
       allowed_source_branches: 'develop|hotfix/*'
       enable_docker_scan: false
       run_lib_version_check: false

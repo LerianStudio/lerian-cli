@@ -103,7 +103,8 @@ func (c *Client) PortForwardService(serviceName string, localPort, remotePort in
 
 // ExecCommand executes a command in a pod
 func (c *Client) ExecCommand(podName string, command []string) error {
-	args := []string{"exec", "-n", c.namespace, "-it", podName, "--"}
+	args := make([]string, 0, 6+len(command))
+	args = append(args, "exec", "-n", c.namespace, "-it", podName, "--")
 	args = append(args, command...)
 
 	cmd := exec.Command("kubectl", args...)

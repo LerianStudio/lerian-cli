@@ -10,7 +10,6 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - '.golangci.yml'
-      - '.goreleaser.yml'
       - '.coderabbit.yml'
       - '.coderabbit.yaml'
 
@@ -26,9 +25,15 @@ permissions:
 
 jobs:
   release:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@tier-1
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-release.yml@tier-1
     with:
       enable_changelog: ${{ github.ref == 'refs/heads/main' }}
+      enable_goreleaser: true
+      build_on_release: true
+      build_on_release_include_prerelease: true
+      enable_dockerhub: false
+      enable_ghcr: false
+      enable_gitops_update: false
       shared_paths: |
         go.mod
         go.sum
