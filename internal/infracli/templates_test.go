@@ -3,12 +3,13 @@ package infracli
 import (
 	"bytes"
 	"context"
-	"github.com/lerian-studio/lerian-cli/internal/infra"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
 // Every one of these is an error rather than a precedence rule. An operator who

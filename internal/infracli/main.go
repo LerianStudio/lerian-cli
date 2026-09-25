@@ -162,15 +162,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if opts.format != "json" && opts.format != "yaml" {
-		//nolint:revive // error-strings: the second line is a remediation sentence aimed
-		// at the operator, punctuated as prose on purpose. Collapsing it would change
-		// output this port is verified to reproduce byte for byte.
 		return fmt.Errorf("invalid --format %q\nValid values: json, yaml.", opts.format)
 	}
 	if opts.jobs < 1 {
-		//nolint:revive // error-strings: the second line is a remediation sentence aimed
-		// at the operator, punctuated as prose on purpose. Collapsing it would change
-		// output this port is verified to reproduce byte for byte.
 		return fmt.Errorf("invalid --jobs %d\nMust be at least 1. Default 4; use 1 to run sequentially.",
 			opts.jobs)
 	}
@@ -225,9 +219,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	allUnits := infra.Units(stages)
 	if len(allUnits) == 0 {
-		//nolint:revive // error-strings: the second line is a remediation sentence aimed
-		// at the operator, punctuated as prose on purpose. Collapsing it would change
-		// output this port is verified to reproduce byte for byte.
 		return fmt.Errorf("target %q resolved to no Terraform root\nRun lerian infra --list.", opts.target)
 	}
 

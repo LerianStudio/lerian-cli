@@ -283,9 +283,6 @@ func DetectEgressIP(ctx context.Context, client HTTPDoer) (string, error) {
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		//nolint:staticcheck // ST1005: the second line is a remediation sentence aimed at
-		// the operator, and it is punctuated as prose on purpose. Collapsing it into a
-		// lowercase fragment would change output this port is verified to reproduce.
 		return "", fmt.Errorf("infra: cannot reach %s to detect this machine's egress address: %w\n"+
 			"Pass the address explicitly instead of detecting it (see --api-cidr).",
 			egressIPService, err)
@@ -293,9 +290,6 @@ func DetectEgressIP(ctx context.Context, client HTTPDoer) (string, error) {
 	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != http.StatusOK {
-		//nolint:staticcheck // ST1005: the second line is a remediation sentence aimed at
-		// the operator, and it is punctuated as prose on purpose. Collapsing it into a
-		// lowercase fragment would change output this port is verified to reproduce.
 		return "", fmt.Errorf("infra: %s answered %s\n"+
 			"Pass the address explicitly instead of detecting it (see --api-cidr).",
 			egressIPService, response.Status)
@@ -372,9 +366,6 @@ func (s EnvSpec) Validate() error {
 	// The same rule the loader enforces when it reads the file back, so a file this
 	// package writes can never fail this package's own validation.
 	if !isTwelveDigits(s.AccountID) {
-		//nolint:staticcheck // ST1005: the second line is a remediation sentence aimed at
-		// the operator, and it is punctuated as prose on purpose. Collapsing it into a
-		// lowercase fragment would change output this port is verified to reproduce.
 		return fmt.Errorf("infra: invalid account_id for [%s]: %q\n"+
 			"An AWS account id is exactly 12 digits, no dashes and no quotes.",
 			s.Environment, s.AccountID)
