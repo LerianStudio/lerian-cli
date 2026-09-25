@@ -261,7 +261,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		terraform.Credentials = credentials
 
-		if err := guardCredentialLifetime(progressOut, credentials, action, opts.minCredentialLifetime); err != nil {
+		if err := guardCredentialLifetime(progressOut, credentials, action, opts.minCredentialLifetime, config.Profile); err != nil {
 			return err
 		}
 	}
@@ -334,7 +334,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case infra.ActionOutput:
 		return writeOutputs(ctx, runner, allUnits, stdout)
 	default:
-		return execute(ctx, runner, stages, action, opts, config, runDir, logs, progressOut)
+		return execute(ctx, runner, stages, action, opts, config, runDir, logs, terraform.Credentials, progressOut)
 	}
 }
 
@@ -578,11 +578,19 @@ func execute(
 	config infra.EnvConfig,
 	runDir string,
 	logs *infra.FileLogs,
+	credentials infra.Credentials,
 	out io.Writer,
 ) error {
 	started := time.Now()
 
 	confirm := func(stage infra.Stage, plans []infra.UnitResult) error {
+		// Asked again here, not only in the preflight: this runs after the stage
+		// was planned and, without --auto-approve, after a human took as long as
+		// they took to answer. The session that was long enough to start may not be
+		// long enough to write.
+		if err := credentialLifetimeError(credentials, action, opts.minCredentialLifetime, config.Profile); err != nil {
+			return err
+		}
 		if opts.autoApprove {
 			return nil
 		}
@@ -774,25 +782,63 @@ func guardCredentialLifetime(
 	credentials infra.Credentials,
 	action infra.Action,
 	floor time.Duration,
+	profile string,
 ) error {
+	if err := credentialLifetimeError(credentials, action, floor, profile); err != nil {
+		return err
+	}
 	left, known := credentials.RemainingLifetime(time.Now())
-	if !known {
+	if !known || (action != infra.ActionApply && action != infra.ActionDestroy) {
 		return nil
-	}
-	writes := action == infra.ActionApply || action == infra.ActionDestroy
-	if !writes {
-		return nil
-	}
-
-	if floor > 0 && left < floor {
-		return fmt.Errorf("the credential has %s left, less than the %s this run requires\n"+
-			"Re-assume the profile and start again:\n\n  aws sso login --profile <profile>\n\n"+
-			"The credentials are resolved once for the whole run, so a %s apply that\n"+
-			"outlives them loses the state write while AWS finishes the change.",
-			roundLifetime(left), roundLifetime(floor), roundLifetime(left))
 	}
 	fmt.Fprintf(out, "  credential  %s left%s\n", roundLifetime(left), lifetimeNote(left, floor))
 	return nil
+}
+
+// credentialLifetimeError is the check on its own, so it can run again at the
+// moment of each write without printing the preflight line a second time.
+//
+// Checking once before planning is not enough: planning a large target and then
+// waiting for a human to type yes can burn most of a session, and later stages of
+// the same run start later still. The refusal has to be asked the question again
+// right before each stage that writes.
+func credentialLifetimeError(
+	credentials infra.Credentials,
+	action infra.Action,
+	floor time.Duration,
+	profile string,
+) error {
+	if floor <= 0 {
+		return nil
+	}
+	if action != infra.ActionApply && action != infra.ActionDestroy {
+		return nil
+	}
+	left, known := credentials.RemainingLifetime(time.Now())
+	if !known || left >= floor {
+		return nil
+	}
+	return fmt.Errorf("the credential has %s left, less than the %s this run requires\n"+
+		"The credentials are resolved once for the whole run, so an apply that\n"+
+		"outlives them loses the state write while AWS finishes the change.\n\n"+
+		"Refresh the session and start again. %s",
+		roundLifetime(left), roundLifetime(floor), refreshHint(profile))
+}
+
+// refreshHint names the command for the profile in hand rather than assuming one.
+// "aws sso login" is right only for an IAM Identity Center profile; an assume-role
+// or credential_process profile refreshes another way, and a run that names the
+// wrong command sends the operator down a path that cannot work.
+func refreshHint(profile string) string {
+	if profile == "" {
+		return "How depends on how the profile is configured:\n" +
+			"  IAM Identity Center:  aws sso login --profile <profile>\n" +
+			"  anything else:        re-run whatever issues the session for it"
+	}
+	return fmt.Sprintf("How depends on how %q is configured:\n"+
+		"  IAM Identity Center:  aws sso login --profile %s\n"+
+		"  anything else:        re-run whatever issues the session for it",
+		profile, profile)
 }
 
 // lifetimeNote nudges when nothing was demanded and the session is short anyway.

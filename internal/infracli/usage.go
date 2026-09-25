@@ -125,6 +125,11 @@ FLAGS
 
                           A plan is never refused: it is short and writes no state.
 
+                          The check runs in the preflight AND again immediately
+                          before each stage that writes, because planning a large
+                          target and waiting for a confirmation can burn most of a
+                          session.
+
   --jobs <n>              Services inside one product run in parallel. Default 4.
                           Ordered stages (bootstrap, vpc, eks) are always
                           sequential regardless of this.

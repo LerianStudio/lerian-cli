@@ -481,7 +481,7 @@ func TestCredentialLifetimeGuard(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var out bytes.Buffer
-			err := guardCredentialLifetime(&out, test.credentials, test.action, test.floor)
+			err := guardCredentialLifetime(&out, test.credentials, test.action, test.floor, "acme-dev")
 
 			if test.wantErr && err == nil {
 				t.Fatalf("the run was allowed to start; output was %q", out.String())
@@ -505,13 +505,51 @@ func TestCredentialLifetimeRefusalNamesTheRemedy(t *testing.T) {
 	var out bytes.Buffer
 	err := guardCredentialLifetime(&out,
 		infra.Credentials{AccessKeyID: "AKIA", Expiration: time.Now().Add(30 * time.Minute)},
-		infra.ActionApply, 2*time.Hour)
+		infra.ActionApply, 2*time.Hour, "acme-dev")
 	if err == nil {
 		t.Fatal("expected a refusal")
 	}
-	for _, want := range []string{"30m0s", "2h0m0s", "aws sso login"} {
+	// The profile has to be named: this refusal happens before the preflight prints
+	// it, and "aws sso login --profile <profile>" is not a command anyone can run.
+	// And SSO is only one way a profile gets a session, so it is offered as a case
+	// rather than as the answer.
+	for _, want := range []string{"30m0s", "2h0m0s", "acme-dev", "IAM Identity Center", "anything else"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not mention %q:\n%v", want, err)
+		}
+	}
+}
+
+// The preflight check is not enough on its own: planning a large target and then
+// waiting for a human to answer can burn most of a session, and later stages start
+// later still. credentialLifetimeError is what the per-stage hook calls.
+func TestCredentialLifetimeIsCheckedAgainAtWriteTime(t *testing.T) {
+	// A session that was fine when the run started and is not fine now.
+	expired := infra.Credentials{AccessKeyID: "AKIA", Expiration: time.Now().Add(5 * time.Minute)}
+
+	if err := credentialLifetimeError(expired, infra.ActionApply, time.Hour, "acme-dev"); err == nil {
+		t.Error("a stage was allowed to write with less than the floor left")
+	}
+	if err := credentialLifetimeError(expired, infra.ActionDestroy, time.Hour, "acme-dev"); err == nil {
+		t.Error("destroy was allowed to write with less than the floor left")
+	}
+	// Without a floor there is nothing to enforce, only something to report.
+	if err := credentialLifetimeError(expired, infra.ActionApply, 0, "acme-dev"); err != nil {
+		t.Errorf("no floor was demanded, yet the run was refused: %v", err)
+	}
+	// A plan writes no state.
+	if err := credentialLifetimeError(expired, infra.ActionPlan, time.Hour, "acme-dev"); err != nil {
+		t.Errorf("a plan was refused: %v", err)
+	}
+}
+
+// Without a profile in hand the hint must still be usable rather than printing a
+// literal placeholder as if it were a command.
+func TestRefreshHintWithoutAProfileStillReadsAsInstructions(t *testing.T) {
+	hint := refreshHint("")
+	for _, want := range []string{"IAM Identity Center", "anything else"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("the hint does not mention %q:\n%s", want, hint)
 		}
 	}
 }
