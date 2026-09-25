@@ -1,5 +1,24 @@
 # Lerian-cli Changelog
 
+## [1.2.0](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.2.0)
+
+Features:
+- Release the unified CLI with infrastructure commands, integrating the `lerian-infra-cli` commands into the CLI as 'lerian infra'. (@bedatty)
+
+Fixes:
+- Release `v1.2.0` with binaries as proven by the beta. (@bedatty)
+- Grant packages write permissions to allow the release caller to initiate the process. (@bedatty)
+- Restore binary releases using the shared goreleaser lane. (@bedatty)
+- Declare the multi-line error convention of the infra packages in golangci. (@bedatty)
+- Satisfy repository lint requirements on the ported packages. (@bedatty)
+
+Improvements:
+- Correct the Go badge and update the ported package comment in the documentation. (@bedatty)
+
+[Compare changes](https://github.com/LerianStudio/lerian-cli/compare/v1.1.1...v1.2.0)
+
+---
+
 ## [1.1.1](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.1.1)
 
 Features:
