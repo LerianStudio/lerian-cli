@@ -1,5 +1,36 @@
 # Lerian-cli Changelog
 
+## [1.2.1](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.2.1)
+
+Fixes:
+- Released `v1.2.1` with eight carried-over defects closed. (@bedatty)
+- Stopped treating the operator's comments as section body. (@bedatty)
+- Returned the original bytes for an equivalent section. (@bedatty)
+- Made the credential lifetime visible and gateable before a write. (@bedatty)
+- Ordered a single-service stage by its own product. (@bedatty)
+- Reached the shared tier with `--set` and validated a typed egress address. (@bedatty)
+- Kept Terraform JSON documents out of the unit logs. (@bedatty)
+- Re-checked the credential at write time and named a usable remedy. (@bedatty)
+- Matched `parseINI` and stripped inline comments before comparing. (@bedatty)
+- Left an equivalent section byte for byte instead of rewriting it. (@bedatty)
+
+Improvements:
+- Bumped the Go dependencies group across one directory with six updates. (@bedatty)
+- Corrected the schedule timezone and the change-gate rules in documentation. (@bedatty)
+- Described the existing pipeline in documentation. (@bedatty)
+
+Style:
+- Spelled honoring the way the linter wants. (@bedatty)
+- Wrapped the preflight guard call under the line limit. (@bedatty)
+- Spelled canceled the way the linter wants. (@bedatty)
+
+Test:
+- Blocked every ambient credential source in `isolateAWS`. (@bedatty)
+
+[Compare changes](https://github.com/LerianStudio/lerian-cli/compare/v1.2.0...v1.2.1)
+
+---
+
 ## [1.2.0](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.2.0)
 
 Features:
