@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -459,20 +460,14 @@ func sectionDiffers(content []byte, name string, body []string) bool {
 		}
 	}
 
-	var current []string
-	for _, line := range lines[start:end] {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		current = append(current, strings.TrimSpace(line))
-	}
-	var proposed []string
-	for _, line := range body {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		proposed = append(proposed, strings.TrimSpace(line))
-	}
+	// Comments are not part of the body. The file this compares against is the
+	// operator's, and the contract above it promises that everything outside the
+	// named sections survives byte for byte, "including the operator's own
+	// comments". Counting them made a re-run with identical inputs report a
+	// conflict, because a "# staging account" sitting above the next header is
+	// inside this section's range.
+	current := significantLines(lines[start:end])
+	proposed := significantLines(body)
 	if len(current) != len(proposed) {
 		return true
 	}
@@ -482,6 +477,30 @@ func sectionDiffers(content []byte, name string, body []string) bool {
 		}
 	}
 	return false
+}
+
+// significantLines keeps the lines that carry configuration: neither blank nor a
+// comment, trimmed so indentation never counts as a difference, and with any
+// trailing comment removed.
+//
+// Cutting at "#" mid-line is not a choice made here — it is what parseINI already
+// does to every value it reads. Keeping the comment would mean the two disagree
+// about the same file: "account_id = 123456789012 # ask before touching" parses to
+// the same value as the generated line, while the comparison called it a
+// difference and refused a re-run with identical inputs.
+func significantLines(lines []string) []string {
+	var kept []string
+	for _, line := range lines {
+		if comment := strings.Index(line, "#"); comment >= 0 {
+			line = line[:comment]
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		kept = append(kept, trimmed)
+	}
+	return kept
 }
 
 // upsertINISection replaces the [name] section of content with body, or appends it
@@ -517,10 +536,29 @@ func upsertINISection(content []byte, name string, body []string) []byte {
 		return joinLines(out)
 	}
 
-	// Present: keep any trailing blank lines that belonged to the old section, so
-	// repeated upserts do not slowly collapse the file's spacing.
+	// A section whose configuration already says what the body says is left exactly
+	// as it is, byte for byte. Rewriting it would replace the operator's lines with
+	// the generated ones — and an inline "# ask before touching" lives on such a
+	// line, so the rewrite would delete it. sectionDiffers ignores those comments
+	// when deciding whether there is a conflict, so without this the write would be
+	// permitted without Force and the comment would vanish silently.
+	if slices.Equal(significantLines(lines[start:end]), significantLines(body)) {
+		// content, not joinLines(lines): splitLines drops a trailing newline and
+		// joinLines always adds one back, so a file that had none would come out of
+		// this "leave it alone" path one byte different from how it went in.
+		return content
+	}
+
+	// Present and genuinely different: keep the trailing blank lines AND comments
+	// that belonged to the old section, so repeated upserts do not slowly collapse
+	// the file's spacing, and so a comment the operator wrote above the next header
+	// is not swallowed by a --force rewrite of this one.
 	tail := end
-	for tail > start+1 && strings.TrimSpace(lines[tail-1]) == "" {
+	for tail > start+1 {
+		trimmed := strings.TrimSpace(lines[tail-1])
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			break
+		}
 		tail--
 	}
 	out := make([]string, 0, len(lines)-(tail-start)+len(body))
@@ -785,18 +823,22 @@ func PlaceholdersIn(unit Unit, env string) ([]string, error) {
 	return placeholderTokens(content), nil
 }
 
-// placeholderTokens lists the distinct tokens outside comment lines, sorted. The
+// placeholderTokens lists the distinct tokens outside comments, sorted. The
 // examples legitimately write things like "<that address>" in their prose, so a
-// comment line is not evidence of an unresolved value.
+// comment is not evidence of an unresolved value.
+//
+// It goes through commentScanner rather than testing for a leading "#", because
+// CheckReadiness reads the same files through placeholderLines, which does. Two
+// spellings of "this is a comment" meant two verdicts for one file: a trailing
+// "# was <PUT-YOUR-VPC-ID>" was reported as pending here and accepted there, and a
+// token living only inside a // or /* */ comment made buildInitPlan ask for
+// --api-cidr when no live value needed it.
 func placeholderTokens(content []byte) []string {
 	seen := map[string]bool{}
+	var comments commentScanner
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
-		}
-		for _, match := range placeholderPattern.FindAllString(line, -1) {
+		for _, match := range placeholderPattern.FindAllString(comments.code(scanner.Text()), -1) {
 			seen[match] = true
 		}
 	}
