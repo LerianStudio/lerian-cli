@@ -8,7 +8,7 @@ and this repository only declares what is specific to it.
 |---|---|---|
 | `pr-validation.yml` | pull request to `develop`, `release-candidate`, `main` | `go-pr-validation.yml@tier-1` |
 | `release.yml` | push to `develop`, `release-candidate`, `main` | `go-release.yml@tier-1` |
-| `routine.yml` | Monday 03:00 BRT, PR closed, push to `.github/labels.yml`, manual | `routine.yml@tier-1` |
+| `routine.yml` | Monday 03:00 **UTC**, PR closed, push to `.github/labels.yml`, manual | `routine.yml@tier-1` |
 
 ## The tier channel
 
@@ -116,10 +116,14 @@ again.
 
 ## What runs where
 
-- **A PR that touches only `.github/**`, docs or Markdown** skips the analysis and security
-  pipelines: the change gate treats them as meta. Useful, and a trap — a CI fix does not
-  exercise the CI it fixes.
-- **A push that touches only those paths** cuts no release, by the same `paths-ignore`.
+- **A PR that touches only documentation or `.github` metadata** skips the analysis and
+  security pipelines: the change gate (`non-doc-changes`) treats them as meta.
+- **`.github/workflows/`, `.github/actions/` and `.github/scripts/` are the exception** — the
+  gate counts them as code whatever the ignore globs say, so a PR that changes a workflow does
+  run the pipelines that workflow configures.
+- **A push that touches only `.github/**`, docs or Markdown cuts no release.** That is a
+  different mechanism: the `paths-ignore` on `release.yml`'s own `push` trigger, which has
+  nothing to do with the PR change gate above.
 - **`routine.yml`** syncs `.github/labels.yml`, closes stale PRs and issues, cleans merged
   branches and old workflow runs. Run it by hand from the Actions tab: `workflow_dispatch`,
   pick a routine, and note that `dry_run` defaults to **true** there.
@@ -141,8 +145,11 @@ again.
 `permissions:` block against every job of the shared workflow being called — including the
 ones that would be skipped.
 
-**A CI change does not run CI.** `paths-ignore` excludes `.github/**`. Touch a path in
-`shared_paths` — a blank line in the `Makefile` is enough — to make the change gate see code.
+**A workflow fix does not cut a release.** `release.yml` has `.github/**` in the `paths-ignore`
+of its `push` trigger, so a change that only touches workflows never runs the release it is
+fixing. Touch a path in `shared_paths` — a blank line in the `Makefile` is enough — in the same
+PR. This is about the release trigger only: PR validation does run on a workflow change, since
+the change gate counts `.github/workflows/` as code.
 
 **A PR cannot be merged with every check green.** The `develop-rule` ruleset requires every
 review thread to be *resolved*, not merely replied to. Replying to a CodeRabbit comment leaves
