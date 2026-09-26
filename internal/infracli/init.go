@@ -505,8 +505,10 @@ func buildInitPlan(
 	}
 
 	// The egress address is only needed when a chosen root actually asks for it.
+	// The shared tier counts: in shared mode its roots are written by this same
+	// run, so a placeholder living only there still has to be resolved.
 	needsCIDR := false
-	for _, unit := range plan.units {
+	for _, unit := range append(append([]infra.Unit{}, plan.units...), plan.sharedUnits...) {
 		tokens, err := infra.PlaceholdersIn(unit, environment)
 		if err != nil {
 			return plan, err
@@ -561,7 +563,12 @@ func buildInitPlan(
 		// No Mode here: the tier roots have no such variable. They are the owner,
 		// so there is nothing for them to choose, and writing the key would set a
 		// variable the root does not declare.
-		request := infra.VarFileRequest{Unit: unit, Env: environment, Region: plan.env.Region}
+		request := infra.VarFileRequest{
+			Unit:         unit,
+			Env:          environment,
+			Replacements: replacements,
+			Region:       plan.env.Region,
+		}
 		result, err := infra.MaterializeVarFile(layout, request, preview)
 		if err != nil {
 			return plan, err
@@ -794,11 +801,17 @@ func resolveAPICIDR(ctx context.Context, opts initOptions, ask *prompter) (strin
 				return "", err
 			}
 			// Interactive with no preference: detection failing is not fatal, the
-			// operator can still type the address.
-			return ask.ask(
+			// operator can still type the address. Validated like every other path:
+			// a typed "203.0.113.0/24" would be substituted into
+			// "<PUT-YOUR-EGRESS-IP-HERE>/32" and only fail at plan time.
+			typed, askErr := ask.ask(
 				"Which address may reach the Kubernetes API?",
 				"Detection failed, so type it: your public egress address, no mask.",
 				"", "--api-cidr")
+			if askErr != nil {
+				return "", askErr
+			}
+			return validateBareAddress(typed)
 		}
 		if value == "auto" && !ask.interactive {
 			// Validated like every other path. DetectEgressIP only checks
