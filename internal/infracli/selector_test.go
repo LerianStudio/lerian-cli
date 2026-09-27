@@ -397,3 +397,55 @@ func assertShowsAccounts(t *testing.T, printed string) {
 		}
 	}
 }
+
+// The redraw moves the cursor up by the number of lines it believes it wrote.
+// That arithmetic is only valid while no row wraps, so nothing may be wider than
+// the terminal — a wrapped row costs two display lines, the next frame moves up
+// too little, and the list smears over itself.
+func TestPaintedRowsNeverExceedTheWidth(t *testing.T) {
+	long := []option{
+		{
+			value: "shared",
+			label: "shared",
+			note:  "all products resolve one tier you provision separately — cheaper from the third product on",
+		},
+		{value: "dedicated", label: "dedicated", note: "every product gets its own datastores"},
+	}
+
+	ask, out := selectorFor(t, keyEnterSeq)
+	t.Setenv("NO_COLOR", "1") // measure the text, not the escapes
+	if _, err := ask.pick(
+		"Should each product own its datastores, or share one set?",
+		"Applies to every datastore of the target.",
+		"--mode", long, "dedicated"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A bytes.Buffer is not a terminal, so the width falls back to 80.
+	for _, line := range strings.Split(out.String(), "\r\n") {
+		line = strings.TrimLeft(line, " \r")
+		if runes := len([]rune(line)); runes > 80 {
+			t.Errorf("a painted row is %d runes wide and would wrap at 80:\n%q", runes, line)
+		}
+	}
+}
+
+func TestFitMarksWhatItCuts(t *testing.T) {
+	tests := []struct {
+		text  string
+		width int
+		want  string
+	}{
+		{"short", 20, "short"},
+		{"exactly-ten", 11, "exactly-ten"},
+		{"truncate-me-here", 10, "truncate-…"},
+		{"anything", 0, ""},
+		// Multi-byte runes must be counted as one column each, not as their bytes.
+		{"São Paulo é aqui", 6, "São P…"},
+	}
+	for _, test := range tests {
+		if got := fit(test.text, test.width); got != test.want {
+			t.Errorf("fit(%q, %d) = %q, want %q", test.text, test.width, got, test.want)
+		}
+	}
+}

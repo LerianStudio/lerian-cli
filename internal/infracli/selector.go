@@ -240,32 +240,34 @@ func (p *prompter) paintOptions(
 		fmt.Fprintf(p.out, "\x1b[%dA", previous)
 	}
 
+	// Every line is blanked and written within the terminal's width, and nothing
+	// is allowed to be wider. A line that wraps costs two display lines while this
+	// counts one, and the next frame then moves the cursor up by too little and
+	// paints over the wrong rows. The redraw arithmetic is only valid while no row
+	// wraps, so the width is a correctness constraint, not cosmetics.
+	width := terminalWidth(p.out)
 	lines := 0
-	write := func(format string, args ...any) {
-		fmt.Fprintf(p.out, "\r%-100s\r", "")
-		fmt.Fprintf(p.out, format+"\r\n", args...)
+	write := func(text string) {
+		fmt.Fprintf(p.out, "\r%s\r", strings.Repeat(" ", width))
+		fmt.Fprintf(p.out, "%s\r\n", text)
 		lines++
 	}
 
 	if previous == 0 {
 		fmt.Fprint(p.out, "\r\n")
 	}
-	write("  %s", theme.bold(question))
+	write("  " + theme.bold(fit(question, width-2)))
 	if purpose != "" {
-		write("  %s", theme.dim(purpose))
+		write("  " + theme.dim(fit(purpose, width-2)))
 	}
 	hint := "↑↓ move · enter choose · q cancel"
 	if multiple {
 		hint = "↑↓ move · space toggle · enter confirm · q cancel"
 	}
-	write("  %s", theme.dim(hint))
+	write("  " + theme.dim(fit(hint, width-2)))
 
 	for i, opt := range options {
-		pointer := "  "
-		if i == cursor {
-			pointer = theme.bold("❯ ")
-		}
-		mark := ""
+		pointer, mark := "  ", ""
 		if multiple {
 			box := " "
 			if chosen[opt.value] {
@@ -274,18 +276,67 @@ func (p *prompter) paintOptions(
 			mark = "[" + box + "] "
 		}
 
+		// The plain text is assembled and measured BEFORE any styling: an escape
+		// sequence has no width on screen but plenty of bytes, so truncating a
+		// styled string would both measure wrong and risk cutting an escape in half.
 		label := opt.label
 		if opt.disabled {
-			label = theme.dim(label + "  (unavailable)")
-		} else if i == cursor {
+			label += "  (unavailable)"
+		}
+		room := width - 2 - len([]rune(pointer)) - len([]rune(mark)) - len([]rune(label))
+		note := ""
+		if opt.note != "" && room > 4 {
+			note = "  " + fit(opt.note, room-2)
+		}
+
+		if i == cursor {
+			pointer = theme.bold("❯ ")
+		}
+		switch {
+		case opt.disabled:
+			label = theme.dim(label)
+		case i == cursor:
 			label = theme.bold(label)
 		}
-		if opt.note != "" {
-			label += "  " + theme.dim(opt.note)
+		if note != "" {
+			note = theme.dim(note)
 		}
-		write("  %s%s%s", pointer, mark, label)
+		write("  " + pointer + mark + label + note)
 	}
 	return lines
+}
+
+// fit truncates to at most width runes, marking the cut so a clipped value is not
+// mistaken for a short one.
+func fit(text string, width int) string {
+	if width < 1 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= width {
+		return text
+	}
+	if width <= 1 {
+		return string(runes[:width])
+	}
+	return string(runes[:width-1]) + "…"
+}
+
+// terminalWidth asks the terminal how wide it is, falling back to the 80 columns
+// every terminal has had since the punched card.
+func terminalWidth(out io.Writer) int {
+	file, ok := out.(*os.File)
+	if !ok {
+		return 80
+	}
+	width, _, err := term.GetSize(int(file.Fd()))
+	if err != nil || width < 40 {
+		return 80
+	}
+	if width > 120 {
+		return 120
+	}
+	return width
 }
 
 func selectedValues(options []option, chosen map[string]bool) []string {
