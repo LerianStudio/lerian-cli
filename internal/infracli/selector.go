@@ -86,13 +86,15 @@ func (p *prompter) selectFrom(
 			"Pass %s explicitly.", question, flagName)
 	}
 	if plainSelection() {
+		p.printOptions(options)
 		return p.askForValues(question, purpose, flagName, fallback, multiple)
 	}
 
 	restore, err := rawMode()
 	if err != nil {
-		fmt.Fprintf(p.out, "  %s\n",
+		fmt.Fprintf(p.out, "\n  %s\n",
 			newStyle(p.out).dim("this terminal cannot be switched to raw mode; type the answer instead"))
+		p.printOptions(options)
 		return p.askForValues(question, purpose, flagName, fallback, multiple)
 	}
 	defer restore()
@@ -110,6 +112,28 @@ func (p *prompter) askForValues(question, purpose, flagName, fallback string, mu
 		return []string{answer}, nil
 	}
 	return splitList(answer), nil
+}
+
+// printOptions lists what can be answered, for the paths where the selector does
+// not run.
+//
+// Without it the typed fallback asked the question with the options invisible.
+// That is merely unhelpful for a closed set like dev/stg/prd, which the prompt
+// names anyway — but for the AWS profiles it was a hazard: the question says to
+// pick by account, the note carrying each account is what the selector would have
+// shown, and pressing Enter on an unseen default can reach the wrong account.
+func (p *prompter) printOptions(options []option) {
+	theme := newStyle(p.out)
+	for _, opt := range options {
+		label := opt.label
+		if opt.disabled {
+			label = theme.dim(label + "  (unavailable)")
+		}
+		if opt.note != "" {
+			label += "  " + theme.dim(opt.note)
+		}
+		fmt.Fprintf(p.out, "    %s\n", label)
+	}
 }
 
 // splitList reads the comma-joined form the flags have always taken.
@@ -365,7 +389,12 @@ func readKey(in io.RuneScanner) (keyPress, error) {
 			return keyPress{kind: keyAbort}, nil
 		case err != nil:
 			return keyPress{}, err
-		case next != '[':
+		// '[' is CSI and 'O' is SS3. A terminal in application cursor-key mode
+		// (DECCKM) sends arrows as ESC O A, and term.MakeRaw does not reset DECCKM
+		// — tmux or a full-screen program that exited badly can leave it set.
+		// Without 'O' here the operator's FIRST arrow press would cancel the
+		// command, which is the worst possible way to meet a new prompt.
+		case next != '[' && next != 'O':
 			_ = in.UnreadRune()
 			return keyPress{kind: keyAbort}, nil
 		}

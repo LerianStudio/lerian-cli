@@ -735,6 +735,9 @@ func resolveCredentials(
 	// The table is printed only for the typed path. When the selector runs, the
 	// rows ARE the list: printing them first and then asking the operator to type
 	// one of the names back is the thing this replaced.
+	//
+	// The selector's own fallbacks print the options themselves, so a terminal that
+	// cannot go raw still sees the account behind each profile.
 	if !ask.selecting() {
 		ask.printProfiles(resolved)
 	}

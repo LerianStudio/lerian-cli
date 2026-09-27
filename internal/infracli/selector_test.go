@@ -325,3 +325,75 @@ func TestReadKeyPropagatesARealError(t *testing.T) {
 type errorReader struct{}
 
 func (errorReader) Read([]byte) (int, error) { return 0, errors.New("terminal went away") }
+
+// A terminal in application cursor-key mode sends arrows as ESC O A / ESC O B
+// instead of ESC [ A / ESC [ B, and term.MakeRaw does not reset that mode: tmux
+// or a full-screen program that exited badly can leave it set. Treating the
+// sequence as an abort meant the operator's first arrow press cancelled the
+// command.
+func TestPickUnderstandsApplicationCursorKeys(t *testing.T) {
+	const ss3Down, ss3Up = "\x1bOB", "\x1bOA"
+
+	ask, _ := selectorFor(t, ss3Down+keyEnterSeq)
+	got, err := ask.pick("Which environment?", "", "--env", envOptions, "dev")
+	if err != nil {
+		t.Fatalf("an SS3 arrow aborted the prompt: %v", err)
+	}
+	if got != "stg" {
+		t.Errorf("got %q, want stg", got)
+	}
+
+	ask, _ = selectorFor(t, ss3Down+ss3Up+keyEnterSeq)
+	got, err = ask.pick("Which environment?", "", "--env", envOptions, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "dev" {
+		t.Errorf("got %q, want dev", got)
+	}
+}
+
+// The typed fallbacks have to show what can be answered. For the AWS profiles
+// this is not cosmetic: the question says to pick by account, and the account
+// lives in the note the selector would have drawn.
+func TestTypedFallbacksShowTheOptions(t *testing.T) {
+	options := []option{
+		{value: "acme-dev", label: "acme-dev", note: "account 123456789012 · us-east-2"},
+		{value: "acme-prd", label: "acme-prd", note: "account 999999999999 · us-east-1"},
+		{value: "stale", label: "stale", note: "session expired", disabled: true},
+	}
+
+	t.Run("plain selection", func(t *testing.T) {
+		t.Setenv("LERIAN_SELECT", "plain")
+		out := &bytes.Buffer{}
+		ask := &prompter{interactive: true, in: bufio.NewReader(strings.NewReader("acme-prd\n")), out: out}
+
+		if _, err := ask.pick("Which AWS profile?", "", "--profile", options, "acme-dev"); err != nil {
+			t.Fatal(err)
+		}
+		assertShowsAccounts(t, out.String())
+	})
+
+	t.Run("raw mode unavailable", func(t *testing.T) {
+		previous := rawMode
+		rawMode = func() (func(), error) { return nil, errors.New("inappropriate ioctl") }
+		t.Cleanup(func() { rawMode = previous })
+
+		out := &bytes.Buffer{}
+		ask := &prompter{interactive: true, in: bufio.NewReader(strings.NewReader("acme-prd\n")), out: out}
+
+		if _, err := ask.pick("Which AWS profile?", "", "--profile", options, "acme-dev"); err != nil {
+			t.Fatal(err)
+		}
+		assertShowsAccounts(t, out.String())
+	})
+}
+
+func assertShowsAccounts(t *testing.T, printed string) {
+	t.Helper()
+	for _, want := range []string{"acme-dev", "123456789012", "acme-prd", "999999999999", "session expired"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("the typed prompt hid %q, so the operator cannot pick by account:\n%s", want, printed)
+		}
+	}
+}
