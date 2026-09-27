@@ -9,6 +9,7 @@ package infracli
 // standing in front of it.
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -229,25 +230,24 @@ func (p *prompter) paintOptions(
 	if purpose != "" {
 		write("  %s", theme.dim(purpose))
 	}
-	hint := "↑↓ move · enter choose"
+	hint := "↑↓ move · enter choose · q cancel"
 	if multiple {
-		hint = "↑↓ move · space toggle · enter confirm"
+		hint = "↑↓ move · space toggle · enter confirm · q cancel"
 	}
 	write("  %s", theme.dim(hint))
 
 	for i, opt := range options {
-		pointer, mark := "  ", " "
+		pointer := "  "
 		if i == cursor {
 			pointer = theme.bold("❯ ")
 		}
+		mark := ""
 		if multiple {
-			mark = " "
+			box := " "
 			if chosen[opt.value] {
-				mark = "x"
+				box = "x"
 			}
-			mark = "[" + mark + "] "
-		} else {
-			mark = ""
+			mark = "[" + box + "] "
 		}
 
 		label := opt.label
@@ -331,6 +331,13 @@ type keyPress struct {
 // readKey decodes one keypress. In raw mode an arrow arrives as three bytes,
 // ESC '[' and a letter, so the escape has to be read ahead before it can be
 // called an abort.
+//
+// That read-ahead is why Escape alone is a poor abort key in a real terminal: a
+// lone ESC is indistinguishable from the start of an arrow until the next byte
+// arrives, so it only registers once another key is pressed. Telling the two
+// apart needs a timeout, which is not worth the machinery here. Ctrl-C and q
+// abort immediately and are what the hint line offers; ESC still works from a
+// pipe, where the end of input resolves the ambiguity.
 func readKey(in io.RuneScanner) (keyPress, error) {
 	r, _, err := in.ReadRune()
 	if err != nil {
@@ -344,21 +351,30 @@ func readKey(in io.RuneScanner) (keyPress, error) {
 		return keyPress{kind: keySpace}, nil
 	case 3, 4: // Ctrl-C, Ctrl-D
 		return keyPress{kind: keyAbort}, nil
+	case 'q':
+		return keyPress{kind: keyAbort}, nil
 	case 'k':
 		return keyPress{kind: keyUp}, nil
 	case 'j':
 		return keyPress{kind: keyDown}, nil
 	case 27: // ESC, possibly the start of an arrow
 		next, _, err := in.ReadRune()
-		if err != nil || next != '[' {
-			if err == nil {
-				_ = in.UnreadRune()
-			}
+		switch {
+		case errors.Is(err, io.EOF):
+			// ESC with nothing after it: Escape was pressed.
+			return keyPress{kind: keyAbort}, nil
+		case err != nil:
+			return keyPress{}, err
+		case next != '[':
+			_ = in.UnreadRune()
 			return keyPress{kind: keyAbort}, nil
 		}
 		final, _, err := in.ReadRune()
-		if err != nil {
+		if errors.Is(err, io.EOF) {
 			return keyPress{kind: keyAbort}, nil
+		}
+		if err != nil {
+			return keyPress{}, err
 		}
 		switch final {
 		case 'A':

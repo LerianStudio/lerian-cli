@@ -31,7 +31,7 @@ FIRST RUN
 RUNNING IT WITHOUT FLAGS
   In a terminal, "lerian infra" with no --env asks instead of failing: environment,
   target and action, chosen with the arrow keys. Target accepts several, toggled
-  with space. Everything else about the run is unchanged, so three Enters are
+  with space; q cancels. Everything else about the run is unchanged, so three Enters are
   exactly --env <the first> --target infra-base --action plan.
 
   Passing --env skips all of it. A command that works today behaves identically,

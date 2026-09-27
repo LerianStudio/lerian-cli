@@ -1156,11 +1156,12 @@ func profileOptions(resolved []infra.ResolvedProfile) []option {
 // carries its services as the note, which is what makes "midaz" decidable without
 // leaving the question to go and look.
 func targetOptions(catalog infra.Catalog) []option {
-	options := []option{{
+	options := make([]option, 0, 1+len(catalog.Names))
+	options = append(options, option{
 		value: "infra-base",
 		label: "infra-base",
 		note:  "the VPC and the cluster",
-	}}
+	})
 	for _, name := range catalog.Names {
 		options = append(options, option{
 			value: name,

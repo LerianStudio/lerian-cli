@@ -295,3 +295,33 @@ func TestGuidedRunPropagatesAnAbort(t *testing.T) {
 		t.Errorf("got %v, want ErrAborted", err)
 	}
 }
+
+// q aborts too, and unlike Escape it is unambiguous: a lone ESC cannot be told
+// apart from the start of an arrow sequence until the next byte arrives, so in a
+// real terminal it only registers once another key is pressed.
+func TestPickAbortsOnQ(t *testing.T) {
+	ask, out := selectorFor(t, "q")
+	_, err := ask.pick("Which environment?", "", "--env", envOptions, "dev")
+	if !errors.Is(err, infra.ErrAborted) {
+		t.Errorf("got %v, want ErrAborted", err)
+	}
+	if !strings.Contains(out.String(), "q cancel") {
+		t.Error("the hint line does not offer the abort key it accepts")
+	}
+}
+
+// A read error that is not the end of input must surface, not be silently turned
+// into an abort: a broken terminal and a cancelled prompt are different events.
+func TestReadKeyPropagatesARealError(t *testing.T) {
+	_, err := readKey(bufio.NewReader(errorReader{}))
+	if err == nil {
+		t.Fatal("a read failure was swallowed")
+	}
+	if errors.Is(err, infra.ErrAborted) {
+		t.Error("a read failure was reported as an abort")
+	}
+}
+
+type errorReader struct{}
+
+func (errorReader) Read([]byte) (int, error) { return 0, errors.New("terminal went away") }

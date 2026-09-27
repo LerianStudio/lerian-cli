@@ -1023,10 +1023,11 @@ func guidedRun(catalog infra.Catalog, opts *options, ask *prompter) error {
 // runTargetOptions is the catalog --list prints, plus the two targets that are
 // not products: bootstrap, which creates the state backend, and all.
 func runTargetOptions(catalog infra.Catalog) []option {
-	options := []option{
-		{value: "bootstrap", label: "bootstrap", note: "state bucket and lock table"},
-		{value: "infra-base", label: "infra-base", note: "the VPC then the cluster"},
-	}
+	options := make([]option, 0, 3+len(catalog.Names))
+	options = append(options,
+		option{value: "bootstrap", label: "bootstrap", note: "state bucket and lock table"},
+		option{value: "infra-base", label: "infra-base", note: "the VPC then the cluster"},
+	)
 	for _, name := range catalog.Names {
 		options = append(options, option{
 			value: name,
