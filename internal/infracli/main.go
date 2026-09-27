@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/lerian-studio/lerian-cli/internal/infra"
+	"github.com/lerian-studio/lerian-cli/internal/menu"
 	cliversion "github.com/lerian-studio/lerian-cli/internal/version"
 )
 
@@ -70,6 +71,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		case "check":
 			return runCheck(ctx, args[1:], stdout, stderr)
 		}
+	}
+
+	// No arguments on a terminal: ask, rather than print the reference text and
+	// leave. Anywhere else this falls through to the flag path, which prints the
+	// usage — a prompt in a pipeline waits for input that never comes.
+	if len(args) == 0 && menu.Interactive(os.Stdin, stdout) {
+		return runInteractive(ctx, os.Stdin, stdout, stderr)
 	}
 
 	var opts options
