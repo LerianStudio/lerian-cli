@@ -1,8 +1,13 @@
-.PHONY: build clean install test test-unit test-integration test-coverage test-race test-verbose test-bench lint fmt deps help
+.PHONY: build clean install dev dev-uninstall test test-unit test-integration test-coverage test-race test-verbose test-bench lint fmt deps help
 
 # Variables
 BINARY_NAME=lerian
+DEV_BINARY_NAME=lerian-dev
 BUILD_DIR=./build/bin
+
+# Where the official installer puts things, so a dev build lands beside the
+# release instead of in a second directory that may or may not be on PATH.
+INSTALL_DIR?=$(HOME)/.local/bin
 MAIN_PATH=./cmd/lerian
 GO_FILES=$(shell find . -name '*.go' -type f)
 
@@ -11,6 +16,7 @@ VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 BUILT_BY?=$(shell whoami)@$(shell hostname)
+BRANCH=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
 
 # Linker flags
 LDFLAGS=-ldflags "\
@@ -42,6 +48,42 @@ install:
 	@echo "Installing ${BINARY_NAME} ${VERSION}..."
 	go install ${LDFLAGS} ${MAIN_PATH}
 	@echo "Installed to $(shell go env GOPATH)/bin/${BINARY_NAME}"
+	@echo ""
+	@echo "NOTE: this is a second binary also called '${BINARY_NAME}'. If the release"
+	@echo "      is installed in ${INSTALL_DIR}, which of the two runs now depends on"
+	@echo "      the order of your PATH. Use 'make dev' to build a binary that cannot"
+	@echo "      be confused with the release."
+
+# dev builds the working tree as ${DEV_BINARY_NAME}, beside the installed release
+# rather than over it.
+#
+# Testing a change used to mean either cutting a release or overwriting the
+# binary you depend on. This does neither: 'lerian' stays whatever was installed
+# from the releases page, and 'lerian-dev' is whatever is checked out right now.
+# Both are on PATH, and which is which is never a question.
+#
+# The version carries the branch and, when git says the tree is dirty, a -dirty
+# suffix — so a binary built from uncommitted work says so when asked.
+dev:
+	@mkdir -p ${INSTALL_DIR}
+	@echo "Building ${DEV_BINARY_NAME} from ${BRANCH} (${VERSION})..."
+	go build -trimpath -ldflags "\
+		-X github.com/lerian-studio/lerian-cli/internal/version.Version=${VERSION}+${BRANCH} \
+		-X github.com/lerian-studio/lerian-cli/internal/version.Commit=${COMMIT} \
+		-X github.com/lerian-studio/lerian-cli/internal/version.Date=${DATE} \
+		-X github.com/lerian-studio/lerian-cli/internal/version.BuiltBy=${BUILT_BY}" \
+		-o ${INSTALL_DIR}/${DEV_BINARY_NAME} ${MAIN_PATH}
+	@echo ""
+	@${INSTALL_DIR}/${DEV_BINARY_NAME} version
+	@echo ""
+	@echo "Installed: ${INSTALL_DIR}/${DEV_BINARY_NAME}"
+	@echo "The release stays untouched. Compare them:"
+	@echo "    ${BINARY_NAME} version"
+	@echo "    ${DEV_BINARY_NAME} version"
+
+dev-uninstall:
+	@rm -f ${INSTALL_DIR}/${DEV_BINARY_NAME}
+	@echo "Removed ${INSTALL_DIR}/${DEV_BINARY_NAME}"
 
 # Clean build artifacts
 clean:
@@ -109,7 +151,9 @@ help:
 	@echo ""
 	@echo "Build Commands:"
 	@echo "  make build              - Build the binary"
-	@echo "  make install            - Install the binary to GOPATH/bin"
+	@echo "  make dev                - Build the working tree as lerian-dev, beside the release"
+	@echo "  make dev-uninstall      - Remove lerian-dev"
+	@echo "  make install            - Install as a second 'lerian' in GOPATH/bin (see note)"
 	@echo "  make clean              - Remove build artifacts"
 	@echo "  make deps               - Install dependencies"
 	@echo "  make run                - Build and run the application"

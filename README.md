@@ -602,7 +602,7 @@ See `.github/workflows/` for CI/CD configuration.
 
 ### Prerequisites
 
-- Go 1.23 or higher
+- Go 1.26 or higher
 - kubectl (for Kubernetes operations)
 - Make
 
@@ -621,10 +621,31 @@ make build
 
 # Run tests
 make test
-
-# Install to $GOPATH/bin
-make install
 ```
+
+### Trying a change without touching the release
+
+`make dev` builds the working tree as **`lerian-dev`**, next to the installed
+release rather than over it:
+
+```bash
+make dev
+
+lerian version        # whatever was installed from the releases page
+lerian-dev version    # whatever is checked out right now
+
+make dev-uninstall    # when you are done
+```
+
+The two live side by side in `~/.local/bin`, so testing a change never costs you
+the binary you depend on, and never needs a release to be cut first. The dev
+version string carries the branch and a `-dirty` suffix when the tree has
+uncommitted work, so a binary built from a half-finished change says so when
+asked.
+
+`make install` still exists, but it uses `go install` and therefore creates a
+**second binary also called `lerian`** in `$GOPATH/bin`. Which of the two runs
+then depends on the order of your `PATH`. Prefer `make dev`.
 
 ### Project Structure
 
