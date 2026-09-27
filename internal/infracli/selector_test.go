@@ -329,7 +329,7 @@ func (errorReader) Read([]byte) (int, error) { return 0, errors.New("terminal we
 // A terminal in application cursor-key mode sends arrows as ESC O A / ESC O B
 // instead of ESC [ A / ESC [ B, and term.MakeRaw does not reset that mode: tmux
 // or a full-screen program that exited badly can leave it set. Treating the
-// sequence as an abort meant the operator's first arrow press cancelled the
+// sequence as an abort meant the operator's first arrow press canceled the
 // command.
 func TestPickUnderstandsApplicationCursorKeys(t *testing.T) {
 	const ss3Down, ss3Up = "\x1bOB", "\x1bOA"
