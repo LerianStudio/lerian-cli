@@ -1,9 +1,14 @@
-.PHONY: build clean install test test-unit test-integration test-coverage test-race test-verbose test-bench lint fmt deps help
+.PHONY: build clean install dev dev-uninstall test test-unit test-integration test-coverage test-race test-verbose test-bench lint fmt deps help
 
 # Variables
 BINARY_NAME=lerian
 BUILD_DIR=./build/bin
 MAIN_PATH=./cmd/lerian
+
+# Where 'make dev' puts the side-by-side binary. It is deliberately not
+# BINARY_NAME: the point is to try a branch without replacing an installed
+# release, so both can be run and compared.
+DEV_BIN?=$(HOME)/.local/bin/lerian-dev
 GO_FILES=$(shell find . -name '*.go' -type f)
 
 # Version information
@@ -42,6 +47,21 @@ install:
 	@echo "Installing ${BINARY_NAME} ${VERSION}..."
 	go install ${LDFLAGS} ${MAIN_PATH}
 	@echo "Installed to $(shell go env GOPATH)/bin/${BINARY_NAME}"
+
+# Build this working tree as a second binary, alongside whatever release is
+# installed. VERSION carries the branch through git describe, so 'lerian-dev
+# version' says which tree it came from.
+dev: deps
+	@echo "Building ${DEV_BIN} from $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo detached)..."
+	@mkdir -p $(dir ${DEV_BIN})
+	go build ${LDFLAGS} -o ${DEV_BIN} ${MAIN_PATH}
+	@echo "Installed ${DEV_BIN} — run it with: ${DEV_BIN} --help"
+
+# Remove it. Leaves any installed release untouched, which is the whole reason
+# the two have different names.
+dev-uninstall:
+	@rm -f ${DEV_BIN}
+	@echo "Removed ${DEV_BIN}"
 
 # Clean build artifacts
 clean:
@@ -113,6 +133,9 @@ help:
 	@echo "  make clean              - Remove build artifacts"
 	@echo "  make deps               - Install dependencies"
 	@echo "  make run                - Build and run the application"
+	@echo "  make dev                - Build this tree alongside an installed release"
+	@echo "                            (override the path with DEV_BIN=...)"
+	@echo "  make dev-uninstall      - Remove the binary make dev installed"
 	@echo ""
 	@echo "Test Commands:"
 	@echo "  make test               - Run all tests with coverage and race detector"
