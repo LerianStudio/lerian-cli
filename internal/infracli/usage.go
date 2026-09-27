@@ -28,6 +28,26 @@ FIRST RUN
   does touches an AWS resource. Run 'lerian infra init --help' for its flags —
   every question it asks has one, so CI never has to answer a prompt.
 
+RUNNING IT WITHOUT FLAGS
+  In a terminal, "lerian infra" with no --env asks instead of failing: environment,
+  target and action, chosen with the arrow keys. Target accepts several, toggled
+  with space. Everything else about the run is unchanged, so three Enters are
+  exactly --env <the first> --target infra-base --action plan.
+
+  Passing --env skips all of it. A command that works today behaves identically,
+  and outside a terminal nothing is ever asked — the flag is named in an error, as
+  it always was, which is what keeps this usable from CI.
+
+  The same lists appear in init for --env, --targets, --mode and --profile. The
+  profile list carries the account each one reaches, because that is the real
+  question; a profile whose session expired is shown greyed out rather than hidden,
+  so a missing account explains itself.
+
+  The confirmation before an apply or a destroy is deliberately NOT a list: it
+  still wants the word "yes" typed. Enter is exactly the key that gets left in the
+  input queue during a long stage, and that prompt exists to not be answered by
+  accident.
+
 FLAGS
   --repo <path>           The lerian-terraform-foundation checkout to drive.
                           Rarely needed: running the command anywhere inside a
@@ -206,6 +226,10 @@ ENVIRONMENT VARIABLES
   NO_COLOR            Set to anything to disable bold and color. Color is also
                       off automatically when the output is not a terminal, so a
                       redirected file or a CI log never contains escape codes.
+  LERIAN_SELECT       plain falls back from the arrow-key lists to the typed
+                      prompts, for a terminal that cannot be switched to raw mode
+                      or renders the list badly. A terminal that refuses raw mode
+                      falls back on its own, without this.
   LERIAN_SPINNER      ascii falls back from the braille progress spinner to
                       | / - \, for a terminal or font that renders braille as
                       empty boxes.
