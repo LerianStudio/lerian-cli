@@ -43,7 +43,7 @@ func runInteractive(ctx context.Context, in io.Reader, stdout, stderr io.Writer)
 	fmt.Fprintf(stdout, "\n  environment ok — aws, terraform, git and the templates checkout\n")
 
 	args, err := composeArgs(reader, stdout)
-	if errors.Is(err, menu.ErrCancelled) {
+	if errors.Is(err, menu.ErrCanceled) {
 		return nil
 	}
 	if err != nil {

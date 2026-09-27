@@ -18,10 +18,10 @@ import (
 	"golang.org/x/term"
 )
 
-// ErrCancelled is returned when the operator asks to leave instead of choosing.
+// ErrCanceled is returned when the operator asks to leave instead of choosing.
 // Callers treat it as a clean exit, not a failure: backing out of a menu is not
 // an error the way a bad flag is.
-var ErrCancelled = errors.New("menu: cancelled")
+var ErrCanceled = errors.New("menu: canceled")
 
 // Option is one row. Name is what the caller matches on afterwards; Description
 // is the half-line that says what it does.
@@ -86,7 +86,7 @@ func Select(in *bufio.Reader, out io.Writer, question string, options []Option) 
 	case answer == "":
 		return options[0], nil
 	case strings.EqualFold(answer, "q"), strings.EqualFold(answer, "quit"):
-		return Option{}, ErrCancelled
+		return Option{}, ErrCanceled
 	}
 
 	// A name is accepted as well as a number, so a menu can be answered with what

@@ -84,13 +84,13 @@ func TestComposeArgsTakesApplyWhenConfirmed(t *testing.T) {
 
 // Quitting is a clean exit, not a failure: backing out of a menu is not the
 // same as a bad flag.
-func TestComposeArgsReportsQuitAsCancelled(t *testing.T) {
+func TestComposeArgsReportsQuitAsCanceled(t *testing.T) {
 	var out bytes.Buffer
 
 	_, err := composeArgs(answers("q"), &out)
 
-	if !errors.Is(err, menu.ErrCancelled) {
-		t.Errorf("quitting returned %v, want ErrCancelled", err)
+	if !errors.Is(err, menu.ErrCanceled) {
+		t.Errorf("quitting returned %v, want ErrCanceled", err)
 	}
 }
 

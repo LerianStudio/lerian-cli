@@ -56,7 +56,7 @@ and access your data.`,
 	// and leaving. Anywhere else — piped, redirected, in CI — it keeps printing
 	// help, because a prompt there waits for input that never arrives.
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Giving the root a RunE makes cobra treat an unrecognised command as an
+		// Giving the root a RunE makes cobra treat an unrecognized command as an
 		// argument to it rather than an error, so the rejection has to be restated
 		// here — otherwise `lerian nonexistent` prints help and exits 0.
 		if len(args) > 0 {
@@ -93,7 +93,7 @@ func chooseCommand(root *cobra.Command) error {
 
 	chosen, err := menu.Select(menu.NewReader(root.InOrStdin()), root.OutOrStdout(),
 		"What do you want to do?", options)
-	if errors.Is(err, menu.ErrCancelled) {
+	if errors.Is(err, menu.ErrCanceled) {
 		return nil
 	}
 	if err != nil {
