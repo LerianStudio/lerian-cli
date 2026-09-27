@@ -311,7 +311,7 @@ func TestPickAbortsOnQ(t *testing.T) {
 }
 
 // A read error that is not the end of input must surface, not be silently turned
-// into an abort: a broken terminal and a cancelled prompt are different events.
+// into an abort: a broken terminal and a canceled prompt are different events.
 func TestReadKeyPropagatesARealError(t *testing.T) {
 	_, err := readKey(bufio.NewReader(errorReader{}))
 	if err == nil {
