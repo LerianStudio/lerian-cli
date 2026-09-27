@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -447,5 +448,59 @@ func TestFitMarksWhatItCuts(t *testing.T) {
 		if got := fit(test.text, test.width); got != test.want {
 			t.Errorf("fit(%q, %d) = %q, want %q", test.text, test.width, got, test.want)
 		}
+	}
+}
+
+// longestPaintedRow returns the widest display row the selector wrote, with the
+// escape sequences removed: they cost bytes and no columns.
+func longestPaintedRow(painted string) int {
+	plain := regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`).ReplaceAllString(painted, "")
+	widest := 0
+	for _, line := range strings.Split(plain, "\n") {
+		// Each row is blanked with a run of spaces and rewritten after a carriage
+		// return, so what the terminal shows is whatever follows the last one.
+		parts := strings.Split(line, "\r")
+		shown := strings.TrimRight(parts[len(parts)-1], " ")
+		if n := len([]rune(shown)); n > widest {
+			widest = n
+		}
+	}
+	return widest
+}
+
+// The redraw moves the cursor up by the number of rows it believes it wrote, so
+// a row that wraps costs two display lines while being counted as one and the
+// next frame paints over the wrong ones. Every row has to fit — the label
+// included, which is the one that was written unclipped.
+func TestNoPaintedRowExceedsTheTerminalWidth(t *testing.T) {
+	long := strings.Repeat("a-very-long-profile-name", 8)
+	prompter, out := selectorFor(t, keyEnterSeq)
+
+	_, err := prompter.pick("Which profile?", "", "--profile", []option{
+		{value: "long", label: long, note: strings.Repeat("note ", 20)},
+		{value: "short", label: "short"},
+	}, "")
+	if err != nil {
+		t.Fatalf("pick = %v", err)
+	}
+
+	// terminalWidth falls back to 80 for a buffer, which is not a terminal.
+	if widest := longestPaintedRow(out.String()); widest > 80 {
+		t.Errorf("a painted row is %d columns wide, past the 80 the redraw assumes", widest)
+	}
+	if !strings.Contains(out.String(), "…") {
+		t.Error("the long label was not marked as clipped, so a truncated name reads as a short one")
+	}
+}
+
+// Reporting 80 for a 30-column terminal tells the caller it has columns it does
+// not have, and then every row wraps. Too narrow to be usable is a separate
+// question, answered by narrowTerminal.
+func TestTerminalWidthDoesNotInventColumns(t *testing.T) {
+	if got := terminalWidth(&bytes.Buffer{}); got != 80 {
+		t.Errorf("terminalWidth on a non-terminal = %d, want the 80 fallback", got)
+	}
+	if minSelectorWidth < 20 {
+		t.Errorf("minSelectorWidth = %d, too low to hold a pointer, a label and a hint", minSelectorWidth)
 	}
 }

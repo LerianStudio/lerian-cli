@@ -283,7 +283,14 @@ func (p *prompter) paintOptions(
 		if opt.disabled {
 			label += "  (unavailable)"
 		}
-		room := width - 2 - len([]rune(pointer)) - len([]rune(mark)) - len([]rune(label))
+
+		// The label is fitted like every other row: the note was already clipped
+		// to what was left, but a label longer than the row wrapped it, and the
+		// comment above is explicit that a wrapped row breaks the redraw
+		// arithmetic. A long profile name is enough to do it.
+		prefix := 2 + len([]rune(pointer)) + len([]rune(mark))
+		label = fit(label, width-prefix)
+		room := width - prefix - len([]rune(label))
 		note := ""
 		if opt.note != "" && room > 4 {
 			note = "  " + fit(opt.note, room-2)
@@ -330,7 +337,16 @@ func terminalWidth(out io.Writer) int {
 		return 80
 	}
 	width, _, err := term.GetSize(int(file.Fd()))
-	if err != nil || width < 40 {
+	if err != nil {
+		return 80
+	}
+
+	// A measured width is reported as measured, however small. Substituting 80
+	// for a narrow terminal tells the caller it has columns it does not have, and
+	// then every row it draws wraps — which is the one thing the redraw cannot
+	// survive. Too narrow to be usable is a different problem from too narrow to
+	// be correct, and narrowTerminal decides that one.
+	if width < 1 {
 		return 80
 	}
 	if width > 120 {
@@ -470,3 +486,12 @@ func readKey(in io.RuneScanner) (keyPress, error) {
 	}
 	return keyPress{kind: keyOther}, nil
 }
+
+// minSelectorWidth is the narrowest terminal the list is still worth drawing in.
+// Below it every label is clipped to an ellipsis and the hint says nothing, so
+// the typed prompt — which wraps harmlessly — is the better answer.
+const minSelectorWidth = 40
+
+// narrowTerminal reports whether out is too narrow for the selector to be worth
+// drawing.
+func narrowTerminal(out io.Writer) bool { return terminalWidth(out) < minSelectorWidth }

@@ -49,7 +49,7 @@ func isTerminal(f *os.File) bool {
 // selecting reports whether questions will be rendered as a list rather than
 // typed. Callers use it to avoid printing a table the selector is about to draw.
 func (p *prompter) selecting() bool {
-	return p.interactive && !plainSelection()
+	return p.interactive && !plainSelection() && !narrowTerminal(p.out)
 }
 
 // text asks for a value with no explanation. Prefer ask: a bare question assumes
