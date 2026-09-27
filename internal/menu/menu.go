@@ -82,6 +82,15 @@ func Select(in *bufio.Reader, out io.Writer, question string, options []Option) 
 	}
 
 	answer := strings.TrimSpace(line)
+
+	// EOF with nothing typed is Ctrl-D, or a stream that ended. Falling through
+	// to the default would turn "I am done here" into running the first option —
+	// plan on the first environment, or the first command on the root menu.
+	// A bare Enter is still the default; that one arrives without EOF.
+	if answer == "" && errors.Is(err, io.EOF) {
+		return Option{}, ErrCanceled
+	}
+
 	switch {
 	case answer == "":
 		return options[0], nil

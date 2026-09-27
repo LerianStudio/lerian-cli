@@ -57,15 +57,53 @@ func TestComposeArgsOffersADryRunBeforeWriting(t *testing.T) {
 		t.Fatalf("composeArgs = %v", err)
 	}
 
-	got := strings.Join(args, " ")
-	if !strings.Contains(got, "--dry-run") {
-		t.Errorf("choosing the dry run produced %q", got)
-	}
-	if strings.Contains(got, "--action apply") {
-		t.Errorf("the dry run still asked for an apply: %q", got)
+	// The action has to travel with --dry-run: without it the flag path falls back
+	// to plan, so the preview would describe something other than what the
+	// operator is about to run.
+	if got := strings.Join(args, " "); got != "--env dev --target infra-base --action apply --dry-run" {
+		t.Errorf("composeArgs = %q", got)
 	}
 	if !strings.Contains(out.String(), "changes real infrastructure") {
 		t.Errorf("apply was not called out as destructive:\n%s", out.String())
+	}
+}
+
+// destroy is the case where a preview without the action is actively
+// misleading: the flag path would resolve the stages in forward order and skip
+// the destroy backend warnings.
+func TestADryRunOfDestroyPreviewsDestroy(t *testing.T) {
+	var out bytes.Buffer
+
+	args, err := composeArgs(answers("3", "1", "1", "1"), &out) // destroy, dev, infra-base, dry-run first
+	if err != nil {
+		t.Fatalf("composeArgs = %v", err)
+	}
+
+	got := strings.Join(args, " ")
+	if !strings.Contains(got, "--action destroy") {
+		t.Errorf("the dry run of a destroy does not carry the action: %q", got)
+	}
+	if !strings.Contains(got, "--dry-run") {
+		t.Errorf("the dry run lost its flag: %q", got)
+	}
+}
+
+// helm-values is rejected for infra-base, bootstrap and all, and infra-base is
+// what Enter picks — so offering that menu walked every default answer into a
+// guaranteed failure.
+func TestHelmValuesAsksForAProductInsteadOfOfferingTargetsItRejects(t *testing.T) {
+	var out bytes.Buffer
+
+	args, err := composeArgs(answers("5", "1", "midaz"), &out) // helm-values, dev, typed product
+	if err != nil {
+		t.Fatalf("composeArgs = %v", err)
+	}
+
+	if got := strings.Join(args, " "); got != "--env dev --target midaz --action helm-values" {
+		t.Errorf("composeArgs = %q", got)
+	}
+	if strings.Contains(out.String(), "infra-base") {
+		t.Errorf("helm-values was still offered a target it cannot use:\n%s", out.String())
 	}
 }
 

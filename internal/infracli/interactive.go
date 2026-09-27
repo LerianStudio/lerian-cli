@@ -87,6 +87,18 @@ func composeArgs(in *bufio.Reader, out io.Writer) ([]string, error) {
 		return []string{"init", "--env", environment}, nil
 	}
 
+	// helm-values is the one action with no valid answer in the list below:
+	// requireProductTarget rejects infra-base, bootstrap and all, and infra-base
+	// is what Enter picks — so every default answer walked the operator to a
+	// guaranteed failure. It takes a product name instead.
+	if action.Name == "helm-values" {
+		product, err := readLine(in, out, "Product target (for example midaz): ")
+		if err != nil {
+			return nil, err
+		}
+		return []string{"--env", environment, "--target", product, "--action", action.Name}, nil
+	}
+
 	target, err := menu.Select(in, out, "Which target?", []menu.Option{
 		{Name: "infra-base", Description: "the VPC and the cluster"},
 		{Name: "bootstrap", Description: "the state bucket and lock table, once per environment"},
@@ -116,7 +128,15 @@ func composeArgs(in *bufio.Reader, out io.Writer) ([]string, error) {
 			return nil, err
 		}
 		if confirm.Name == "dry-run first" {
-			return []string{"--env", environment, "--target", target.Name, "--dry-run"}, nil
+			// --action has to travel with --dry-run. Without it the flag path falls
+			// back to plan, so a destroy would be previewed in forward order and
+			// without its backend warnings — a preview of something other than what
+			// the operator is about to run. Passing it is safe: --dry-run returns in
+			// printDryRun before anything executes or calls AWS.
+			return []string{
+				"--env", environment, "--target", target.Name,
+				"--action", action.Name, "--dry-run",
+			}, nil
 		}
 	}
 
