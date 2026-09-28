@@ -144,6 +144,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
+	// The tools are verified before the questions, not after them.
+	//
+	// Everything past this point ends in terraform and the AWS CLI, so a machine
+	// missing one cannot finish whatever is chosen here. Asking first means the
+	// operator picks an environment, picks targets, picks an action, and only
+	// then learns terraform is not installed — three answers thrown away, and the
+	// failure arrives where it reads as a problem with the choices rather than
+	// with the machine.
+	//
+	// It stays a single call: requireEnvironment builds the CLI that the run uses
+	// later, and probing the terraform binary twice to ask the same question is
+	// waste.
+	terraform, err := requireEnvironment(ctx, stderr, opts.dryRun)
+	if err != nil {
+		return err
+	}
+
 	// Where the command would fail for want of an answer, and there is a terminal
 	// to ask, it asks instead. Nothing else changes: --env present means no
 	// question, so every invocation that works today behaves exactly as it did,
@@ -250,10 +267,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// Returning at the first gap sends the operator to install terraform, run
 	// again, and only then learn the AWS CLI is v1 — the same round trip
 	// 'lerian-infra check' exists to collapse.
-	terraform, err := requireEnvironment(ctx, stderr, opts.dryRun)
-	if err != nil {
-		return err
-	}
 	terraform.Profile = config.Profile
 
 	// Resolved once, here, before anything runs in parallel. Four terraform
