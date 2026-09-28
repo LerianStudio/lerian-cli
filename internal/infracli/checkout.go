@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/lerian-studio/lerian-cli/internal/config"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
@@ -52,7 +54,18 @@ func rememberCheckout(out io.Writer, root string) {
 
 	fmt.Fprintf(out, "\n  Remembered: %s\n", root)
 	fmt.Fprintf(out, "  Later runs find it without asking. For this shell too:\n")
-	fmt.Fprintf(out, "    export LERIAN_TF_REPO=%q\n", root)
+	fmt.Fprintf(out, "    export LERIAN_TF_REPO=%s\n", shellQuote(root))
+}
+
+// shellQuote renders a value for a command line the operator is invited to run.
+//
+// Not %q: that is Go quoting, and it produces a double-quoted string, where a
+// path holding $(...) or backticks is still substituted by the shell the moment
+// it is pasted. Single quotes suspend all of it; the only character that needs
+// care inside them is the single quote itself, which cannot be escaped and has
+// to be closed, emitted, and reopened.
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 // askForCheckout asks where the templates are, offering the working directory as
@@ -76,10 +89,19 @@ func askForCheckout(ask *prompter, out io.Writer) (string, error) {
 		return "", err
 	}
 
-	if !infra.IsCheckout(answer) {
-		return "", notACheckout(answer, "the answer")
+	// Resolved against the working directory before anything else looks at it. A
+	// relative answer validates here and then means something different from the
+	// next directory the operator runs in — ../foundation is only a checkout from
+	// where they were standing when they typed it.
+	absolute, err := filepath.Abs(answer)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve %q: %w", answer, err)
 	}
 
-	rememberCheckout(out, answer)
-	return answer, nil
+	if !infra.IsCheckout(absolute) {
+		return "", notACheckout(absolute, "the answer")
+	}
+
+	rememberCheckout(out, absolute)
+	return absolute, nil
 }

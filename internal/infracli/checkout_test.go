@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,5 +136,65 @@ func TestNoConfigMeansNothingRemembered(t *testing.T) {
 
 	if got := rememberedCheckout(); got != "" {
 		t.Errorf("rememberedCheckout = %q, want empty", got)
+	}
+}
+
+// The export line is printed for the operator to run, so it has to survive being
+// run. %q is Go quoting: it yields a double-quoted string, and a path holding
+// $(...) or a backtick is substituted by the shell the moment it is pasted.
+//
+// Asserted by running it: the shell is the only authority on what its own
+// quoting means.
+func TestTheExportLineSurvivesTheShellThatRunsIt(t *testing.T) {
+	awkward := []string{
+		`/tmp/$(touch /tmp/should-not-exist)/foundation`,
+		"/tmp/`id`/foundation",
+		`/tmp/it's a checkout/foundation`,
+		`/tmp/plain/foundation`,
+	}
+
+	for _, path := range awkward {
+		t.Run(path, func(t *testing.T) {
+			script := "LERIAN_TF_REPO=" + shellQuote(path) + `; printf %s "$LERIAN_TF_REPO"`
+
+			out, err := exec.Command("sh", "-c", script).Output()
+			if err != nil {
+				t.Fatalf("the printed line did not run: %v", err)
+			}
+			if string(out) != path {
+				t.Errorf("the shell read back %q, want %q", string(out), path)
+			}
+		})
+	}
+
+	if _, err := os.Stat("/tmp/should-not-exist"); err == nil {
+		_ = os.Remove("/tmp/should-not-exist")
+		t.Error("the command substitution in the path ran")
+	}
+}
+
+// A relative answer validates against the directory the operator was standing
+// in, and then means something else from the next one. It is resolved before it
+// is checked, saved or returned.
+func TestARelativeAnswerIsSavedAbsolute(t *testing.T) {
+	isolatedHome(t)
+	checkout := fakeCheckout(t, "", "")
+	t.Chdir(filepath.Dir(checkout))
+
+	var out bytes.Buffer
+	answered, err := askForCheckout(answering(filepath.Base(checkout)), &out)
+	if err != nil {
+		t.Fatalf("askForCheckout with a relative answer = %v", err)
+	}
+
+	if !filepath.IsAbs(answered) {
+		t.Errorf("answered %q, which is relative and means a different directory from anywhere else", answered)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(cfg.TemplatesCheckout) {
+		t.Errorf("config holds the relative %q", cfg.TemplatesCheckout)
 	}
 }
