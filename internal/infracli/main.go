@@ -148,10 +148,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// to ask, it asks instead. Nothing else changes: --env present means no
 	// question, so every invocation that works today behaves exactly as it did,
 	// and without a terminal the error below is still what happens.
-	if opts.environment == "" {
-		if err := guidedRun(catalog, &opts, newPrompter(stderr)); err != nil {
-			return err
-		}
+	terraform, err := prepareChoices(ctx, newPrompter(stderr), catalog, &opts, stderr)
+	if err != nil {
+		return err
 	}
 
 	if !infra.ValidEnvironment(opts.environment) {
@@ -250,9 +249,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// Returning at the first gap sends the operator to install terraform, run
 	// again, and only then learn the AWS CLI is v1 — the same round trip
 	// 'lerian-infra check' exists to collapse.
-	terraform, err := requireEnvironment(ctx, stderr, opts.dryRun)
-	if err != nil {
-		return err
+	// Already built when the questions were asked; built here otherwise. Either
+	// way it happens once, because the probe shells out to the binary.
+	if terraform == nil {
+		var err error
+		if terraform, err = requireEnvironment(ctx, stderr, opts.dryRun); err != nil {
+			return err
+		}
 	}
 	terraform.Profile = config.Profile
 
@@ -1337,4 +1340,43 @@ func summarize(err error) string {
 		return line[:index]
 	}
 	return line
+}
+
+// prepareChoices asks for whatever the run needs and was not given, verifying
+// the tools first when it is going to ask.
+//
+// Everything the questions lead to ends in terraform and the AWS CLI, so asking
+// before checking spends three answers and then reports a missing tool where it
+// reads as a problem with the choices rather than with the machine.
+//
+// The check is skipped when there is nobody to ask. Without a terminal nothing
+// is collected, so there are no answers to protect, and the argument and
+// configuration errors that follow are both cheaper to produce and more specific
+// than "terraform is missing": a script with a bad --target should hear about
+// the target.
+//
+// The CLI it builds is returned rather than rebuilt later, because the probe
+// shells out to the terraform binary.
+func prepareChoices(
+	ctx context.Context,
+	ask *prompter,
+	catalog infra.Catalog,
+	opts *options,
+	stderr io.Writer,
+) (*infra.CLI, error) {
+	if opts.environment != "" {
+		return nil, nil
+	}
+
+	var terraform *infra.CLI
+	if ask.interactive {
+		var err error
+		if terraform, err = requireEnvironment(ctx, stderr, opts.dryRun); err != nil {
+			return nil, err
+		}
+	}
+	if err := guidedRun(catalog, opts, ask); err != nil {
+		return nil, err
+	}
+	return terraform, nil
 }
