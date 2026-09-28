@@ -125,11 +125,11 @@ func TestEditingIsSkippedWhenTheOutputIsRedirected(t *testing.T) {
 // still a checkout.
 func TestASymlinkToADirectoryCompletes(t *testing.T) {
 	root := t.TempDir()
-	real := filepath.Join(root, "real-foundation")
-	if err := os.MkdirAll(real, 0o755); err != nil {
+	target := filepath.Join(root, "real-foundation")
+	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, filepath.Join(root, "linked-foundation")); err != nil {
+	if err := os.Symlink(target, filepath.Join(root, "linked-foundation")); err != nil {
 		t.Skipf("symlinks unavailable here: %v", err)
 	}
 
