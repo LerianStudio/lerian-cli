@@ -16,7 +16,6 @@ VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 BUILT_BY?=$(shell whoami)@$(shell hostname)
-BRANCH=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
 
 # Linker flags
 LDFLAGS=-ldflags "\
@@ -64,17 +63,28 @@ install:
 #
 # The version carries the branch and, when git says the tree is dirty, a -dirty
 # suffix — so a binary built from uncommitted work says so when asked.
+# The branch is read inside the recipe, by the shell, for two reasons.
+#
+# symbolic-ref rather than rev-parse --abbrev-ref: on a detached HEAD the latter
+# succeeds and prints "HEAD", so the || fallback never runs and the build claims
+# to come from a branch called HEAD. symbolic-ref fails there, which is what
+# makes the fallback mean something.
+#
+# And a shell variable rather than a make one: make expands its variables into
+# the recipe text before the shell parses it, so a branch name carrying shell
+# syntax would be executed rather than printed. Read by the shell it is data.
 dev:
-	@mkdir -p ${INSTALL_DIR}
-	@echo "Building ${DEV_BINARY_NAME} from ${BRANCH} (${VERSION})..."
+	@mkdir -p "${INSTALL_DIR}"
+	@branch="$$(git symbolic-ref -q --short HEAD 2>/dev/null || echo detached)"; \
+	echo "Building ${DEV_BINARY_NAME} from $$branch (${VERSION})..."; \
 	go build -trimpath -ldflags "\
-		-X github.com/lerian-studio/lerian-cli/internal/version.Version=${VERSION}+${BRANCH} \
+		-X github.com/lerian-studio/lerian-cli/internal/version.Version=${VERSION}+$$branch \
 		-X github.com/lerian-studio/lerian-cli/internal/version.Commit=${COMMIT} \
 		-X github.com/lerian-studio/lerian-cli/internal/version.Date=${DATE} \
 		-X github.com/lerian-studio/lerian-cli/internal/version.BuiltBy=${BUILT_BY}" \
-		-o ${INSTALL_DIR}/${DEV_BINARY_NAME} ${MAIN_PATH}
+		-o "${INSTALL_DIR}/${DEV_BINARY_NAME}" ${MAIN_PATH}
 	@echo ""
-	@${INSTALL_DIR}/${DEV_BINARY_NAME} version
+	@"${INSTALL_DIR}/${DEV_BINARY_NAME}" version
 	@echo ""
 	@echo "Installed: ${INSTALL_DIR}/${DEV_BINARY_NAME}"
 	@echo "The release stays untouched. Compare them:"
@@ -82,7 +92,7 @@ dev:
 	@echo "    ${DEV_BINARY_NAME} version"
 
 dev-uninstall:
-	@rm -f ${INSTALL_DIR}/${DEV_BINARY_NAME}
+	@rm -f "${INSTALL_DIR}/${DEV_BINARY_NAME}"
 	@echo "Removed ${INSTALL_DIR}/${DEV_BINARY_NAME}"
 
 # Clean build artifacts
