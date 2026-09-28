@@ -144,6 +144,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
+	// Where the command would fail for want of an answer, and there is a terminal
+	// to ask, it asks instead. Nothing else changes: --env present means no
+	// question, so every invocation that works today behaves exactly as it did,
+	// and without a terminal the error below is still what happens.
+	if opts.environment == "" {
+		if err := guidedRun(catalog, &opts, newPrompter(stderr)); err != nil {
+			return err
+		}
+	}
+
 	if !infra.ValidEnvironment(opts.environment) {
 		if opts.environment == "" {
 			return fmt.Errorf("--env is required\n"+
@@ -957,6 +967,87 @@ func printDryRun(
 	}
 	fmt.Fprintf(out, "  ok  all %d stack(s) ready\n\n", len(readiness))
 	return nil
+}
+
+// guidedRun fills in the run's three choices when none were given.
+//
+// It is reached only where the command would otherwise fail: --env is the one
+// flag with no default, so an invocation that passes it never gets here, and
+// every command that works today behaves exactly as it did. Without a terminal
+// this returns untouched and the caller falls through to the error that names the
+// flag — which is what keeps the command usable from CI.
+//
+// Target and action are asked in the same breath rather than left at their
+// defaults, because an operator who did not know to pass --env did not choose
+// "infra-base" and "plan" either. They are offered preselected, so three Enters
+// reproduce exactly the old default run.
+//
+// The questions go to stderr: the action is one of the things being chosen, and
+// helm-values needs stdout to carry nothing but the document.
+func guidedRun(catalog infra.Catalog, opts *options, ask *prompter) error {
+	if !ask.interactive {
+		return nil
+	}
+
+	environment, err := ask.pick(
+		"Which environment?",
+		"Picks the AWS account, the state backend and the variables file of every stack.",
+		"--env", environmentOptions(), "")
+	if err != nil {
+		return err
+	}
+	opts.environment = environment
+
+	targets, err := ask.pickMany(
+		"What do you want to operate on?",
+		"Several can be combined; they are reordered into dependency order either way.",
+		"--target", runTargetOptions(catalog), splitList(opts.target))
+	if err != nil {
+		return err
+	}
+	if len(targets) > 0 {
+		opts.target = strings.Join(targets, ",")
+	}
+
+	action, err := ask.pick(
+		"What should it do?",
+		"plan changes nothing. apply and destroy ask for a confirmation before writing.",
+		"--action", actionOptions(), opts.action)
+	if err != nil {
+		return err
+	}
+	opts.action = action
+	return nil
+}
+
+// runTargetOptions is the catalog --list prints, plus the two targets that are
+// not products: bootstrap, which creates the state backend, and all.
+func runTargetOptions(catalog infra.Catalog) []option {
+	options := make([]option, 0, 3+len(catalog.Names))
+	options = append(options,
+		option{value: "bootstrap", label: "bootstrap", note: "state bucket and lock table"},
+		option{value: "infra-base", label: "infra-base", note: "the VPC then the cluster"},
+	)
+	for _, name := range catalog.Names {
+		options = append(options, option{
+			value: name,
+			label: name,
+			note:  strings.Join(catalog.Products[name], " "),
+		})
+	}
+	return append(options, option{value: "all", label: "all", note: "everything, in dependency order"})
+}
+
+// actionOptions spells out the consequence of each action, which is the part an
+// operator needs before choosing rather than after.
+func actionOptions() []option {
+	return []option{
+		{value: string(infra.ActionPlan), label: "plan", note: "changes nothing"},
+		{value: string(infra.ActionApply), label: "apply", note: "writes, after one confirmation"},
+		{value: string(infra.ActionDestroy), label: "destroy", note: "removes, after one confirmation"},
+		{value: string(infra.ActionOutput), label: "output", note: "reads terraform output"},
+		{value: string(infra.ActionHelmValues), label: "helm-values", note: "merges helm_values onto stdout"},
+	}
 }
 
 func printTargets(out io.Writer, layout infra.Layout, catalog infra.Catalog) {
