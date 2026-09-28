@@ -240,6 +240,10 @@ func TestRepoFlagBeatsTheEnvironmentVariable(t *testing.T) {
 
 func TestOutsideACheckoutTheErrorNamesEveryWayOfPointingAtOne(t *testing.T) {
 	t.Setenv("LERIAN_TF_REPO", "")
+	// And no remembered one: the config is a source like the other four, so
+	// without this the test asserts "nothing points anywhere" on a machine where
+	// something does.
+	isolatedHome(t)
 	t.Chdir(t.TempDir())
 
 	_, _, err := runCLI(t, "--list")
@@ -367,6 +371,7 @@ func TestResolveLayoutFallsBackToTheManagedCheckout(t *testing.T) {
 // of four mechanisms they got wrong. The failure must name all four AND show the
 // value each one had.
 func TestResolveLayoutFailureNamesEveryPlaceItLooked(t *testing.T) {
+	isolatedHome(t)
 	t.Chdir(t.TempDir())
 
 	_, _, err := resolveLayout("", "", filepath.Join(t.TempDir(), "absent"))

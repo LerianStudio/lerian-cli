@@ -69,6 +69,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return runInit(ctx, args[1:], stdout, stderr)
 		case "check":
 			return runCheck(ctx, args[1:], stdout, stderr)
+		case "cleanup", "clean":
+			return runCleanup(ctx, args[1:], stdout, stderr)
 		}
 	}
 
