@@ -19,7 +19,7 @@ import (
 func TestWithoutATerminalTheGroupsMustBeNamed(t *testing.T) {
 	found := []leftover{{name: "plugins", size: 1024}}
 
-	_, err := chooseLeftovers(found, false, false, false, false, &bytes.Buffer{}, &bytes.Buffer{})
+	_, err := chooseLeftovers(found, false, false, false, false, &bytes.Buffer{})
 
 	if err == nil {
 		t.Fatal("chooseLeftovers decided on its own with no terminal")
@@ -36,7 +36,7 @@ func TestNamedGroupsAreTheOnesChosen(t *testing.T) {
 		{name: "plugins"}, {name: "logs"}, {name: "remembered", configOnly: true},
 	}
 
-	chosen, err := chooseLeftovers(found, true, false, false, false, &bytes.Buffer{}, &bytes.Buffer{})
+	chosen, err := chooseLeftovers(found, true, false, false, false, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("chooseLeftovers = %v", err)
 	}
@@ -49,7 +49,7 @@ func TestNamedGroupsAreTheOnesChosen(t *testing.T) {
 func TestAllTakesEverythingFound(t *testing.T) {
 	found := []leftover{{name: "plugins"}, {name: "logs"}}
 
-	chosen, err := chooseLeftovers(found, false, false, false, true, &bytes.Buffer{}, &bytes.Buffer{})
+	chosen, err := chooseLeftovers(found, false, false, false, true, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("chooseLeftovers = %v", err)
 	}
@@ -177,7 +177,7 @@ func TestTheTypedPromptSaysHowToLeave(t *testing.T) {
 }
 
 func names(items []leftover) []string {
-	var out []string
+	out := make([]string, 0, len(items))
 	for _, item := range items {
 		out = append(out, item.name)
 	}

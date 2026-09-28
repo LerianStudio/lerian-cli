@@ -80,7 +80,7 @@ func runCleanup(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return nil
 	}
 
-	chosen, err := chooseLeftovers(found, opts.plugins, opts.logs, opts.remembered, opts.all, stdout, stderr)
+	chosen, err := chooseLeftovers(found, opts.plugins, opts.logs, opts.remembered, opts.all, stderr)
 	if err != nil {
 		if errors.Is(err, infra.ErrAborted) {
 			return nil
@@ -138,6 +138,8 @@ func findLeftovers(_ context.Context) []leftover {
 func providerCaches(root string) []string {
 	var caches []string
 	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		//nolint:nilerr // A directory this cannot read is one it cannot propose;
+		// stopping the walk over it would hide every cache below it instead.
 		if err != nil {
 			return nil
 		}
@@ -165,6 +167,8 @@ func totalSize(paths []string) int64 {
 	var total int64
 	for _, path := range paths {
 		_ = filepath.WalkDir(path, func(p string, entry os.DirEntry, err error) error {
+			//nolint:nilerr // An unreadable entry contributes nothing to the size
+			// and is not worth abandoning the count for.
 			if err != nil || entry.IsDir() {
 				return nil
 			}
@@ -205,7 +209,7 @@ func report(out io.Writer, found []leftover) {
 func chooseLeftovers(
 	found []leftover,
 	plugins, logs, remembered, all bool,
-	stdout, stderr io.Writer,
+	stderr io.Writer,
 ) ([]leftover, error) {
 	named := map[string]bool{"plugins": plugins, "logs": logs, "remembered": remembered}
 
@@ -222,7 +226,8 @@ func chooseLeftovers(
 	ask := newPrompter(stderr)
 	if !ask.interactive {
 		return nil, errors.New("name what to remove: --plugins, --logs, --remembered or --all\n" +
-			"There is no terminal to ask, and removing everything by default is not a decision this makes for you.")
+			"There is no terminal to ask, and removing everything by default is not a\n" +
+			"decision this makes for you.")
 	}
 
 	options := make([]option, 0, len(found))
@@ -235,7 +240,8 @@ func chooseLeftovers(
 	}
 
 	values, err := ask.pickMany("What should be removed?",
-		"Everything here comes back: plugins on the next terraform init, logs on the next run, the path by asking again.",
+		"Everything here comes back: plugins on the next terraform init, "+
+			"logs on the next run, the path by asking again.",
 		"--all", options, nil)
 	if err != nil {
 		return nil, err
