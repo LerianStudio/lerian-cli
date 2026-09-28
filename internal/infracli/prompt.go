@@ -25,6 +25,11 @@ type prompter struct {
 	interactive bool
 	in          *bufio.Reader
 	out         io.Writer
+
+	// editor is the line editor, built on first use and kept for the rest of the
+	// run: it buffers whatever arrived past the current answer, and a new one per
+	// question would discard it.
+	editor *term.Terminal
 }
 
 // newPrompter returns a prompter that asks only when stdin is a terminal.
@@ -84,7 +89,7 @@ func (p *prompter) ask(question, purpose, fallback, flagName string) (string, er
 		fmt.Fprintf(p.out, "  [%s]\n", theme.dim("Enter takes "+fallback))
 	}
 
-	answer, edited, err := editableLine(p.out, "  > ")
+	answer, edited, err := p.editableLine(p.out, "  > ")
 	if err != nil {
 		return "", fmt.Errorf("cannot read the answer to %q: %w", question, err)
 	}

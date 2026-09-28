@@ -22,11 +22,12 @@ import (
 // It returns handled=false when there is no terminal to edit on, so the caller
 // falls back to the plain read rather than this reporting a failure the operator
 // cannot act on.
-func editableLine(out io.Writer, prompt string) (answer string, handled bool, err error) {
-	if _, ok := out.(*os.File); !ok {
-		return "", false, nil
-	}
-	if !isTerminal(os.Stdin) {
+func (p *prompter) editableLine(out io.Writer, prompt string) (answer string, handled bool, err error) {
+	// Both ends, not just stdin. With output redirected the prompt and the typed
+	// answer go into the file while raw mode stops the terminal echoing them, so
+	// the operator types blind into a command that looks stuck. writerIsTerminal
+	// is the same check CanAsk makes, for the same reason.
+	if !isTerminal(os.Stdin) || !writerIsTerminal(out) {
 		return "", false, nil
 	}
 
@@ -38,8 +39,24 @@ func editableLine(out io.Writer, prompt string) (answer string, handled bool, er
 	}
 	defer restore()
 
-	terminal := term.NewTerminal(readWriter{in: os.Stdin, out: out}, prompt)
-	terminal.AutoCompleteCallback = completePath
+	// The editor is kept on the prompter rather than built per question. When two
+	// answers arrive in one read — a pasted block — term.Terminal holds the bytes
+	// after the first newline in its own buffer, and a fresh editor for the next
+	// question throws them away: the answer is gone and the prompt waits for
+	// input that was already typed.
+	terminal := p.editor
+	if terminal == nil {
+		terminal = term.NewTerminal(readWriter{in: os.Stdin, out: out}, prompt)
+		terminal.AutoCompleteCallback = completePath
+		p.editor = terminal
+	}
+	terminal.SetPrompt(prompt)
+	// term.NewTerminal assumes 80 columns and does its cursor arithmetic with
+	// that number, so on any other width a long path wraps where the editor does
+	// not expect it and the cursor lands in the wrong place.
+	if width := terminalWidth(out); width > 0 {
+		_ = terminal.SetSize(width, 24)
+	}
 
 	line, err := terminal.ReadLine()
 	if err != nil {
@@ -83,7 +100,12 @@ func completePath(line string, pos int, key rune) (string, int, bool) {
 
 	var matches []string
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+		if !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		// Not entry.IsDir(): that is false for a symlink pointing at a directory,
+		// and a checkout reached through one is still a checkout.
+		if !isDirectory(filepath.Join(expandHome(search), entry.Name())) {
 			continue
 		}
 		matches = append(matches, entry.Name())
@@ -122,15 +144,31 @@ func expandHome(path string) string {
 	return filepath.Join(home, strings.TrimPrefix(path, "~"))
 }
 
+// commonPrefix compares runes rather than bytes. Trimming a byte at a time cuts
+// multi-byte names apart — "école" and "ècole" share one byte and no character,
+// and the half rune that survives becomes a replacement character in the answer.
 func commonPrefix(values []string) string {
-	prefix := values[0]
+	prefix := []rune(values[0])
 	for _, value := range values[1:] {
-		for !strings.HasPrefix(value, prefix) {
-			prefix = prefix[:len(prefix)-1]
-			if prefix == "" {
-				return ""
+		other := []rune(value)
+		if len(other) < len(prefix) {
+			prefix = prefix[:len(other)]
+		}
+		for i := range prefix {
+			if prefix[i] != other[i] {
+				prefix = prefix[:i]
+				break
 			}
 		}
+		if len(prefix) == 0 {
+			return ""
+		}
 	}
-	return prefix
+	return string(prefix)
+}
+
+// isDirectory follows symlinks, which entry.IsDir does not.
+func isDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
