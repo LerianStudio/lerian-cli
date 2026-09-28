@@ -146,8 +146,12 @@ func TestNoConfigMeansNothingRemembered(t *testing.T) {
 // Asserted by running it: the shell is the only authority on what its own
 // quoting means.
 func TestTheExportLineSurvivesTheShellThatRunsIt(t *testing.T) {
+	// Owned by this test, so a machine that happens to have a file where the
+	// sentinel used to be hardcoded neither fails the run nor loses the file.
+	sentinel := filepath.Join(t.TempDir(), "substitution-ran")
+
 	awkward := []string{
-		`/tmp/$(touch /tmp/should-not-exist)/foundation`,
+		"/tmp/$(touch " + sentinel + ")/foundation",
 		"/tmp/`id`/foundation",
 		`/tmp/it's a checkout/foundation`,
 		`/tmp/plain/foundation`,
@@ -167,8 +171,7 @@ func TestTheExportLineSurvivesTheShellThatRunsIt(t *testing.T) {
 		})
 	}
 
-	if _, err := os.Stat("/tmp/should-not-exist"); err == nil {
-		_ = os.Remove("/tmp/should-not-exist")
+	if _, err := os.Stat(sentinel); err == nil {
 		t.Error("the command substitution in the path ran")
 	}
 }
