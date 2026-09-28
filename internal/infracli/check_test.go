@@ -157,3 +157,44 @@ func TestCheckRejectsAPositionalArgument(t *testing.T) {
 		t.Errorf("error does not name the offending argument: %v", err)
 	}
 }
+
+// The gate exists to collapse a round trip: returning at the first gap sends the
+// operator to install terraform, run again, and only then learn the AWS CLI is
+// missing too.
+func TestRequireEnvironmentReportsBothToolsAtOnce(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // neither binary resolvable
+
+	var out bytes.Buffer
+	_, err := requireEnvironment(context.Background(), &out, false)
+
+	if err == nil {
+		t.Fatal("requireEnvironment passed with no terraform and no aws in PATH")
+	}
+	for _, tool := range []string{"terraform", "aws"} {
+		if !strings.Contains(out.String(), tool) {
+			t.Errorf("the report does not mention %q:\n%s", tool, out.String())
+		}
+	}
+}
+
+// A dry run makes no AWS call, so demanding the AWS CLI for one would block a
+// command that never uses it.
+func TestRequireEnvironmentExemptsTheAWSCLIOnADryRun(t *testing.T) {
+	var out bytes.Buffer
+	_, err := requireEnvironment(context.Background(), &out, true)
+
+	if err != nil && strings.Contains(out.String(), "aws") {
+		t.Errorf("a dry run was gated on the AWS CLI:\n%s", out.String())
+	}
+}
+
+// git is only used by init, to clone. Gating a run on it would demand a tool the
+// run never calls.
+func TestRequireEnvironmentDoesNotGateOnGit(t *testing.T) {
+	var out bytes.Buffer
+	_, _ = requireEnvironment(context.Background(), &out, true)
+
+	if strings.Contains(out.String(), "git") {
+		t.Errorf("a run was gated on git, which only init uses:\n%s", out.String())
+	}
+}

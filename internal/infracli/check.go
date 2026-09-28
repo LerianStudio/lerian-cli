@@ -93,8 +93,16 @@ func checkAWSCLI(ctx context.Context) checkResult {
 // checkTerraform builds the same CLI a run builds. Constructing it is the check:
 // it resolves the binary and rejects anything below MinTerraformVersion.
 func checkTerraform(ctx context.Context) checkResult {
+	_, err := infra.NewCLI(ctx)
+	return terraformResult(err)
+}
+
+// terraformResult turns the outcome of building the CLI into a row. It is split
+// from checkTerraform so a run can gate on the same verification without paying
+// for a second version probe: NewCLI shells out to the binary.
+func terraformResult(err error) checkResult {
 	result := checkResult{name: "terraform", summary: binaryPath("terraform"), ok: true}
-	if _, err := infra.NewCLI(ctx); err != nil {
+	if err != nil {
 		result.ok = false
 		result.summary = "not usable"
 		result.detail = err.Error()
@@ -191,4 +199,32 @@ func failedNames(results []checkResult) []string {
 		}
 	}
 	return names
+}
+
+// requireEnvironment verifies what a run is about to use and reports every gap
+// at once, rather than returning at the first.
+//
+// It gates on exactly what the run needs and nothing more. git stays out: a run
+// never clones, only init does, and demanding a tool that will not be called is
+// the failure this package's ordering exists to avoid. The AWS CLI is exempt on
+// a dry run for the same reason — a dry run makes no AWS call. The templates
+// checkout is not here either, because a run cannot reach this point without
+// having resolved it.
+//
+// On success it prints nothing: the run has its own preflight block, and a
+// second table above it would say the same thing twice.
+func requireEnvironment(ctx context.Context, out io.Writer, dryRun bool) (*infra.CLI, error) {
+	terraform, tfErr := infra.NewCLI(ctx)
+
+	results := []checkResult{terraformResult(tfErr)}
+	if !dryRun {
+		results = append(results, checkAWSCLI(ctx))
+	}
+
+	for _, r := range results {
+		if !r.ok {
+			return nil, reportChecks(out, results)
+		}
+	}
+	return terraform, nil
 }

@@ -240,25 +240,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	// The terraform binary is verified before anything is printed, not after: a
-	// preflight block that lists a terraform path it has not resolved yet would
-	// have to be interrupted to print it, and that is exactly what used to split
-	// the block in half — the path landed below the explanation, and the account
-	// line floated loose under it.
-	terraform, err := infra.NewCLI(ctx)
+	// Verified before anything is printed, not after: a preflight block that lists
+	// a terraform path it has not resolved yet would have to be interrupted to
+	// print it, and that is exactly what used to split the block in half — the
+	// path landed below the explanation, and the account line floated loose under
+	// it.
+	//
+	// Both tools are gated together so a machine missing both is told so once.
+	// Returning at the first gap sends the operator to install terraform, run
+	// again, and only then learn the AWS CLI is v1 — the same round trip
+	// 'lerian-infra check' exists to collapse.
+	terraform, err := requireEnvironment(ctx, stderr, opts.dryRun)
 	if err != nil {
 		return err
 	}
 	terraform.Profile = config.Profile
-
-	// The AWS CLI is checked here, next to the terraform check and before the first
-	// call that needs it. A dry run is exempt because it makes no AWS call at all:
-	// it resolves and prints the execution plan, nothing else.
-	if !opts.dryRun {
-		if err := infra.RequireAWSCLI(ctx); err != nil {
-			return err
-		}
-	}
 
 	// Resolved once, here, before anything runs in parallel. Four terraform
 	// processes starting together each refreshing the same SSO token is a race we
