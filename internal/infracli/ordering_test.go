@@ -3,12 +3,12 @@ package infracli
 import (
 	"bytes"
 	"context"
-
-	"github.com/lerian-studio/lerian-cli/internal/infra"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
 // Everything the guided questions lead to ends in terraform and the AWS CLI, so
