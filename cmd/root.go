@@ -64,7 +64,7 @@ and access your data.`,
 		if len(args) > 0 {
 			return fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath())
 		}
-		if !infracli.CanAsk() {
+		if !infracli.CanAsk(cmd.OutOrStdout()) {
 			return cmd.Help()
 		}
 		return chooseCommand(cmd)

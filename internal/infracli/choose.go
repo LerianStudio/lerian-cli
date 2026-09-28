@@ -27,12 +27,24 @@ type Choice struct {
 	Note string
 }
 
-// CanAsk reports whether there is somebody at the other end to answer.
+// CanAsk reports whether there is somebody at the other end to answer, and
+// somewhere they can see the question.
+//
+// Both ends matter. Stdin alone is not enough: with output redirected the menu
+// is painted into the file while the terminal waits for a keypress, so the
+// operator sees a command that has stopped and no way to know why.
 //
 // Callers check this before offering a menu rather than letting Choose fail:
-// without a terminal the answer is to do whatever the command did before, not to
-// report that a question could not be asked.
-func CanAsk() bool { return isTerminal(os.Stdin) }
+// with either end missing, the answer is to do whatever the command did before,
+// not to report that a question could not be asked.
+func CanAsk(out io.Writer) bool { return isTerminal(os.Stdin) && writerIsTerminal(out) }
+
+// writerIsTerminal reports whether out is a terminal. Anything that is not an
+// *os.File — a buffer, a pipe wrapper, a tee — is not one.
+func writerIsTerminal(out io.Writer) bool {
+	file, ok := out.(*os.File)
+	return ok && isTerminal(file)
+}
 
 // Choose asks question and returns the value of the row picked. purpose is the
 // line under it saying what the answer decides; it may be empty.
