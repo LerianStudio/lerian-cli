@@ -81,16 +81,21 @@ func (p *prompter) ask(question, purpose, fallback, flagName string) (string, er
 		fmt.Fprintf(p.out, "  %s\n", theme.dim(purpose))
 	}
 	if fallback != "" {
-		fmt.Fprintf(p.out, "  > [%s] ", fallback)
-	} else {
-		fmt.Fprint(p.out, "  > ")
+		fmt.Fprintf(p.out, "  [%s]\n", theme.dim("Enter takes "+fallback))
 	}
 
-	line, err := p.in.ReadString('\n')
-	if err != nil && strings.TrimSpace(line) == "" {
+	answer, edited, err := editableLine(p.out, "  > ")
+	if err != nil {
 		return "", fmt.Errorf("cannot read the answer to %q: %w", question, err)
 	}
-	answer := strings.TrimSpace(line)
+	if !edited {
+		// No terminal to edit on: read the line the plain way.
+		line, readErr := p.in.ReadString('\n')
+		if readErr != nil && strings.TrimSpace(line) == "" {
+			return "", fmt.Errorf("cannot read the answer to %q: %w", question, readErr)
+		}
+		answer = strings.TrimSpace(line)
+	}
 	if answer == "" {
 		if fallback == "" {
 			return "", fmt.Errorf("%s is required", question)
