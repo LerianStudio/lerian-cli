@@ -136,7 +136,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		// could give right now. The answer is written down, so it is asked once per
 		// machine rather than once per shell.
 		if ask := newPrompter(stderr); ask.interactive && errors.Is(err, errNoCheckoutAnywhere) {
-			answered, askErr := askForCheckout(ask, stderr)
+			answered, askErr := askForCheckout(ask, stderr, opts.templatesDir)
 			if askErr != nil {
 				return askErr
 			}

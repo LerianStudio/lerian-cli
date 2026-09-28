@@ -68,40 +68,76 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
-// askForCheckout asks where the templates are, offering the working directory as
-// the answer to accept with Enter.
+// askForCheckout asks where the templates are, and keeps asking while the
+// operator is still answering.
 //
-// The working directory is the default because the common case is somebody
-// standing in the clone they just made. It is offered even when it is not a
-// checkout, so the prompt says what would be accepted rather than making the
-// operator guess the shape of the answer.
-func askForCheckout(ask *prompter, out io.Writer) (string, error) {
-	working, err := os.Getwd()
-	if err != nil {
-		working = ""
-	}
+// The default is only offered when it would work. Offering the working directory
+// unconditionally made Enter — the one answer a prompt invites — a guaranteed
+// failure whenever the operator happened to be standing somewhere else, which is
+// most of the time: the command is run from the project being deployed, not from
+// the templates.
+//
+// A wrong answer is asked about again rather than ending the run. The operator is
+// right there, and the path was a typo or the wrong clone; making them start the
+// command over to correct one line is the round trip this question exists to
+// remove.
+func askForCheckout(ask *prompter, out io.Writer, templatesDir string) (string, error) {
+	const attempts = 3
 
-	answer, err := ask.ask(
-		"Where is the lerian-terraform-foundation checkout?",
-		"The Terraform templates every stack is rendered from. Clone it, then give the path.",
-		working, "--repo")
-	if err != nil {
-		return "", err
-	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		answer, err := ask.ask(
+			"Where is the lerian-terraform-foundation checkout?",
+			checkoutPurpose(templatesDir),
+			defaultCheckout(templatesDir), "--repo")
+		if err != nil {
+			if lastErr != nil {
+				return "", lastErr
+			}
+			return "", err
+		}
 
-	// Resolved against the working directory before anything else looks at it. A
-	// relative answer validates here and then means something different from the
-	// next directory the operator runs in — ../foundation is only a checkout from
-	// where they were standing when they typed it.
-	absolute, err := filepath.Abs(answer)
-	if err != nil {
-		return "", fmt.Errorf("cannot resolve %q: %w", answer, err)
-	}
+		absolute, err := filepath.Abs(answer)
+		if err != nil {
+			return "", fmt.Errorf("cannot resolve %q: %w", answer, err)
+		}
+		if infra.IsCheckout(absolute) {
+			rememberCheckout(out, absolute)
+			return absolute, nil
+		}
 
-	if !infra.IsCheckout(absolute) {
-		return "", notACheckout(absolute, "the answer")
+		lastErr = notACheckout(absolute, "the answer")
+		if attempt < attempts {
+			fmt.Fprintf(out, "\n  %s is not a checkout: the directories examples/aws/_modules\n"+
+				"  and examples/aws/backend are what identifies one.\n", absolute)
+		}
 	}
+	return "", lastErr
+}
 
-	rememberCheckout(out, absolute)
-	return absolute, nil
+// defaultCheckout is the answer Enter accepts, and it is empty unless there is
+// one that works.
+//
+// The working directory first, because somebody standing in the clone is the
+// case worth one keypress. Then the managed path, which is where --clone puts it
+// and therefore where a previous operator's clone tends to be.
+func defaultCheckout(templatesDir string) string {
+	if working, err := os.Getwd(); err == nil && infra.IsCheckout(working) {
+		return working
+	}
+	if managed, err := infra.ManagedCheckoutPath(templatesDir); err == nil && infra.IsCheckout(managed) {
+		return managed
+	}
+	return ""
+}
+
+// checkoutPurpose says what the answer decides, and — when there is nothing to
+// offer — what to do about not having one.
+func checkoutPurpose(templatesDir string) string {
+	const base = "The Terraform templates every stack is rendered from."
+	if defaultCheckout(templatesDir) != "" {
+		return base + " Enter takes the one found."
+	}
+	return base + " No clone found here; git clone it and give the path, or leave" +
+		" this and run: lerian infra init --clone --templates-ref <tag>"
 }

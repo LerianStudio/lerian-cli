@@ -35,7 +35,7 @@ func TestTheWorkingDirectoryIsWhatEnterAccepts(t *testing.T) {
 	t.Chdir(checkout)
 
 	var out bytes.Buffer
-	answered, err := askForCheckout(answering(""), &out)
+	answered, err := askForCheckout(answering(""), &out, t.TempDir())
 	if err != nil {
 		t.Fatalf("askForCheckout = %v", err)
 	}
@@ -53,7 +53,7 @@ func TestATypedPathIsUsed(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	var out bytes.Buffer
-	answered, err := askForCheckout(answering(elsewhere), &out)
+	answered, err := askForCheckout(answering(elsewhere), &out, t.TempDir())
 	if err != nil {
 		t.Fatalf("askForCheckout = %v", err)
 	}
@@ -71,7 +71,7 @@ func TestAnAnswerThatIsNotACheckoutIsRejected(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	var out bytes.Buffer
-	_, err := askForCheckout(answering(t.TempDir()), &out)
+	_, err := askForCheckout(answering(t.TempDir()), &out, t.TempDir())
 
 	if err == nil {
 		t.Fatal("a directory that is not a checkout was accepted")
@@ -87,7 +87,7 @@ func TestTheAnswerIsRememberedForTheNextRun(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	var out bytes.Buffer
-	if _, err := askForCheckout(answering(checkout), &out); err != nil {
+	if _, err := askForCheckout(answering(checkout), &out, t.TempDir()); err != nil {
 		t.Fatalf("askForCheckout = %v", err)
 	}
 
@@ -185,7 +185,7 @@ func TestARelativeAnswerIsSavedAbsolute(t *testing.T) {
 	t.Chdir(filepath.Dir(checkout))
 
 	var out bytes.Buffer
-	answered, err := askForCheckout(answering(filepath.Base(checkout)), &out)
+	answered, err := askForCheckout(answering(filepath.Base(checkout)), &out, t.TempDir())
 	if err != nil {
 		t.Fatalf("askForCheckout with a relative answer = %v", err)
 	}
@@ -199,5 +199,84 @@ func TestARelativeAnswerIsSavedAbsolute(t *testing.T) {
 	}
 	if !filepath.IsAbs(cfg.TemplatesCheckout) {
 		t.Errorf("config holds the relative %q", cfg.TemplatesCheckout)
+	}
+}
+
+// Enter is the answer a prompt invites, so offering a default that cannot work
+// turns the most likely keypress into a guaranteed failure. The command is run
+// from the project being deployed, not from the templates, so the working
+// directory is usually not a checkout.
+func TestNoDefaultIsOfferedWhenTheWorkingDirectoryIsNotACheckout(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	if got := defaultCheckout(filepath.Join(t.TempDir(), "no-managed-clone")); got != "" {
+		t.Errorf("defaultCheckout = %q, want empty: pressing Enter on it would fail", got)
+	}
+}
+
+func TestTheWorkingDirectoryIsOfferedWhenItIsACheckout(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	t.Chdir(checkout)
+
+	if got := defaultCheckout(filepath.Join(t.TempDir(), "no-managed-clone")); got != checkout {
+		t.Errorf("defaultCheckout = %q, want the working directory %q", got, checkout)
+	}
+}
+
+// With nothing to offer, the prompt says what to do about not having a clone
+// rather than leaving the operator to guess.
+func TestWithNoDefaultThePromptSaysHowToGetOne(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	purpose := checkoutPurpose(filepath.Join(t.TempDir(), "no-managed-clone"))
+
+	if !strings.Contains(purpose, "--clone") {
+		t.Errorf("the prompt does not say how to obtain a checkout:\n%s", purpose)
+	}
+}
+
+// A wrong path is a typo or the wrong clone, and the operator is right there.
+// Ending the run to make them retype one line is the round trip this question
+// exists to remove.
+func TestAWrongAnswerIsAskedAboutAgain(t *testing.T) {
+	isolatedHome(t)
+	checkout := fakeCheckout(t, "", "")
+	t.Chdir(t.TempDir())
+
+	wrong := t.TempDir()
+	ask := &prompter{
+		interactive: true,
+		in:          bufio.NewReader(strings.NewReader(wrong + "\n" + checkout + "\n")),
+		out:         &bytes.Buffer{},
+	}
+
+	var out bytes.Buffer
+	answered, err := askForCheckout(ask, &out, t.TempDir())
+	if err != nil {
+		t.Fatalf("a corrected answer still failed: %v", err)
+	}
+	if answered != checkout {
+		t.Errorf("answered %q, want the second answer %q", answered, checkout)
+	}
+	if !strings.Contains(out.String(), "is not a checkout") {
+		t.Errorf("the operator was not told why the first answer was rejected:\n%s", out.String())
+	}
+}
+
+// It does not ask forever: a stream of wrong answers ends with the error the
+// command would have given anyway.
+func TestItGivesUpAfterEnoughWrongAnswers(t *testing.T) {
+	isolatedHome(t)
+	t.Chdir(t.TempDir())
+
+	wrong := t.TempDir()
+	ask := &prompter{
+		interactive: true,
+		in:          bufio.NewReader(strings.NewReader(strings.Repeat(wrong+"\n", 10))),
+		out:         &bytes.Buffer{},
+	}
+
+	if _, err := askForCheckout(ask, &bytes.Buffer{}, t.TempDir()); err == nil {
+		t.Error("askForCheckout accepted a directory that is not a checkout")
 	}
 }
