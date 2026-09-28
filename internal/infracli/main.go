@@ -130,7 +130,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	layout, source, err := resolveLayout(opts.repo, os.Getenv("LERIAN_TF_REPO"), opts.templatesDir)
 	if err != nil {
-		return err
+		// Nothing pointed anywhere. With a terminal that is a question, not a
+		// failure: the operator knows where the clone is, and telling them to set an
+		// environment variable and run again is a round trip for information they
+		// could give right now. The answer is written down, so it is asked once per
+		// machine rather than once per shell.
+		if ask := newPrompter(stderr); ask.interactive && errors.Is(err, errNoCheckoutAnywhere) {
+			answered, askErr := askForCheckout(ask, stderr)
+			if askErr != nil {
+				return askErr
+			}
+			if layout, err = infra.NewLayout(answered); err != nil {
+				return err
+			}
+			source = sourceAsked
+		} else {
+			return err
+		}
 	}
 
 	catalog, err := infra.Discover(layout)
@@ -355,10 +371,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 type checkoutSource string
 
 const (
-	sourceFlag      checkoutSource = "--repo"
-	sourceEnv       checkoutSource = "$LERIAN_TF_REPO"
-	sourceWorkingIn checkoutSource = "the working directory"
-	sourceManaged   checkoutSource = "managed"
+	sourceFlag       checkoutSource = "--repo"
+	sourceEnv        checkoutSource = "$LERIAN_TF_REPO"
+	sourceWorkingIn  checkoutSource = "the working directory"
+	sourceManaged    checkoutSource = "managed"
+	sourceRemembered checkoutSource = "remembered"
+	sourceAsked      checkoutSource = "answered just now"
 )
 
 // resolveLayout finds the checkout to drive, in this order of precedence:
@@ -399,6 +417,13 @@ func resolveLayout(flagRepo, envRepo, templatesDir string) (infra.Layout, checko
 		}
 		if infra.IsCheckout(managed) {
 			root, source = managed, sourceManaged
+		}
+	}
+	if root == "" {
+		// A remembered answer is a default, not an override: standing inside a
+		// checkout still wins over one written down on a previous run.
+		if remembered := rememberedCheckout(); remembered != "" {
+			root, source = remembered, sourceRemembered
 		}
 	}
 	if root == "" {
