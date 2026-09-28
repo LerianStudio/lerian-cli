@@ -46,6 +46,12 @@ func isTerminal(f *os.File) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
+// selecting reports whether questions will be rendered as a list rather than
+// typed. Callers use it to avoid printing a table the selector is about to draw.
+func (p *prompter) selecting() bool {
+	return p.interactive && !plainSelection() && !narrowTerminal(p.out)
+}
+
 // text asks for a value with no explanation. Prefer ask: a bare question assumes
 // the reader already knows why it is being asked, and the people running this are
 // often meeting this infrastructure for the first time.

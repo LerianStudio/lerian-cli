@@ -379,10 +379,10 @@ func buildInitPlan(
 			return plan, fmt.Errorf("--env is required\n"+
 				"Valid values: %s.", strings.Join(infra.Environments, ", "))
 		}
-		answer, err := ask.ask(
+		answer, err := ask.pick(
 			"Which environment are you setting up?",
 			"Picks the AWS account, the state bucket and the sizing of every resource.",
-			"dev", "--env")
+			"--env", environmentOptions(), "dev")
 		if err != nil {
 			return plan, err
 		}
@@ -423,22 +423,25 @@ func buildInitPlan(
 		Region:      region,
 	}
 
-	// Targets decide which tfvars get written.
-	targets := strings.TrimSpace(opts.targets)
-	if targets == "" {
-		answer, err := ask.ask(
-			"What do you want to configure?",
-			"infra-base is the VPC and the cluster. Add products to configure their "+
-				"datastores too, e.g. infra-base,midaz",
-			"infra-base", "--targets")
-		if err != nil {
-			return plan, err
-		}
-		targets = answer
-	}
+	// Discovered before the question, not after: the answer is a choice from this
+	// catalog, so the catalog has to exist to be offered.
 	catalog, err := infra.Discover(layout)
 	if err != nil {
 		return plan, err
+	}
+
+	// Targets decide which tfvars get written.
+	targets := strings.TrimSpace(opts.targets)
+	if targets == "" {
+		answer, err := ask.pickMany(
+			"What do you want to configure?",
+			"infra-base is the VPC and the cluster. Add products to configure their "+
+				"datastores too.",
+			"--targets", targetOptions(catalog), []string{"infra-base"})
+		if err != nil {
+			return plan, err
+		}
+		targets = strings.Join(answer, ",")
 	}
 	stages, err := infra.Resolve(layout, catalog, targets)
 	if err != nil {
@@ -477,11 +480,11 @@ func buildInitPlan(
 	// than one per service.
 	mode := strings.TrimSpace(opts.mode)
 	if mode == "" && len(plan.units) > 0 {
-		answer, err := ask.ask(
+		answer, err := ask.pick(
 			"Should each product own its datastores, or share one set?",
-			"dedicated = every product gets its own. shared = they all resolve one "+
-				"tier you provision separately (cheaper from the third product on).",
-			infra.DedicatedMode, "--mode")
+			"Applies to every datastore of the target: mixing the two inside one "+
+				"product is not supported yet.",
+			"--mode", modeOptions(), infra.DedicatedMode)
 		if err != nil {
 			return plan, err
 		}
@@ -729,7 +732,15 @@ func resolveCredentials(
 	}
 
 	resolved := infra.ResolveProfiles(ctx, infra.CLIIdentity{}, profiles, region)
-	ask.printProfiles(resolved)
+	// The table is printed only for the typed path. When the selector runs, the
+	// rows ARE the list: printing them first and then asking the operator to type
+	// one of the names back is the thing this replaced.
+	//
+	// The selector's own fallbacks print the options themselves, so a terminal that
+	// cannot go raw still sees the account behind each profile.
+	if !ask.selecting() {
+		ask.printProfiles(resolved)
+	}
 
 	usable := make([]infra.ResolvedProfile, 0, len(resolved))
 	for _, entry := range resolved {
@@ -748,10 +759,10 @@ func resolveCredentials(
 	}
 
 	preset := usable[0].Profile.Name
-	chosen, err := ask.ask(
+	chosen, err := ask.pick(
 		"Which AWS profile should be used?",
-		"Its account is where everything is created. Check the ACCOUNT column above.",
-		preset, "--profile")
+		"Its account is where everything is created. Pick by the account, not by the name.",
+		"--profile", profileOptions(resolved), preset)
 	if err != nil {
 		return "", "", caller, err
 	}
@@ -1083,4 +1094,83 @@ func printModeDisclaimer(out io.Writer, plan initPlan) {
 				"is your responsibility — Lerian ships the templates and the defaults, "+
 				"not a sizing for traffic it cannot measure.", "    ", 76)+"\n\n")
 	}
+}
+
+// environmentOptions is the closed set every environment-keyed file agrees on:
+// envs/<env>.tfvars, backend/<env>.hcl and the bootstrap workspace.
+func environmentOptions() []option {
+	notes := map[string]string{
+		"dev": "day to day, smallest sizing",
+		"stg": "pre-production",
+		"prd": "production",
+	}
+	options := make([]option, 0, len(infra.Environments))
+	for _, name := range infra.Environments {
+		options = append(options, option{value: name, label: name, note: notes[name]})
+	}
+	return options
+}
+
+// modeOptions spells out the trade-off that used to live in the prompt's prose,
+// where it had to be read before the answer could be typed.
+func modeOptions() []option {
+	return []option{
+		{
+			value: infra.DedicatedMode,
+			label: infra.DedicatedMode,
+			note:  "every product gets its own datastores",
+		},
+		{
+			value: infra.SharedMode,
+			label: infra.SharedMode,
+			note:  "all products resolve one tier you provision separately — cheaper from the third product on",
+		},
+	}
+}
+
+// profileOptions turns the resolved profiles into rows, carrying the account each
+// one reaches — which is the question an operator actually has. It is not "which
+// profiles exist" but "which one is the right account", and choosing the wrong
+// account here is the most expensive typo this tool allows.
+//
+// A profile whose session expired is shown and disabled rather than hidden:
+// hiding it would remove the explanation for why the expected account is absent.
+func profileOptions(resolved []infra.ResolvedProfile) []option {
+	options := make([]option, 0, len(resolved))
+	for _, entry := range resolved {
+		note := "session expired"
+		if entry.Usable() {
+			note = "account " + entry.Caller.Account
+			if entry.Profile.Region != "" {
+				note += " · " + entry.Profile.Region
+			}
+		}
+		options = append(options, option{
+			value:    entry.Profile.Name,
+			label:    entry.Profile.Name,
+			note:     note,
+			disabled: !entry.Usable(),
+		})
+	}
+	return options
+}
+
+// targetOptions is the same catalog `--list` prints, offered as rows. A product
+// carries its services as the note, which is what makes "midaz" decidable without
+// leaving the question to go and look.
+func targetOptions(catalog infra.Catalog) []option {
+	options := make([]option, 0, 1+len(catalog.Names))
+	options = append(options, option{
+		value: "infra-base",
+		label: "infra-base",
+		note:  "the VPC and the cluster",
+	})
+	for _, name := range catalog.Names {
+		options = append(options, option{
+			value: name,
+			label: name,
+			note:  strings.Join(catalog.Products[name], " "),
+		})
+	}
+	return options
 }
