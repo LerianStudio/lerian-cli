@@ -459,9 +459,13 @@ func longestPaintedRow(painted string) int {
 	for _, line := range strings.Split(plain, "\n") {
 		// Each row is blanked with a run of spaces and rewritten after a carriage
 		// return, so what the terminal shows is whatever follows the last one.
-		parts := strings.Split(line, "\r")
+		// The trailing \r of the line leaves an empty last segment, so the row is
+		// the last segment that has anything in it.
+		parts := strings.Split(strings.TrimRight(line, "\r"), "\r")
 		shown := strings.TrimRight(parts[len(parts)-1], " ")
-		if n := len([]rune(shown)); n > widest {
+		// Measured in columns, not runes: measuring the assertion the same wrong
+		// way as the code would make the test agree with the bug.
+		if n := displayWidth(shown); n > widest {
 			widest = n
 		}
 	}
@@ -502,5 +506,61 @@ func TestTerminalWidthDoesNotInventColumns(t *testing.T) {
 	}
 	if minSelectorWidth < 20 {
 		t.Errorf("minSelectorWidth = %d, too low to hold a pointer, a label and a hint", minSelectorWidth)
+	}
+}
+
+// A wide character costs two columns and one rune. Measuring by runes let a
+// label of them pass the fit check and still wrap its row, which breaks the
+// redraw the same way an unfitted label did.
+func TestAWideCharacterLabelStaysInsideTheWidth(t *testing.T) {
+	// 60 runes, 120 columns: under the 80-column fallback by rune count, well
+	// past it by display width.
+	wide := strings.Repeat("政策", 30)
+	prompter, out := selectorFor(t, keyEnterSeq)
+
+	_, err := prompter.pick("Which profile?", "", "--profile", []option{
+		{value: "wide", label: wide},
+		{value: "short", label: "short"},
+	}, "")
+	if err != nil {
+		t.Fatalf("pick = %v", err)
+	}
+
+	// Asserted in columns. That borrows displayWidth, which is the function under
+	// test — so it is paired with TestDisplayWidthCountsColumnsNotRunes, which
+	// checks the model itself against known values. The row test says the painter
+	// respects the model; the unit test says the model is right. Neither alone is
+	// enough.
+	if widest := longestPaintedRow(out.String()); widest > 80 {
+		t.Errorf("a wide-character row is %d columns, past the 80 the redraw assumes", widest)
+	}
+}
+
+func TestDisplayWidthCountsColumnsNotRunes(t *testing.T) {
+	tests := []struct {
+		text string
+		want int
+	}{
+		{"abc", 3},
+		{"政策", 4},
+		{"a政", 3},
+		{"", 0},
+	}
+	for _, test := range tests {
+		if got := displayWidth(test.text); got != test.want {
+			t.Errorf("displayWidth(%q) = %d, want %d", test.text, got, test.want)
+		}
+	}
+}
+
+// fit must not cut a wide rune in half by spending half its columns.
+func TestFitLeavesOutAWideRuneItCannotAfford(t *testing.T) {
+	got := fit("政策政策", 5) // 4 columns of budget after the ellipsis: two runes fit
+
+	if w := displayWidth(got); w > 5 {
+		t.Errorf("fit produced %q, %d columns wide, want at most 5", got, w)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("fit(%q) = %q, want it marked as clipped", "政策政策", got)
 	}
 }

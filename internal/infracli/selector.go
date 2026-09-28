@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"golang.org/x/term"
+	"golang.org/x/text/width"
 
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
@@ -288,9 +289,9 @@ func (p *prompter) paintOptions(
 		// to what was left, but a label longer than the row wrapped it, and the
 		// comment above is explicit that a wrapped row breaks the redraw
 		// arithmetic. A long profile name is enough to do it.
-		prefix := 2 + len([]rune(pointer)) + len([]rune(mark))
+		prefix := 2 + displayWidth(pointer) + displayWidth(mark)
 		label = fit(label, width-prefix)
-		room := width - prefix - len([]rune(label))
+		room := width - prefix - displayWidth(label)
 		note := ""
 		if opt.note != "" && room > 4 {
 			note = "  " + fit(opt.note, room-2)
@@ -319,14 +320,51 @@ func fit(text string, width int) string {
 	if width < 1 {
 		return ""
 	}
-	runes := []rune(text)
-	if len(runes) <= width {
+	if displayWidth(text) <= width {
 		return text
 	}
-	if width <= 1 {
-		return string(runes[:width])
+
+	// Budget for the ellipsis, which is itself one column, then take runes while
+	// they fit. A wide rune that would straddle the limit is left out rather than
+	// half-drawn.
+	budget := width - 1
+	var kept []rune
+	used := 0
+	for _, r := range text {
+		w := runeWidth(r)
+		if used+w > budget {
+			break
+		}
+		kept = append(kept, r)
+		used += w
 	}
-	return string(runes[:width-1]) + "…"
+	return string(kept) + "…"
+}
+
+// displayWidth is how many terminal columns text occupies, which is not its rune
+// count: East Asian wide and fullwidth characters take two. Measuring by runes
+// let a label of wide characters pass the fit check and still wrap its row,
+// which breaks the redraw arithmetic the same way an unfitted label did.
+//
+// Scoped to East Asian width on purpose. Grapheme clusters — a base rune plus
+// combining marks, or an emoji joined with ZWJ — need a segmentation library to
+// measure, and nothing this selector lists is built from them: they are AWS
+// profile names, environment names and Terraform stack names.
+func displayWidth(text string) int {
+	total := 0
+	for _, r := range text {
+		total += runeWidth(r)
+	}
+	return total
+}
+
+func runeWidth(r rune) int {
+	switch width.LookupRune(r).Kind() {
+	case width.EastAsianWide, width.EastAsianFullwidth:
+		return 2
+	default:
+		return 1
+	}
 }
 
 // terminalWidth asks the terminal how wide it is, falling back to the 80 columns
