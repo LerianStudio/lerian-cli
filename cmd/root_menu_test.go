@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func fakeRoot(t *testing.T) (*cobra.Command, *bytes.Buffer) {
+func fakeRoot(t *testing.T) *cobra.Command {
 	t.Helper()
 
 	root := &cobra.Command{Use: "lerian"}
@@ -16,9 +16,8 @@ func fakeRoot(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 	root.AddCommand(&cobra.Command{Use: "infra", Short: "Deploy the AWS stacks", Run: func(*cobra.Command, []string) {}})
 	root.AddCommand(&cobra.Command{Use: "hidden", Hidden: true, Run: func(*cobra.Command, []string) {}})
 
-	var out bytes.Buffer
-	root.SetOut(&out)
-	return root, &out
+	root.SetOut(&bytes.Buffer{})
+	return root
 }
 
 // The menu must not run what it picked. A child's Execute walks up to the root
@@ -53,10 +52,11 @@ func TestChooseCommandDoesNotRunTheChoice(t *testing.T) {
 // the selector refuses before drawing anything, so the output says nothing about
 // what would have been offered.
 func TestTheMenuOffersTheRealCommandsOnly(t *testing.T) {
-	root, _ := fakeRoot(t)
+	root := fakeRoot(t)
 
-	var names []string
-	for _, choice := range menuChoices(root) {
+	choices := menuChoices(root)
+	names := make([]string, 0, len(choices))
+	for _, choice := range choices {
 		names = append(names, choice.Value)
 	}
 	offered := strings.Join(names, " ")
@@ -76,7 +76,7 @@ func TestTheMenuOffersTheRealCommandsOnly(t *testing.T) {
 // Each row carries the command's own one-line description, so the menu says what
 // the choices mean rather than only naming them.
 func TestEachChoiceCarriesItsDescription(t *testing.T) {
-	root, _ := fakeRoot(t)
+	root := fakeRoot(t)
 
 	for _, choice := range menuChoices(root) {
 		if choice.Note == "" {
