@@ -408,3 +408,37 @@ func TestAnUnreadablePidCountsAsRunning(t *testing.T) {
 		}
 	}
 }
+
+// Hiding the staging directory from the glob bought safety at the cost of a leak:
+// if anything between creating it and renaming it fails, a .lerian-infra-* is left
+// in the temp directory that this tool's own cleanup cannot see — the glob is
+// anchored and does not match the dot. One per failed run, forever.
+//
+// Only this process has ever seen that directory, so removing it on the way out
+// costs nothing.
+func TestAFailedRunDirectoryLeavesNothingBehind(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("TMPDIR", temp)
+
+	// A directory where the marker file has to go: the write fails, and the
+	// failure lands after the staging directory already exists.
+	previous := runDirCreated
+	runDirCreated = func(dir string) {
+		if err := os.Mkdir(filepath.Join(dir, runOwnerFile), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { runDirCreated = previous })
+
+	if _, err := newRunDir(); err == nil {
+		t.Fatal("newRunDir reported success with an unwritable marker")
+	}
+
+	left, err := os.ReadDir(temp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range left {
+		t.Errorf("left behind in the temp directory: %s", entry.Name())
+	}
+}

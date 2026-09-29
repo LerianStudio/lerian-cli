@@ -204,6 +204,21 @@ func newRunDir() (string, error) {
 	}
 	runDirCreated(staging)
 
+	// Everything from here can fail, and a staging directory left behind is one
+	// this tool's own cleanup cannot see: the glob is anchored and does not match
+	// the leading dot, so it would sit there for good — one per failed run. Only
+	// this process has ever seen it, so removing it costs nothing.
+	published, err := claimAndPublish(staging)
+	if err != nil {
+		_ = os.RemoveAll(staging)
+		return "", err
+	}
+	return published, nil
+}
+
+// claimAndPublish restricts the staged directory, writes its marker and gives it
+// the name the cleanup looks for.
+func claimAndPublish(staging string) (string, error) {
 	// #nosec G302 -- the rule is written for files, where 0600 is the ceiling. This
 	// is a directory, and a directory without the execute bit cannot be traversed:
 	// 0700 is already the tightest mode that works, and it is stricter than the
