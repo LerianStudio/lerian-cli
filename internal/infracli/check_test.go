@@ -139,10 +139,13 @@ func TestCheckReadsTheRepoEnvironmentVariable(t *testing.T) {
 }
 
 // templatesRow returns the report line for the templates check.
+// templatesRow finds the row by its name field rather than by the start of the
+// line: the verdict leads every row, so "templates" is the second field.
 func templatesRow(t *testing.T, report string) string {
 	t.Helper()
 	for _, line := range strings.Split(report, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "templates") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == "templates" {
 			return strings.TrimSpace(line)
 		}
 	}
