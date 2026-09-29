@@ -201,7 +201,7 @@ func checkAWSSession(ctx context.Context, identity infra.Identity) (checkResult,
 //
 // The row answers one question — is there a session at all — and the count is
 // the answer. The names are there so a machine with the wrong profiles configured
-// is recognisable at a glance; all nine of them turn a one-line verdict into a
+// is recognizable at a glance; all nine of them turn a one-line verdict into a
 // wrapped paragraph, on exactly the machine this tool is built for, where there
 // is a profile per account.
 func nameAFew(names []string) string {
@@ -285,9 +285,11 @@ func offerLogin(
 			{value: "yes", label: "log in now", note: "opens the browser and waits"},
 			{value: "no", label: "cancel", note: "leaves the instructions below"},
 		}, "")
+	//nolint:nilerr // Declining is not a failure of its own, and neither is a
+	// selector that could not run: the session check has already written the reason
+	// and the command to fix it by hand. Returning the error here would replace a
+	// remediation the operator can act on with "the prompt failed".
 	if err != nil || answer != "yes" {
-		// Declining is not a failure of its own: the session check has already
-		// written the reason and the command to fix it by hand.
 		return false, nil
 	}
 

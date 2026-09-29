@@ -136,8 +136,9 @@ func TestACommandCanBeKeptOutOfTheMenu(t *testing.T) {
 
 // And the menu still offers what it should.
 func TestTheMenuOffersAuthInfraAndVersion(t *testing.T) {
-	var offered []string
-	for _, choice := range menuChoices(rootCmd) {
+	choices := menuChoices(rootCmd)
+	offered := make([]string, 0, len(choices))
+	for _, choice := range choices {
 		offered = append(offered, choice.Value)
 	}
 

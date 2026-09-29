@@ -544,6 +544,7 @@ func (c conditionalIdentity) CallerIdentity(_ context.Context, profile, _ string
 func TestTheReportAppearsEvenWhenEverythingPasses(t *testing.T) {
 	layout := layoutFor(t)
 	awsConfig(t, "sandbox")
+	machineWithTools(t)
 
 	previous := checkIdentity
 	checkIdentity = stubIdentity{usable: map[string]bool{"sandbox": true}}
@@ -573,6 +574,7 @@ func TestTheReportAppearsEvenWhenEverythingPasses(t *testing.T) {
 func TestAScriptedRunIsNotGivenTheReport(t *testing.T) {
 	layout := layoutFor(t)
 	awsConfig(t, "sandbox")
+	machineWithTools(t)
 
 	previous := checkIdentity
 	checkIdentity = stubIdentity{usable: map[string]bool{"sandbox": true}}
@@ -594,6 +596,7 @@ func TestAScriptedRunIsNotGivenTheReport(t *testing.T) {
 func TestTheNoAWSCallClaimIsOnlyMadeWhereItHolds(t *testing.T) {
 	layout := layoutFor(t)
 	awsConfig(t, "sandbox")
+	machineWithTools(t)
 
 	previous := checkIdentity
 	checkIdentity = stubIdentity{usable: map[string]bool{"sandbox": true}}
@@ -720,4 +723,36 @@ func TestNoColorWhereThereIsNoTerminal(t *testing.T) {
 	if strings.Contains(out.String(), "\x1b") {
 		t.Errorf("an escape sequence reached a report nobody is watching:\n%q", out.String())
 	}
+}
+
+// machineWithTools puts a terraform and an aws on PATH that answer the two
+// questions the preflight asks of them: a version each.
+//
+// Stubs rather than a skip. A test skipped for want of terraform is a test that
+// never runs in CI — which is the one place these two assertions matter, because
+// the machine there has neither binary and is exactly where "the report appears"
+// would silently stop being true.
+func machineWithTools(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	write := func(name, body string) {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o700); err != nil { //nolint:gosec // a test stub must be executable
+			t.Fatal(err)
+		}
+	}
+
+	// tfexec asks for `version -json` and parses the answer. The version is read
+	// off the constant the code enforces, so a bump to the minimum does not turn
+	// into a puzzling failure in a test that has nothing to do with versions.
+	write("terraform", `
+case "$*" in
+  *"-json"*) echo '{"terraform_version":"`+infra.MinTerraformVersion+`","platform":"linux_amd64","provider_selections":{},"terraform_outdated":false}' ;;
+  *) echo "Terraform v`+infra.MinTerraformVersion+`" ;;
+esac
+`)
+	write("aws", `echo "aws-cli/2.19.1 Python/3.12.6 Linux/6.8 exe/x86_64"`)
+
+	t.Setenv("PATH", dir)
 }

@@ -1488,9 +1488,11 @@ func credentialCheck(ctx context.Context, layout infra.Layout, dryRun bool) func
 	}
 	return func(environment string) error {
 		config, err := infra.LoadEnvConfig(layout, environment)
+		//nolint:nilerr // Not this check's failure to report. A configuration that
+		// cannot be read has its own error further down, written for the case where
+		// it is the only problem; surfacing it here would report a missing section as
+		// a credential failure.
 		if err != nil {
-			// Not this check's failure to report. The configuration error has its own
-			// message further down, written for the case where it is the only problem.
 			return nil
 		}
 		if config.Profile == "" {
