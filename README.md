@@ -157,6 +157,39 @@ lerian completion powershell > lerian.ps1
 
 ## Quick Start
 
+### The interactive session
+
+`lerian` with nothing after it opens a session: it offers the commands, runs the
+one you pick, and asks again when that command is done. `q` closes it.
+
+```
+  ██╗     ███████╗██████╗ ██╗ █████╗ ███╗   ██╗
+  ██║     ██╔════╝██╔══██╗██║██╔══██╗████╗  ██║
+  ██║     █████╗  ██████╔╝██║███████║██╔██╗ ██║
+  ██║     ██╔══╝  ██╔══██╗██║██╔══██║██║╚██╗██║
+  ███████╗███████╗██║  ██║██║██║  ██║██║ ╚████║
+  ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
+
+  lerian-cli · v1.7.0
+
+  What do you want to do?
+  ↑↓ move · enter choose · q cancel
+  ❯ auth     Authentication commands
+    infra    Deploy the AWS stacks of lerian-terraform-foundation
+    midaz    Midaz ledger management commands
+    version  Print version information
+```
+
+The session exists because these commands come in sequences — check the machine,
+then init; init fails, read what it says, run it again — and each of those used
+to cost a fresh start. A command that fails does not close it either. The exit
+code is the last command's, so `lerian && something` still means what it says.
+
+Only on a terminal. Piped, redirected or in CI, `lerian` prints its help exactly
+as before: a prompt there waits for an answer that is never coming. The banner
+follows the same rule, and `LERIAN_NO_BANNER=1` turns it off for anyone who has
+seen it enough times. `NO_COLOR` and `TERM=dumb` are honored throughout.
+
 ### First Steps
 
 1. **Login to Lerian Platform**

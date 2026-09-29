@@ -20,12 +20,12 @@ func fakeRoot(t *testing.T) *cobra.Command {
 	return root
 }
 
-// The menu must not run what it picked. A child's Execute walks up to the root
-// and starts from there, so running the choice from inside the root's own RunE
-// re-enters the menu and never returns. Recording the answer is what breaks that
-// cycle, and Execute dispatches it afterwards.
-func TestChooseCommandDoesNotRunTheChoice(t *testing.T) {
-	t.Cleanup(func() { chosenCommand = "" })
+// Asking must not run what it picked. A child's Execute walks up to the root and
+// starts from there, so running the choice from inside the root's own RunE
+// re-enters it and never returns. The session runs the answer afterwards, from
+// outside that RunE, which is what breaks the cycle.
+func TestAskingDoesNotRunTheChoice(t *testing.T) {
+	t.Cleanup(func() { wantsSession = false })
 
 	ran := false
 	root := &cobra.Command{Use: "lerian"}
@@ -38,10 +38,10 @@ func TestChooseCommandDoesNotRunTheChoice(t *testing.T) {
 
 	// No terminal here, so the selector refuses rather than reading a key. What
 	// is under test is that nothing was executed either way.
-	_ = chooseCommand(root)
+	_, _ = menuAsk(root)()
 
 	if ran {
-		t.Error("chooseCommand executed the chosen command, which re-enters the root and loops")
+		t.Error("asking executed the chosen command, which re-enters the root and loops")
 	}
 }
 

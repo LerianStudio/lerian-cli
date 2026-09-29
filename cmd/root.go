@@ -9,7 +9,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -18,7 +17,6 @@ import (
 	"github.com/lerian-studio/lerian-cli/cmd/auth"
 	"github.com/lerian-studio/lerian-cli/cmd/infra"
 	"github.com/lerian-studio/lerian-cli/cmd/midaz"
-	infrapkg "github.com/lerian-studio/lerian-cli/internal/infra"
 	"github.com/lerian-studio/lerian-cli/internal/infracli"
 	"github.com/lerian-studio/lerian-cli/internal/version"
 )
@@ -36,10 +34,10 @@ var (
 	// Supported formats: json, yaml, table (default).
 	output string
 
-	// chosenCommand carries what the menu picked from the root's RunE out to
-	// Execute, which is the only place that can dispatch it without re-entering
-	// the menu.
-	chosenCommand string
+	// wantsSession carries the decision to open the menu from the root's RunE out
+	// to Execute, which is the only place that can run commands without
+	// re-entering that RunE for each one.
+	wantsSession bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -53,7 +51,7 @@ Use this CLI to interact with your ledgers, manage deployments,
 and access your data.`,
 	Version: version.GetVersion(),
 
-	// `lerian` with nothing after it offers the commands rather than printing the
+	// `lerian` with nothing after it opens a session rather than printing the
 	// reference text and leaving. Only on a terminal: piped, redirected or in CI
 	// it prints what it always printed, because a prompt there waits for an
 	// answer that is never coming.
@@ -67,7 +65,12 @@ and access your data.`,
 		if !infracli.CanAsk(cmd.OutOrStdout()) {
 			return cmd.Help()
 		}
-		return chooseCommand(cmd)
+		// Recorded, not run: a child's Execute walks up to the root and starts
+		// there, so opening the session from inside the root's own RunE would
+		// re-enter this function for every command the session runs. Execute opens
+		// it once this call has returned.
+		wantsSession = true
+		return nil
 	},
 
 	// The usage block is suppressed but the error is not: a mistyped command
@@ -97,26 +100,6 @@ func menuChoices(root *cobra.Command) []infracli.Choice {
 	return choices
 }
 
-// chooseCommand asks which command to run and records the answer. It does not
-// run it: a child's Execute walks up to the root and starts there, so executing
-// the choice from inside the root's own RunE re-enters this menu, forever.
-// Execute dispatches the answer once this call has returned.
-//
-// The list is read off cobra rather than written out, so a command added later
-// appears without anyone having to remember to add it twice.
-func chooseCommand(root *cobra.Command) error {
-	chosen, err := infracli.Choose(root.OutOrStdout(), "What do you want to do?", "", menuChoices(root))
-	if errors.Is(err, infrapkg.ErrAborted) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-
-	chosenCommand = chosen
-	return nil
-}
-
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 // It returns no value but will exit with code 1 on error.
@@ -124,16 +107,15 @@ func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
-
-	// The menu records a choice rather than running it; dispatching here, after
-	// the first Execute has returned, is what keeps the root out of its own RunE.
-	if chosenCommand == "" {
+	if !wantsSession {
 		return
 	}
-	rootCmd.SetArgs([]string{chosenCommand})
-	chosenCommand = ""
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+
+	// Opened here, after the first Execute has returned, which is what keeps the
+	// root out of its own RunE while the session runs commands through it.
+	wantsSession = false
+	if code := interactive(rootCmd); code != 0 {
+		os.Exit(code)
 	}
 }
 
