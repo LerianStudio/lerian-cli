@@ -358,8 +358,8 @@ func writeRows(out io.Writer, theme style, results []checkResult, width int) int
 
 	failed := 0
 	for _, r := range results {
-		// Padded before it is coloured. Padding a string that already carries escape
-		// sequences counts the escapes as characters, and the coloured column lands
+		// Padded before it is colored. Padding a string that already carries escape
+		// sequences counts the escapes as characters, and the colored column lands
 		// one word to the right of the plain ones.
 		mark := theme.pass(fmt.Sprintf("%-*s", verdictWidth, "ok"))
 		if !r.ok {

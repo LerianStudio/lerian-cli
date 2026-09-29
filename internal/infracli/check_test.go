@@ -371,20 +371,20 @@ func TestTheVerdictIsTheFirstThingOnTheLine(t *testing.T) {
 }
 
 // The names line up under each other whether or not the verdict beside them is
-// coloured. Padding a string that carries escape sequences counts the escapes,
-// which is how a coloured column ends up one word to the right of the plain ones.
+// colored. Padding a string that carries escape sequences counts the escapes,
+// which is how a colored column ends up one word to the right of the plain ones.
 func TestTheNamesLineUpWhateverTheVerdictIs(t *testing.T) {
 	results := []checkResult{
 		{name: "terraform", summary: "ok", ok: true},
 		{name: "aws session", summary: "no", detail: "x", ok: false},
 	}
 
-	var plain, coloured bytes.Buffer
+	var plain, colored bytes.Buffer
 	_ = reportChecks(&plain, results, "")
-	_ = reportChecks(&colouredWriter{&coloured}, results, "")
+	_ = reportChecks(&coloredWriter{&colored}, results, "")
 
-	if columnOf(t, stripANSI(plain.String()), "terraform") != columnOf(t, stripANSI(coloured.String()), "terraform") {
-		t.Errorf("colour moved the name column:\nplain:\n%s\ncoloured:\n%s", plain.String(), stripANSI(coloured.String()))
+	if columnOf(t, stripANSI(plain.String()), "terraform") != columnOf(t, stripANSI(colored.String()), "terraform") {
+		t.Errorf("color moved the name column:\nplain:\n%s\ncolored:\n%s", plain.String(), stripANSI(colored.String()))
 	}
 }
 
@@ -399,10 +399,10 @@ func columnOf(t *testing.T, text, name string) int {
 	return -1
 }
 
-// colouredWriter is a writer the style believes is a terminal.
-type colouredWriter struct{ inner *bytes.Buffer }
+// coloredWriter is a writer the style believes is a terminal.
+type coloredWriter struct{ inner *bytes.Buffer }
 
-func (c *colouredWriter) Write(p []byte) (int, error) { return c.inner.Write(p) }
+func (c *coloredWriter) Write(p []byte) (int, error) { return c.inner.Write(p) }
 
 func stripANSI(text string) string {
 	var out strings.Builder
@@ -683,10 +683,10 @@ func TestTheTemplatesRowFailsWhenTheCheckoutCannotBeUsed(t *testing.T) {
 	}
 }
 
-// Colour on both verdicts, and the word under it either way. The colour is
+// Color on both verdicts, and the word under it either way. The color is
 // redundant by design — a reader without it, or reading a saved log, loses
 // nothing — so it can afford to be there.
-func TestBothVerdictsAreColouredAndStillReadable(t *testing.T) {
+func TestBothVerdictsAreColoredAndStillReadable(t *testing.T) {
 	results := []checkResult{
 		{name: "terraform", summary: "/usr/bin/terraform", ok: true},
 		{name: "templates", summary: "not found", detail: "clone it", ok: false},
@@ -697,23 +697,23 @@ func TestBothVerdictsAreColouredAndStillReadable(t *testing.T) {
 	writeRows(&painted, theme, results, len("terraform"))
 
 	if !strings.Contains(painted.String(), theme.pass("ok     ")) {
-		t.Errorf("the passing verdict is not coloured:\n%q", painted.String())
+		t.Errorf("the passing verdict is not colored:\n%q", painted.String())
 	}
 	if !strings.Contains(painted.String(), theme.alert("missing")) {
-		t.Errorf("the failing verdict is not coloured:\n%q", painted.String())
+		t.Errorf("the failing verdict is not colored:\n%q", painted.String())
 	}
 
 	plain := stripANSI(painted.String())
 	for _, word := range []string{"ok", "missing"} {
 		if !strings.Contains(plain, word) {
-			t.Errorf("%q survives only as colour:\n%s", word, plain)
+			t.Errorf("%q survives only as color:\n%s", word, plain)
 		}
 	}
 }
 
-// And with styling off there is no colour at all, because the same report is
+// And with styling off there is no color at all, because the same report is
 // routinely redirected into a file or a CI log.
-func TestNoColourWhereThereIsNoTerminal(t *testing.T) {
+func TestNoColorWhereThereIsNoTerminal(t *testing.T) {
 	var out bytes.Buffer
 	_ = reportChecks(&out, []checkResult{{name: "terraform", summary: "/usr/bin/terraform", ok: true}}, "")
 

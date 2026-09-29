@@ -59,10 +59,10 @@ func (s style) alert(text string) string {
 
 // pass is green, and it marks a verdict that is already spelled out beside it.
 //
-// The rule in this file is that colour never carries meaning on its own, and this
-// does not break it: the word "ok" is right there, so a reader without colour — a
-// colour-blind operator, a saved log, a redirected report — loses nothing. The
-// colour only makes a clean check scannable at a glance, which is the whole job
+// The rule in this file is that color never carries meaning on its own, and this
+// does not break it: the word "ok" is right there, so a reader without color — a
+// color-blind operator, a saved log, a redirected report — loses nothing. The
+// color only makes a clean check scannable at a glance, which is the whole job
 // of a block that is printed on every run.
 func (s style) pass(text string) string {
 	if !s.enabled {
