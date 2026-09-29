@@ -337,7 +337,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	// So a cleanup running alongside this one can tell a finished run's logs from
 	// the log this run is still writing.
-	claimRunDir(runDir)
+	if err := claimRunDir(runDir); err != nil {
+		return err
+	}
 	// Saved plans can contain values read from state; the logs are kept so a
 	// failure can be read after the run.
 	defer removePlans(runDir)

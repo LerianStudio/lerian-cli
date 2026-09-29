@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -180,9 +181,16 @@ func providerCaches(root string) []string {
 const runOwnerFile = ".owner-pid"
 
 // claimRunDir records this process as the owner of a run directory.
-func claimRunDir(dir string) {
+//
+// Its failure is the run's failure. A directory with no marker reads as finished,
+// so a run that could not claim its own is a run whose plans and log a concurrent
+// cleanup is free to delete while it is still writing them.
+func claimRunDir(dir string) error {
 	pid := strconv.Itoa(os.Getpid())
-	_ = os.WriteFile(filepath.Join(dir, runOwnerFile), []byte(pid), 0o600)
+	if err := os.WriteFile(filepath.Join(dir, runOwnerFile), []byte(pid), 0o600); err != nil {
+		return fmt.Errorf("cannot claim the run directory: %w", err)
+	}
+	return nil
 }
 
 func runLogDirs() []string {
@@ -203,14 +211,19 @@ func runLogDirs() []string {
 
 // runIsOver reports whether the process that claimed this directory is gone.
 //
-// An unclaimed directory counts as finished: it was left by a version that did
-// not write the file, and those are the oldest leftovers of all. Anything else
-// uncertain counts as running, because the cost of being wrong is asymmetric —
+// A directory with no marker at all counts as finished: it was left by a version
+// that did not write one, and those are the oldest leftovers there are. Anything
+// else uncertain counts as running, because the cost of being wrong is asymmetric —
 // keeping a directory wastes disk, deleting one takes a running command's log.
 func runIsOver(dir string) bool {
+	//nolint:gosec // G304: the path is this package's own constant joined to a
+	// directory the glob above found in os.TempDir(). Nothing outside chooses it.
 	recorded, err := os.ReadFile(filepath.Join(dir, runOwnerFile))
 	if err != nil {
-		return true
+		// Missing is the only error that means unclaimed. On a shared /tmp another
+		// user's run directory is mode 0700, and reading through it fails with a
+		// permission error — which says nothing about whether that run is over.
+		return errors.Is(err, fs.ErrNotExist)
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(recorded)))
 	if err != nil || pid <= 0 {

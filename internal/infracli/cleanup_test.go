@@ -293,3 +293,54 @@ func TestARunDirectoryInUseIsNotOffered(t *testing.T) {
 		t.Errorf("a finished run's directory was not offered:\n%v", offered)
 	}
 }
+
+// A marker that exists but cannot be read is the uncertain case the rule in
+// runIsOver already covers in words: it counts as running. On a shared /tmp the
+// directory belongs to another user and is mode 0700, so the read fails with a
+// permission error — and treating that as finished both offers somebody else's
+// live run for removal and breaks the removal loop on the RemoveAll that follows,
+// leaving every group after it unprocessed.
+func TestAnUnreadableMarkerCountsAsRunning(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads regardless of mode, so there is no unreadable file to make")
+	}
+	temp := t.TempDir()
+	t.Setenv("TMPDIR", temp)
+
+	locked, err := os.MkdirTemp("", "lerian-infra-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(locked, runOwnerFile)
+	if err := os.WriteFile(marker, []byte("4194304"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(marker, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(marker, 0o600) }()
+
+	for _, dir := range runLogDirs() {
+		if dir == locked {
+			t.Errorf("a directory whose marker cannot be read was offered for removal: %s", dir)
+		}
+	}
+}
+
+// A run whose marker could not be written is a run no cleanup can recognise as
+// running, so it would offer the directory this run is still logging into. The
+// write is part of creating the directory, and it fails the same way.
+func TestARunThatCannotClaimItsDirectoryFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes regardless of mode, so there is no unwritable directory to make")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(dir, 0o700) }()
+
+	if err := claimRunDir(dir); err == nil {
+		t.Error("claimRunDir reported success for a directory it could not write to")
+	}
+}
