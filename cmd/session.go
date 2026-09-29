@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -56,8 +57,65 @@ func session(ask func() (string, error), dispatch func(string) error) int {
 // appears without anyone having to remember to add it twice.
 func menuAsk(root *cobra.Command) func() (string, error) {
 	return func() (string, error) {
-		return infracli.Choose(root.OutOrStdout(), "What do you want to do?", "", menuChoices(root))
+		chosen, err := infracli.Choose(root.OutOrStdout(), "What do you want to do?", "", menuChoices(root))
+		if err != nil {
+			return "", err
+		}
+
+		// A command with no handler of its own does nothing when dispatched by
+		// name: cobra prints its help. auth is that — its work is in login and
+		// logout — so the menu goes one level down rather than answering a choice
+		// with a reference page.
+		if !needsChild(root, chosen) {
+			return chosen, nil
+		}
+
+		child, err := infracli.Choose(root.OutOrStdout(),
+			"Which "+chosen+" command?", "", childChoices(root, chosen))
+		if err != nil {
+			return "", err
+		}
+		return chosen + " " + child, nil
 	}
+}
+
+// needsChild reports whether name is a command that only groups others.
+func needsChild(root *cobra.Command, name string) bool {
+	command := findChild(root, name)
+	return command != nil && !command.Runnable() && command.HasAvailableSubCommands()
+}
+
+// childChoices is the menu for a command's subcommands.
+func childChoices(root *cobra.Command, name string) []infracli.Choice {
+	parent := findChild(root, name)
+	if parent == nil {
+		return nil
+	}
+
+	choices := make([]infracli.Choice, 0, len(parent.Commands()))
+	for _, child := range parent.Commands() {
+		if child.Hidden || !child.IsAvailableCommand() {
+			continue
+		}
+		if child.Name() == "help" || child.Name() == "completion" {
+			continue
+		}
+		choices = append(choices, infracli.Choice{
+			Value: child.Name(),
+			Label: child.Name(),
+			Note:  child.Short,
+		})
+	}
+	return choices
+}
+
+func findChild(root *cobra.Command, name string) *cobra.Command {
+	for _, child := range root.Commands() {
+		if child.Name() == name {
+			return child
+		}
+	}
+	return nil
 }
 
 // interactive is the session wired to the real menu and the real commands.
@@ -68,8 +126,9 @@ func interactive(root *cobra.Command) int {
 		menuAsk(root),
 		func(chosen string) error {
 			// A fresh argument list each time: cobra keeps the last one, so without
-			// this the second command inherits the first one's flags.
-			root.SetArgs([]string{chosen})
+			// this the second command inherits the first one's flags. Split, because
+			// a choice may be a path — "auth login" — rather than a single name.
+			root.SetArgs(strings.Fields(chosen))
 			return root.Execute()
 		},
 	)

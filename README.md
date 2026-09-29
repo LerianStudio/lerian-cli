@@ -179,6 +179,15 @@ one you pick, and asks again when that command is done. `q` closes it.
     version  Print version information
 ```
 
+Choosing a command that only groups others — `auth` — offers its subcommands
+rather than printing a help page:
+
+```
+  Which auth command?
+  ❯ login   Configure authentication credentials
+    logout  Remove authentication credentials
+```
+
 The menu is a shorter list than the command set. `midaz` is reached with ledger
 ids, regions and sizes a menu has no way to ask for, so picking it from a list
 would land you on a help page rather than on anything you chose to do — it stays

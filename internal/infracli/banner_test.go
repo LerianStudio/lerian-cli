@@ -204,3 +204,33 @@ func trimTrailing(text string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// The narrow form has a width of its own. "◤ lerian-cli · development build" is
+// 34 columns, so on a 20-column terminal the line that exists to avoid wrapping
+// wraps. It sheds what it can — the release first, then the marker — and prints
+// nothing at all where even the name will not fit, which is better than a
+// fragment of one.
+func TestTheNarrowBannerFitsANarrowTerminal(t *testing.T) {
+	for _, width := range []int{10, 16, 20, 30, 40} {
+		painted := renderBanner("development build", width)
+
+		for _, line := range strings.Split(painted, "\n") {
+			if displayWidth(line) > width {
+				t.Errorf("at %d columns a %d-column line was drawn: %q", width, displayWidth(line), line)
+			}
+		}
+	}
+}
+
+// What it sheds, it sheds in order: the name is the last thing to go.
+func TestTheNameOutlivesTheRestOfTheNarrowBanner(t *testing.T) {
+	roomy := renderBanner("v1.7.0", 40)
+	if !strings.Contains(roomy, "v1.7.0") || !strings.Contains(roomy, "lerian-cli") {
+		t.Errorf("40 columns is enough for both:\n%q", roomy)
+	}
+
+	tight := renderBanner("development build", 20)
+	if !strings.Contains(tight, "lerian-cli") {
+		t.Errorf("the name was dropped before the release:\n%q", tight)
+	}
+}

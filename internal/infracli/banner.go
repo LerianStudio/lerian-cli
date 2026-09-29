@@ -74,7 +74,7 @@ func renderBanner(release string, width int) string {
 	// The wordmark says the name, so the line under it only has the release left
 	// to say. The narrow form has no wordmark, so it says both.
 	if width > 0 && width < wordmarkWidth() {
-		return "\n  ◤ lerian-cli · " + describeRelease(release) + "\n\n"
+		return "\n" + narrowBanner(release, width) + "\n"
 	}
 	subtitle := ruleWithRelease(describeRelease(release))
 
@@ -101,6 +101,35 @@ func ruleWithRelease(release string) string {
 		return "  " + release
 	}
 	return "  " + strings.Repeat("─", rule) + "  " + release
+}
+
+// narrowBanner is the one-line form, cut to the width it is given.
+//
+// It exists to avoid a wrapped wordmark, so a wrapped version of itself is the
+// one thing it must not be: "◤ lerian-cli · development build" is 34 columns, and
+// a 20-column terminal would fold it in half.
+//
+// It sheds in order — the release first, then the marker — because the name is
+// the part worth keeping. Below even that, nothing: a fragment of a name is worse
+// than a blank line where a banner would have been.
+func narrowBanner(release string, width int) string {
+	const marker = "  ◤ "
+
+	full := marker + "lerian-cli · " + describeRelease(release)
+	if displayWidth(full) <= width {
+		return full
+	}
+
+	withMarker := marker + "lerian-cli"
+	if displayWidth(withMarker) <= width {
+		return withMarker
+	}
+
+	bare := "  lerian-cli"
+	if displayWidth(bare) <= width {
+		return bare
+	}
+	return ""
 }
 
 // describeRelease names the build. "dev" is what the version variable holds until

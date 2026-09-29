@@ -373,18 +373,47 @@ func TestTheVerdictIsTheFirstThingOnTheLine(t *testing.T) {
 // The names line up under each other whether or not the verdict beside them is
 // colored. Padding a string that carries escape sequences counts the escapes,
 // which is how a colored column ends up one word to the right of the plain ones.
+//
+// Two things had to be got right here. writeRows is called directly with each
+// style, because newStyle enables color only for an *os.File that is a terminal —
+// a wrapper around a buffer gets none, both reports come out plain, and the
+// comparison is between a string and itself. And the columns are compared between
+// the rows of one report, not between the two reports: "ok" and "missing" are
+// different lengths, so dropping the padding moves both reports identically and a
+// report-to-report comparison notices nothing. Both mistakes were in the first
+// version of this test, and it passed with the padding deleted.
 func TestTheNamesLineUpWhateverTheVerdictIs(t *testing.T) {
 	results := []checkResult{
 		{name: "terraform", summary: "ok", ok: true},
 		{name: "aws session", summary: "no", detail: "x", ok: false},
 	}
+	width := len("aws session")
 
-	var plain, colored bytes.Buffer
-	_ = reportChecks(&plain, results, "")
-	_ = reportChecks(&coloredWriter{&colored}, results, "")
+	for _, test := range []struct {
+		name  string
+		theme style
+	}{
+		{"plain", style{}},
+		{"colored", style{enabled: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var out bytes.Buffer
+			writeRows(&out, test.theme, results, width)
 
-	if columnOf(t, stripANSI(plain.String()), "terraform") != columnOf(t, stripANSI(colored.String()), "terraform") {
-		t.Errorf("color moved the name column:\nplain:\n%s\ncolored:\n%s", plain.String(), stripANSI(colored.String()))
+			if test.theme.enabled && !strings.Contains(out.String(), "\x1b") {
+				t.Fatal("nothing was colored, so this run proves nothing")
+			}
+
+			// The passing row and the failing row must put their name in the same
+			// column, which is what "ok" and "missing" being different lengths
+			// threatens.
+			first := columnOf(t, stripANSI(out.String()), "terraform")
+			second := columnOf(t, stripANSI(out.String()), "aws session")
+			if first != second {
+				t.Errorf("terraform sits at column %d and aws session at %d:\n%s",
+					first, second, stripANSI(out.String()))
+			}
+		})
 	}
 }
 
@@ -398,11 +427,6 @@ func columnOf(t *testing.T, text, name string) int {
 	t.Fatalf("%q is not in:\n%s", name, text)
 	return -1
 }
-
-// coloredWriter is a writer the style believes is a terminal.
-type coloredWriter struct{ inner *bytes.Buffer }
-
-func (c *coloredWriter) Write(p []byte) (int, error) { return c.inner.Write(p) }
 
 func stripANSI(text string) string {
 	var out strings.Builder

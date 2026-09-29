@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	infrapkg "github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
@@ -126,5 +128,64 @@ func TestABrokenMenuEndsTheSession(t *testing.T) {
 	}
 	if code == 0 {
 		t.Error("a broken menu reported success")
+	}
+}
+
+// auth has no handler of its own — its work is in login and logout — so
+// dispatching the bare name lands the operator on a help page instead of on
+// something they chose to do. That is the same defect that kept midaz out of the
+// menu; the difference is that auth is worth reaching, so the menu goes one level
+// down instead.
+func TestAParentCommandOffersItsChildren(t *testing.T) {
+	root := &cobra.Command{Use: "lerian"}
+	auth := &cobra.Command{Use: "auth", Short: "Authentication commands"}
+	auth.AddCommand(&cobra.Command{Use: "login", Short: "Configure credentials", Run: func(*cobra.Command, []string) {}})
+	auth.AddCommand(&cobra.Command{Use: "logout", Short: "Remove credentials", Run: func(*cobra.Command, []string) {}})
+	root.AddCommand(auth)
+	root.AddCommand(&cobra.Command{Use: "version", Short: "Print version", Run: func(*cobra.Command, []string) {}})
+
+	var offered []string
+	for _, choice := range childChoices(root, "auth") {
+		offered = append(offered, choice.Value)
+	}
+
+	if len(offered) != 2 || offered[0] != "login" || offered[1] != "logout" {
+		t.Errorf("offered %v, want the two subcommands", offered)
+	}
+}
+
+// A command that does its own work is dispatched, not drilled into.
+func TestARunnableCommandIsNotDrilledInto(t *testing.T) {
+	root := &cobra.Command{Use: "lerian"}
+	root.AddCommand(&cobra.Command{Use: "version", Short: "Print version", Run: func(*cobra.Command, []string) {}})
+
+	if needsChild(root, "version") {
+		t.Error("a runnable command was treated as a menu")
+	}
+	if !needsChild(root, "missing") == false {
+		t.Error("an unknown name was treated as a parent")
+	}
+}
+
+// And the path that comes back is what cobra is handed, so the child actually
+// runs rather than the parent printing help again.
+func TestTheChosenChildIsDispatchedAsAPath(t *testing.T) {
+	var ran []string
+
+	code := session(
+		func() (string, error) {
+			if len(ran) > 0 {
+				return "", infrapkg.ErrAborted
+			}
+			return "auth login", nil
+		},
+		func(name string) error { ran = append(ran, name); return nil },
+	)
+
+	if code != 0 {
+		t.Errorf("exit code %d", code)
+	}
+	if len(ran) != 1 || ran[0] != "auth login" {
+		t.Errorf("dispatched %v, want the full path", ran)
 	}
 }
