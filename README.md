@@ -273,6 +273,20 @@ checks the machine before it asks anything:
   ok       terraform    /opt/homebrew/bin/terraform
   ok       aws          /opt/homebrew/bin/aws
   ok       templates    ~/lerian/lerian-terraform-foundation @ v1.6.0
+  ok       aws session  8 of 9 profiles resolve: dev, stg, prd and 5 more
+
+  4 checks, all ok.
+```
+
+The block appears whether or not anything is wrong: which checkout and which
+terraform a run is about to use is worth a line each, and showing them only on
+failure means never seeing them on the run that matters. A scripted invocation —
+one that named its `--env` and asked nothing — keeps the output it always had.
+
+When something is missing, the remediation follows the table, and a missing
+session is offered a way out:
+
+```
   missing  aws session  not logged in
 
   Log in to AWS now?

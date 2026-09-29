@@ -75,7 +75,9 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		checkTemplates(ctx, opts.repo, os.Getenv("LERIAN_TF_REPO"), opts.templatesDir),
 	}
 
-	return reportChecks(stdout, results)
+	// This command reaches no AWS API at all, which is what makes it usable as a
+	// CI gate — before any credential exists.
+	return reportChecks(stdout, results, " No AWS call was made.")
 }
 
 // checkAWSCLI defers to the same verification a real run makes, which covers the
@@ -191,8 +193,23 @@ func checkAWSSession(ctx context.Context, identity infra.Identity) (checkResult,
 	}
 
 	result.summary = fmt.Sprintf("%d of %d profiles resolve: %s",
-		len(usable), len(resolved), strings.Join(usable, ", "))
+		len(usable), len(resolved), nameAFew(usable))
 	return result, resolved
+}
+
+// nameAFew lists the first few names and counts the rest.
+//
+// The row answers one question — is there a session at all — and the count is
+// the answer. The names are there so a machine with the wrong profiles configured
+// is recognisable at a glance; all nine of them turn a one-line verdict into a
+// wrapped paragraph, on exactly the machine this tool is built for, where there
+// is a profile per account.
+func nameAFew(names []string) string {
+	const most = 3
+	if len(names) <= most {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:most], ", "), len(names)-most)
 }
 
 // ssoLogin is a variable so the offer can be exercised without an AWS account
@@ -293,7 +310,11 @@ func binaryPath(name string) string {
 	return path
 }
 
-func reportChecks(out io.Writer, results []checkResult) error {
+// note is the line printed after a clean report. It belongs to the caller
+// because only the caller knows what it just did: `lerian infra check` can say it
+// made no AWS call, and the preflight — which asks AWS who every profile is —
+// cannot.
+func reportChecks(out io.Writer, results []checkResult, note string) error {
 	theme := newStyle(out)
 	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Environment check"))
 
@@ -336,7 +357,7 @@ func reportChecks(out io.Writer, results []checkResult) error {
 	}
 
 	if failed == 0 {
-		fmt.Fprintf(out, "\n  %d checks, all ok. No AWS call was made.\n", len(results))
+		fmt.Fprintf(out, "\n  %d checks, all ok.%s\n", len(results), note)
 		return nil
 	}
 	fmt.Fprintf(out, "\n  %d of %d checks failed.\n", failed, len(results))
@@ -423,9 +444,22 @@ func preflight(
 		results = append(results, session)
 	}
 
+	// Printed whether or not anything is wrong, when there is somebody who asked
+	// for it by picking infra from the menu. Which checkout and which terraform a
+	// run is about to use is worth a line each, and showing them only on failure
+	// means never seeing them on the run that matters.
+	//
+	// A scripted invocation — one that named its --env and asked nothing — keeps
+	// the output it always had: a pipeline does not want a table on every call.
+	watching := ask != nil && ask.interactive
 	for _, r := range results {
 		if !r.ok {
-			return nil, reportChecks(out, results)
+			return nil, reportChecks(out, results, "")
+		}
+	}
+	if watching {
+		if err := reportChecks(out, results, ""); err != nil {
+			return nil, err
 		}
 	}
 	return terraform, nil
