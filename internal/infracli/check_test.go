@@ -738,7 +738,7 @@ func machineWithTools(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) {
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o700); err != nil { //nolint:gosec // a test stub must be executable
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
