@@ -344,3 +344,67 @@ func TestARunThatCannotClaimItsDirectoryFails(t *testing.T) {
 		t.Error("claimRunDir reported success for a directory it could not write to")
 	}
 }
+
+// The directory is only given its published name once it carries its marker.
+//
+// MkdirTemp with the "lerian-infra-" prefix creates a directory the cleanup glob
+// matches, and the marker is written a syscall later. A cleanup running in that
+// window sees a matching directory with no marker, reads it as a leftover from an
+// older version, and deletes the plans and log of a run that is just starting.
+//
+// The window is short and the consequence is destructive, which is the shape of
+// bug that gets dismissed as unlikely until it eats somebody's log. Tested by
+// looking inside the window rather than by racing it: the hook runs at the moment
+// the directory exists but the marker does not, and asserts that nothing the
+// cleanup can see has appeared.
+func TestARunDirectoryIsNotVisibleBeforeItIsClaimed(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("TMPDIR", temp)
+
+	var visibleTooEarly []string
+	previous := runDirCreated
+	runDirCreated = func(string) { visibleTooEarly = runLogDirs() }
+	t.Cleanup(func() { runDirCreated = previous })
+
+	dir, err := newRunDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(visibleTooEarly) != 0 {
+		t.Errorf("the cleanup could see %v before it carried a marker", visibleTooEarly)
+	}
+	// And once published it is a run directory in every respect: matching the
+	// glob, carrying its marker, and recognized as this process's own.
+	if runIsOver(dir) {
+		t.Error("the directory of this very process reads as finished")
+	}
+	if !strings.HasPrefix(filepath.Base(dir), "lerian-infra-") {
+		t.Errorf("the published name does not match the glob: %s", dir)
+	}
+}
+
+// A marker that cannot be read as a pid is not evidence that the run ended. The
+// rule written above runIsOver says uncertainty counts as running, and an
+// unparseable marker is uncertainty.
+func TestAnUnreadablePidCountsAsRunning(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("TMPDIR", temp)
+
+	dir, err := os.MkdirTemp("", "lerian-infra-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, runOwnerFile), []byte("not a pid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if runIsOver(dir) {
+		t.Error("a marker that is not a pid was read as proof the run finished")
+	}
+	for _, offered := range runLogDirs() {
+		if offered == dir {
+			t.Errorf("it was offered for removal anyway: %s", offered)
+		}
+	}
+}

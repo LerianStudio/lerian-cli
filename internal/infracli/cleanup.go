@@ -180,6 +180,48 @@ func providerCaches(root string) []string {
 // offer for removal.
 const runOwnerFile = ".owner-pid"
 
+// runDirCreated is called with the staging directory the moment it exists, before
+// it carries a marker or its published name. It is a variable so a test can look
+// inside that window instead of trying to race it.
+var runDirCreated = func(string) {}
+
+// newRunDir creates the directory a run writes its plans and log into, and does
+// not give it a name the cleanup looks for until it carries its marker.
+//
+// Creating it as lerian-infra-* and writing the marker afterwards leaves a window
+// — short, but a window — in which a concurrent cleanup sees a matching directory
+// with no marker, reads it as a leftover from a version that did not write one,
+// and removes the plans and log of a run that is just starting. Staged under a
+// name the glob does not match and renamed once claimed, the directory is never
+// visible to the cleanup in an unclaimed state.
+//
+// The leading dot is what keeps it out: the glob is lerian-infra-*, anchored at
+// the start of the name.
+func newRunDir() (string, error) {
+	staging, err := os.MkdirTemp("", ".lerian-infra-")
+	if err != nil {
+		return "", fmt.Errorf("cannot create the run directory: %w", err)
+	}
+	runDirCreated(staging)
+
+	//nolint:gosec // G302 is written for files; a directory without the execute bit
+	// cannot be traversed, so 0700 is already the tightest usable mode here.
+	if err := os.Chmod(staging, 0o700); err != nil {
+		return "", fmt.Errorf("cannot restrict the run directory: %w", err)
+	}
+	if err := claimRunDir(staging); err != nil {
+		return "", err
+	}
+
+	// The published name is the staged one without the dot, so it inherits the
+	// uniqueness MkdirTemp already established.
+	published := filepath.Join(filepath.Dir(staging), strings.TrimPrefix(filepath.Base(staging), "."))
+	if err := os.Rename(staging, published); err != nil {
+		return "", fmt.Errorf("cannot publish the run directory: %w", err)
+	}
+	return published, nil
+}
+
 // claimRunDir records this process as the owner of a run directory.
 //
 // Its failure is the run's failure. A directory with no marker reads as finished,
@@ -234,7 +276,9 @@ func runIsOver(dir string) bool {
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(recorded)))
 	if err != nil || pid <= 0 {
-		return true
+		// A marker that cannot be read as a pid is not evidence that the run ended.
+		// The rule above holds here too: uncertainty counts as running.
+		return false
 	}
 	if pid == os.Getpid() {
 		return false

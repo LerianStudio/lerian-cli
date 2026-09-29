@@ -326,18 +326,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	runDir, err := os.MkdirTemp("", "lerian-infra-")
+	// Created, restricted and claimed before it has a name the cleanup looks for,
+	// so a cleanup running alongside this one can never see it unclaimed.
+	runDir, err := newRunDir()
 	if err != nil {
-		return fmt.Errorf("cannot create the run directory: %w", err)
-	}
-	//nolint:gosec // G302 is written for files; a directory without the execute bit
-	// cannot be traversed, so 0700 is already the tightest usable mode here.
-	if err := os.Chmod(runDir, 0o700); err != nil {
-		return fmt.Errorf("cannot restrict the run directory: %w", err)
-	}
-	// So a cleanup running alongside this one can tell a finished run's logs from
-	// the log this run is still writing.
-	if err := claimRunDir(runDir); err != nil {
 		return err
 	}
 	// Saved plans can contain values read from state; the logs are kept so a
