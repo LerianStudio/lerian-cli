@@ -216,8 +216,15 @@ func runLogDirs() []string {
 // else uncertain counts as running, because the cost of being wrong is asymmetric —
 // keeping a directory wastes disk, deleting one takes a running command's log.
 func runIsOver(dir string) bool {
-	//nolint:gosec // G304: the path is this package's own constant joined to a
-	// directory the glob above found in os.TempDir(). Nothing outside chooses it.
+	// #nosec G304 -- the path is this package's own constant joined to a directory
+	// the glob above found in os.TempDir(). Nothing outside this process chooses
+	// it, and the content is parsed as an integer and discarded — nothing read here
+	// is executed, echoed or returned.
+	//
+	// Two annotations because two tools are looking: golangci-lint reads the
+	// nolint directive, and the gosec that feeds code scanning reads only #nosec.
+	// The nolint alone silenced the lint job and left a fresh alert on every push.
+	//nolint:gosec // G304: see the #nosec above.
 	recorded, err := os.ReadFile(filepath.Join(dir, runOwnerFile))
 	if err != nil {
 		// Missing is the only error that means unclaimed. On a shared /tmp another
