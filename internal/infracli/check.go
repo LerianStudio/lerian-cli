@@ -139,6 +139,62 @@ func checkTemplates(ctx context.Context, repo, envRepo, templatesDir string) che
 	return result
 }
 
+// checkAWSSession asks whether the operator is logged in at all: it resolves
+// every profile in ~/.aws and passes when at least one of them answers.
+//
+// Which profile is the right one is a later question — the environment decides
+// that, and the account guard checks it against environments.conf. This one only
+// separates "logged in somewhere" from "logged in nowhere", because the second is
+// the state in which no stage can run and every question asked first is wasted.
+//
+// The only check here that makes an AWS call, which is why it is not part of
+// `lerian infra check` unless asked for: that command is a CI gate, and a gate
+// that needs credentials cannot run before they exist.
+func checkAWSSession(ctx context.Context, identity infra.Identity) checkResult {
+	result := checkResult{name: "aws session", ok: true}
+
+	profiles, err := infra.ListAWSProfiles()
+	if err != nil {
+		result.ok = false
+		result.summary = "cannot read ~/.aws"
+		result.detail = err.Error()
+		return result
+	}
+	if len(profiles) == 0 {
+		result.ok = false
+		result.summary = "no profiles"
+		result.detail = "There is no profile in ~/.aws to log in with. Create one:\n\n" +
+			"  aws configure sso\n\n" +
+			"Then run this command again."
+		return result
+	}
+
+	resolved := infra.ResolveProfiles(ctx, identity, profiles, "")
+
+	var usable []string
+	for _, entry := range resolved {
+		if entry.Usable() {
+			usable = append(usable, entry.Profile.Name)
+		}
+	}
+	if len(usable) == 0 {
+		hint := infra.LoginHint(resolved)
+		if hint == "" {
+			hint = "Check the credentials for these profiles."
+		}
+		result.ok = false
+		result.summary = "not logged in"
+		result.detail = fmt.Sprintf("None of the %d profile(s) in ~/.aws resolve right now.\n"+
+			"An expired SSO session is the usual cause. This revives them:\n\n  %s\n\n"+
+			"Then run this command again.", len(resolved), hint)
+		return result
+	}
+
+	result.summary = fmt.Sprintf("%d of %d profiles resolve: %s",
+		len(usable), len(resolved), strings.Join(usable, ", "))
+	return result
+}
+
 // binaryPath is for the report only. The verification is the infra function next
 // to it; this just says where the binary it accepted lives, because "ok" without
 // a path hides a second copy earlier in PATH.
@@ -212,13 +268,51 @@ func failedNames(results []checkResult) []string {
 // having resolved it.
 //
 // On success it prints nothing: the run has its own preflight block, and a
-// second table above it would say the same thing twice.
-func requireEnvironment(ctx context.Context, out io.Writer, dryRun bool) (*infra.CLI, error) {
+// preflight is everything that has to be true before the first question, run in
+// one pass and reported together.
+//
+// One pass rather than one at a time. A run verifies each dependency immediately
+// before the call that needs it, which is right for a scripted invocation and
+// wrong for a person sitting at a menu: they fix terraform, run again, and only
+// then hear that the AWS CLI is v1. Collapsing those rounds is the whole point of
+// this block, and of `lerian infra check`.
+//
+// Before the questions rather than after them, for the same reason. The three
+// questions take real thought — which environment, which stacks, plan or apply —
+// and a machine that cannot run anything makes all three answers worthless.
+//
+// identity is a variable so the session check can be exercised without an AWS
+// account behind it.
+var checkIdentity infra.Identity = infra.CLIIdentity{}
+
+func preflight(
+	ctx context.Context,
+	out io.Writer,
+	layout infra.Layout,
+	source checkoutSource,
+	dryRun bool,
+) (*infra.CLI, error) {
 	terraform, tfErr := infra.NewCLI(ctx)
 
 	results := []checkResult{terraformResult(tfErr)}
+
+	awsCLI := checkResult{name: "aws", ok: true}
 	if !dryRun {
-		results = append(results, checkAWSCLI(ctx))
+		awsCLI = checkAWSCLI(ctx)
+		results = append(results, awsCLI)
+	}
+
+	// No git. It is only used by init, to clone, and a run that already has its
+	// checkout never calls it — gating on it would demand a tool this command does
+	// not need. `lerian infra check` reports it, because that command answers the
+	// wider question of whether the machine can do everything.
+	results = append(results, templatesResult(ctx, layout, source))
+
+	// Only worth asking when there is an AWS CLI to ask with: without one the
+	// session check fails for the reason already on the line above it, and two
+	// rows for one problem read as two problems.
+	if !dryRun && awsCLI.ok {
+		results = append(results, checkAWSSession(ctx, checkIdentity))
 	}
 
 	for _, r := range results {
@@ -227,4 +321,12 @@ func requireEnvironment(ctx context.Context, out io.Writer, dryRun bool) (*infra
 		}
 	}
 	return terraform, nil
+}
+
+// templatesResult reports the checkout a run has already resolved — which repo,
+// from which source, at which version. It takes the resolved layout rather than
+// resolving its own, so the row cannot name a checkout other than the one about
+// to be used.
+func templatesResult(ctx context.Context, layout infra.Layout, source checkoutSource) checkResult {
+	return checkResult{name: "templates", summary: templatesLine(ctx, layout, source), ok: true}
 }

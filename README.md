@@ -265,8 +265,40 @@ this group takes flags rather than subcommands — it kept the command line of t
 `lerian-infra` binary it replaces, so anything written against that binary keeps
 working with `lerian infra` in front of it.
 
+Picking `infra` from the session — or running `lerian infra` with no `--env` —
+checks the machine before it asks anything:
+
+```
+  ==> Environment check
+  terraform    /opt/homebrew/bin/terraform                    ok
+  aws          /opt/homebrew/bin/aws                          ok
+  templates    ~/lerian/lerian-terraform-foundation @ v1.6.0  ok
+  aws session  not logged in                                  missing
+
+  aws session
+    None of the 9 profile(s) in ~/.aws resolve right now.
+    An expired SSO session is the usual cause. This revives them:
+
+      aws sso login --sso-session lerian-sso
+
+    Then run this command again.
+
+  1 of 4 checks failed.
+```
+
+It runs before the questions, not after them: the three questions — which
+environment, which stacks, plan or apply — take real thought, and a machine that
+cannot run anything makes all three answers worthless. And the credential is
+checked the moment the environment names its profile, rather than when the first
+stage tries to start, for the same reason: by then the target and the action have
+been answered too.
+
+`git` is not part of it. Only `init --clone` uses git, and a run that already has
+its checkout never calls it.
+
 ```bash
 # Verify this machine: dependencies, checkout, and what it would use
+# (local only — makes no AWS call, so it works as a CI gate)
 lerian infra check
 
 # Write the configuration a fresh checkout needs

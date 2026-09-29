@@ -3,9 +3,14 @@ package infracli
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
 // The reason this command exists: a run verifies each dependency immediately
@@ -161,14 +166,15 @@ func TestCheckRejectsAPositionalArgument(t *testing.T) {
 // The gate exists to collapse a round trip: returning at the first gap sends the
 // operator to install terraform, run again, and only then learn the AWS CLI is
 // missing too.
-func TestRequireEnvironmentReportsBothToolsAtOnce(t *testing.T) {
+func TestPreflightReportsBothToolsAtOnce(t *testing.T) {
+	layout := layoutFor(t)
 	t.Setenv("PATH", t.TempDir()) // neither binary resolvable
 
 	var out bytes.Buffer
-	_, err := requireEnvironment(context.Background(), &out, false)
+	_, err := preflight(context.Background(), &out, layout, sourceFlag, false)
 
 	if err == nil {
-		t.Fatal("requireEnvironment passed with no terraform and no aws in PATH")
+		t.Fatal("preflight passed with no terraform and no aws in PATH")
 	}
 	for _, tool := range []string{"terraform", "aws"} {
 		if !strings.Contains(out.String(), tool) {
@@ -179,9 +185,11 @@ func TestRequireEnvironmentReportsBothToolsAtOnce(t *testing.T) {
 
 // A dry run makes no AWS call, so demanding the AWS CLI for one would block a
 // command that never uses it.
-func TestRequireEnvironmentExemptsTheAWSCLIOnADryRun(t *testing.T) {
+func TestPreflightExemptsTheAWSCLIOnADryRun(t *testing.T) {
+	layout := layoutFor(t)
+
 	var out bytes.Buffer
-	_, err := requireEnvironment(context.Background(), &out, true)
+	_, err := preflight(context.Background(), &out, layout, sourceFlag, true)
 
 	if err != nil && strings.Contains(out.String(), "aws") {
 		t.Errorf("a dry run was gated on the AWS CLI:\n%s", out.String())
@@ -190,11 +198,117 @@ func TestRequireEnvironmentExemptsTheAWSCLIOnADryRun(t *testing.T) {
 
 // git is only used by init, to clone. Gating a run on it would demand a tool the
 // run never calls.
-func TestRequireEnvironmentDoesNotGateOnGit(t *testing.T) {
+func TestPreflightDoesNotGateOnGit(t *testing.T) {
+	layout := layoutFor(t)
+
 	var out bytes.Buffer
-	_, _ = requireEnvironment(context.Background(), &out, true)
+	_, _ = preflight(context.Background(), &out, layout, sourceFlag, true)
 
 	if strings.Contains(out.String(), "git") {
 		t.Errorf("a run was gated on git, which only init uses:\n%s", out.String())
+	}
+}
+
+// stubIdentity answers for profiles without an AWS account behind them.
+type stubIdentity struct {
+	usable map[string]bool
+}
+
+func (s stubIdentity) CallerIdentity(_ context.Context, profile, _ string) (infra.Caller, error) {
+	if s.usable[profile] {
+		return infra.Caller{Account: "111122223333", ARN: "arn:aws:iam::111122223333:user/" + profile}, nil
+	}
+	return infra.Caller{}, errors.New("the SSO session has expired")
+}
+
+// awsConfig writes a ~/.aws/config holding the named profiles, and points HOME at
+// it so the profile listing reads this one rather than the machine's.
+func awsConfig(t *testing.T, profiles ...string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var body strings.Builder
+	for _, name := range profiles {
+		fmt.Fprintf(&body, "[profile %s]\nregion = us-east-1\nsso_session = lerian\n\n", name)
+	}
+	dir := filepath.Join(home, ".aws")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(body.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A machine where nothing in ~/.aws resolves cannot run a single stage, and the
+// operator finds out before answering anything rather than after — the questions
+// are three, and the answer to all of them is wasted on a run that cannot start.
+func TestAnExpiredSessionIsReportedBeforeTheQuestions(t *testing.T) {
+	awsConfig(t, "sandbox", "production")
+
+	result := checkAWSSession(context.Background(), stubIdentity{})
+
+	if result.ok {
+		t.Fatal("a machine with no usable profile passed the session check")
+	}
+	if !strings.Contains(result.detail, "aws sso login") {
+		t.Errorf("the failure does not say how to fix it:\n%s", result.detail)
+	}
+}
+
+// One profile that resolves is enough to start. Which one is the right one is a
+// later question — this one only asks whether the operator is logged in at all.
+func TestOneUsableProfileIsEnough(t *testing.T) {
+	awsConfig(t, "sandbox", "production")
+
+	result := checkAWSSession(context.Background(), stubIdentity{usable: map[string]bool{"production": true}})
+
+	if !result.ok {
+		t.Errorf("a machine with a usable profile failed the session check: %s", result.detail)
+	}
+	if !strings.Contains(result.summary, "production") {
+		t.Errorf("the summary does not name the profile that resolves: %q", result.summary)
+	}
+}
+
+// An empty ~/.aws is a different failure from an expired session, and it needs a
+// different fix: there is nothing to log in to yet.
+func TestNoProfilesAtAllSaysSo(t *testing.T) {
+	awsConfig(t)
+
+	result := checkAWSSession(context.Background(), stubIdentity{})
+
+	if result.ok {
+		t.Fatal("a machine with no profiles at all passed the session check")
+	}
+	if !strings.Contains(result.detail, "aws configure sso") {
+		t.Errorf("the failure does not say how to create a profile:\n%s", result.detail)
+	}
+}
+
+// layoutFor is a checkout the preflight can report on without resolving one.
+func layoutFor(t *testing.T) infra.Layout {
+	t.Helper()
+	layout, err := infra.NewLayout(fakeCheckout(t, "", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return layout
+}
+
+// The session is part of the preflight, not something a later stage discovers.
+func TestThePreflightAsksWhetherTheOperatorIsLoggedIn(t *testing.T) {
+	layout := layoutFor(t)
+	awsConfig(t, "sandbox")
+	previous := checkIdentity
+	checkIdentity = stubIdentity{}
+	t.Cleanup(func() { checkIdentity = previous })
+
+	var out bytes.Buffer
+	_, _ = preflight(context.Background(), &out, layout, sourceFlag, false)
+
+	if !strings.Contains(out.String(), "aws session") {
+		t.Errorf("the preflight never asked whether there is a session:\n%s", out.String())
 	}
 }

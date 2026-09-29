@@ -164,7 +164,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// to ask, it asks instead. Nothing else changes: --env present means no
 	// question, so every invocation that works today behaves exactly as it did,
 	// and without a terminal the error below is still what happens.
-	terraform, err := prepareChoices(ctx, newPrompter(stderr), catalog, &opts, stderr)
+	terraform, err := prepareChoices(ctx, newPrompter(stderr), catalog, &opts, layout, source, stderr)
 	if err != nil {
 		return err
 	}
@@ -269,7 +269,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// way it happens once, because the probe shells out to the binary.
 	if terraform == nil {
 		var err error
-		if terraform, err = requireEnvironment(ctx, stderr, opts.dryRun); err != nil {
+		if terraform, err = preflight(ctx, stderr, layout, source, opts.dryRun); err != nil {
 			return err
 		}
 	}
@@ -1008,7 +1008,11 @@ func printDryRun(
 //
 // The questions go to stderr: the action is one of the things being chosen, and
 // helm-values needs stdout to carry nothing but the document.
-func guidedRun(catalog infra.Catalog, opts *options, ask *prompter) error {
+// afterEnvironment is called with the environment as soon as it is chosen, and
+// its error stops the remaining questions. It exists for one check: the
+// environment names the AWS account, the account names the profile, and an
+// expired session for that profile makes every later answer worthless.
+func guidedRun(catalog infra.Catalog, opts *options, ask *prompter, afterEnvironment func(string) error) error {
 	if !ask.interactive {
 		return nil
 	}
@@ -1021,6 +1025,15 @@ func guidedRun(catalog infra.Catalog, opts *options, ask *prompter) error {
 		return err
 	}
 	opts.environment = environment
+
+	// Before the next question rather than after the last one: this is the point
+	// at which the profile is known, and asking two more questions to then report
+	// a login failure throws both answers away.
+	if afterEnvironment != nil {
+		if err := afterEnvironment(environment); err != nil {
+			return err
+		}
+	}
 
 	targets, err := ask.pickMany(
 		"What do you want to operate on?",
@@ -1387,6 +1400,8 @@ func prepareChoices(
 	ask *prompter,
 	catalog infra.Catalog,
 	opts *options,
+	layout infra.Layout,
+	source checkoutSource,
 	stderr io.Writer,
 ) (*infra.CLI, error) {
 	if opts.environment != "" {
@@ -1396,12 +1411,34 @@ func prepareChoices(
 	var terraform *infra.CLI
 	if ask.interactive {
 		var err error
-		if terraform, err = requireEnvironment(ctx, stderr, opts.dryRun); err != nil {
+		if terraform, err = preflight(ctx, stderr, layout, source, opts.dryRun); err != nil {
 			return nil, err
 		}
 	}
-	if err := guidedRun(catalog, opts, ask); err != nil {
+	if err := guidedRun(catalog, opts, ask, credentialCheck(ctx, layout, opts.dryRun)); err != nil {
 		return nil, err
 	}
 	return terraform, nil
+}
+
+// credentialCheck resolves the profile the chosen environment maps to and asks
+// whether it still answers. A nil result means there is nothing to check — a dry
+// run makes no AWS call by definition.
+func credentialCheck(ctx context.Context, layout infra.Layout, dryRun bool) func(string) error {
+	if dryRun {
+		return nil
+	}
+	return func(environment string) error {
+		config, err := infra.LoadEnvConfig(layout, environment)
+		if err != nil {
+			// Not this check's failure to report. The configuration error has its own
+			// message further down, written for the case where it is the only problem.
+			return nil
+		}
+		if config.Profile == "" {
+			return nil
+		}
+		_, err = infra.ResolveCredentials(ctx, config.Profile)
+		return err
+	}
 }

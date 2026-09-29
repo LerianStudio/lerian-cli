@@ -3,6 +3,7 @@ package infracli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,11 +24,18 @@ import (
 func TestTheToolsAreVerifiedBeforeTheQuestionsAreAsked(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // no terraform, no aws
 
+	checkout := fakeCheckout(t, "", "")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	var report bytes.Buffer
-	_, err := prepareChoices(context.Background(), ask, infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}, &opts, &report)
+	_, err = prepareChoices(context.Background(), ask, catalog, &opts, layout, sourceFlag, &report)
 
 	if err == nil {
 		t.Fatal("preparing a guided run with no tools in PATH returned nil")
@@ -82,5 +90,55 @@ func TestListingTargetsNeedsNoTools(t *testing.T) {
 	}
 	if strings.Contains(stdout.String()+stderr.String(), "not usable") {
 		t.Errorf("--list was gated on a tool it never calls")
+	}
+}
+
+// The credential is checked as soon as the environment names the profile, not
+// after every question has been answered.
+//
+// This is the failure an operator actually hits: the environment picks the AWS
+// account, the account picks the profile, and an expired SSO session for that
+// profile is only discovered at the point the first stage tries to run. By then
+// the target and the action have been answered too, and all three answers are
+// lost to a run that could never have started.
+func TestTheCredentialIsCheckedAsSoonAsTheEnvironmentIsKnown(t *testing.T) {
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	expired := errors.New("the SSO session for profile \"lerian-sandbox\" has expired")
+	err := guidedRun(catalog, &opts, ask, func(string) error { return expired })
+
+	if !errors.Is(err, expired) {
+		t.Fatalf("guidedRun = %v, want the credential failure", err)
+	}
+	// The environment was answered; nothing after it was asked.
+	if opts.environment == "" {
+		t.Error("the run failed before the environment was even chosen")
+	}
+	if strings.Contains(painted.String(), "operate on") {
+		t.Errorf("the target was asked after the credential had already failed:\n%s", painted.String())
+	}
+	if opts.action != "" {
+		t.Errorf("an action was collected after the credential failed: %q", opts.action)
+	}
+}
+
+// With a working credential the questions carry on as before.
+func TestAWorkingCredentialAsksTheRestOfTheQuestions(t *testing.T) {
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	var checked string
+	if err := guidedRun(catalog, &opts, ask, func(env string) error { checked = env; return nil }); err != nil {
+		t.Fatalf("guidedRun = %v", err)
+	}
+
+	if checked != opts.environment {
+		t.Errorf("the credential was checked for %q, the environment chosen was %q", checked, opts.environment)
+	}
+	if !strings.Contains(painted.String(), "operate on") {
+		t.Errorf("the questions stopped at the environment:\n%s", painted.String())
 	}
 }
