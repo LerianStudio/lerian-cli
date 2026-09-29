@@ -284,9 +284,22 @@ The environment question then names the account each choice lands in:
   Which environment?
   Picks the AWS account, the state backend and the variables file of every stack.
   ❯ dev  day to day, smallest sizing  ·  account 524121347244 via lerian-sandbox
-    stg  pre-production                ·  account 111122223333 via lerian-staging
-    prd  production                    ·  account 999988887777 via lerian-prod
+    stg  (unavailable)  no [stg] section in environments.conf
+    prd  (unavailable)  no [prd] section in environments.conf
 ```
+
+The account is not a separate choice, and it is worth saying why: the environment
+*is* the account. `environments.conf` binds the two, and the account guard refuses
+to run when the active credential resolves anywhere other than the account
+declared for the environment being applied — there is no flag to skip it. Offering
+the account as its own question would let you build a pair the guard exists to
+reject.
+
+An environment with no section there cannot be run — nothing to verify against,
+nothing to verify with — so it is shown and disabled rather than hidden: "stg is
+not set up in this checkout" is the useful fact, and leaving it out reads as stg
+not existing. With none configured, the error names `lerian infra init` instead of
+asking a question with no answer.
 
 The account is the consequence of that answer, and it used to appear only on the
 confirmation before an apply — so a plan never named it at all, and an apply

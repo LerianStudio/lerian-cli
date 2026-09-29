@@ -1038,10 +1038,18 @@ func guidedRun(
 		return nil
 	}
 
+	choices := runEnvironmentOptions(layout)
+	if !anyEnabled(choices) {
+		return fmt.Errorf("no environment is configured in this checkout\n"+
+			"examples/aws/environments.conf declares the account, profile and region of\n"+
+			"each environment, and it has no section this tool can use.\n\n"+
+			"  lerian infra init --env %s", infra.Environments[0])
+	}
+
 	environment, err := ask.pick(
 		"Which environment?",
 		"Picks the AWS account, the state backend and the variables file of every stack.",
-		"--env", environmentOptions(layout), "")
+		"--env", choices, "")
 	if err != nil {
 		return err
 	}
@@ -1076,6 +1084,35 @@ func guidedRun(
 	}
 	opts.action = action
 	return nil
+}
+
+// runEnvironmentOptions is environmentOptions for a run rather than for init.
+//
+// An environment with no section in environments.conf has no account to verify
+// against and no profile to verify with, so a run against it fails at the step
+// after this one. It is shown and disabled rather than hidden: "stg is not set up
+// in this checkout" is the useful fact, and leaving it out reads as stg not
+// existing at all.
+//
+// init offers all three, because it is the command that creates the section.
+func runEnvironmentOptions(layout infra.Layout) []option {
+	options := environmentOptions(layout)
+	for index, opt := range options {
+		if _, err := infra.LoadEnvConfig(layout, opt.value); err != nil {
+			options[index].disabled = true
+			options[index].note = "no [" + opt.value + "] section in environments.conf"
+		}
+	}
+	return options
+}
+
+func anyEnabled(options []option) bool {
+	for _, opt := range options {
+		if !opt.disabled {
+			return true
+		}
+	}
+	return false
 }
 
 // runTargetOptions is the catalog --list prints, plus the two targets that are

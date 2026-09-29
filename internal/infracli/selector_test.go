@@ -228,7 +228,7 @@ func TestGuidedRunWithThreeEntersReproducesTheDefaultRun(t *testing.T) {
 	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
 
 	opts := options{target: "infra-base", action: "plan"}
-	if err := guidedRun(catalog, &opts, ask, infra.Layout{}, nil); err != nil {
+	if err := guidedRun(catalog, &opts, ask, configuredLayout(t), nil); err != nil {
 		t.Fatalf("guidedRun: %v", err)
 	}
 	if opts.environment != "dev" || opts.target != "infra-base" || opts.action != "plan" {
@@ -256,7 +256,7 @@ func TestGuidedRunReachesACompositeTargetAndAnotherAction(t *testing.T) {
 	ask, _ := selectorFor(t, keys)
 
 	opts := options{target: "infra-base", action: "plan"}
-	if err := guidedRun(catalog, &opts, ask, infra.Layout{}, nil); err != nil {
+	if err := guidedRun(catalog, &opts, ask, configuredLayout(t), nil); err != nil {
 		t.Fatalf("guidedRun: %v", err)
 	}
 	if opts.environment != "stg" {
@@ -277,7 +277,7 @@ func TestGuidedRunDoesNothingWithoutATerminal(t *testing.T) {
 	ask := &prompter{interactive: false, out: &bytes.Buffer{}}
 	opts := options{target: "infra-base", action: "plan"}
 
-	if err := guidedRun(infra.Catalog{}, &opts, ask, infra.Layout{}, nil); err != nil {
+	if err := guidedRun(infra.Catalog{}, &opts, ask, configuredLayout(t), nil); err != nil {
 		t.Fatalf("guidedRun: %v", err)
 	}
 	if opts.environment != "" {
@@ -291,7 +291,7 @@ func TestGuidedRunPropagatesAnAbort(t *testing.T) {
 	ask, _ := selectorFor(t, "\x03")
 	opts := options{target: "infra-base", action: "plan"}
 
-	err := guidedRun(infra.Catalog{}, &opts, ask, infra.Layout{}, nil)
+	err := guidedRun(infra.Catalog{}, &opts, ask, configuredLayout(t), nil)
 	if !errors.Is(err, infra.ErrAborted) {
 		t.Errorf("got %v, want ErrAborted", err)
 	}

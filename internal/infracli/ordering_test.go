@@ -108,7 +108,7 @@ func TestTheCredentialIsCheckedAsSoonAsTheEnvironmentIsKnown(t *testing.T) {
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	expired := errors.New("the SSO session for profile \"lerian-sandbox\" has expired")
-	err := guidedRun(catalog, &opts, ask, infra.Layout{}, func(string) error { return expired })
+	err := guidedRun(catalog, &opts, ask, configuredLayout(t), func(string) error { return expired })
 
 	if !errors.Is(err, expired) {
 		t.Fatalf("guidedRun = %v, want the credential failure", err)
@@ -132,7 +132,7 @@ func TestAWorkingCredentialAsksTheRestOfTheQuestions(t *testing.T) {
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	var checked string
-	if err := guidedRun(catalog, &opts, ask, infra.Layout{}, func(env string) error { checked = env; return nil }); err != nil {
+	if err := guidedRun(catalog, &opts, ask, configuredLayout(t), func(env string) error { checked = env; return nil }); err != nil {
 		t.Fatalf("guidedRun = %v", err)
 	}
 
@@ -214,4 +214,82 @@ func writeEnvConfig(t *testing.T, checkout string, sections map[string]string) {
 	if err := os.WriteFile(path, []byte(body.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// An environment with no section in environments.conf cannot be run: there is no
+// account to verify against and no profile to verify with. Offering it as a
+// choice spends an answer on a run that fails at the next step, so it is shown
+// and disabled — shown, because "stg is not set up here" is the useful fact, and
+// hiding it would read as stg not existing.
+func TestAnUnconfiguredEnvironmentCannotBeChosenForARun(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 524121347244\nregion = us-east-2\nprofile = lerian-sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byValue := map[string]option{}
+	for _, opt := range runEnvironmentOptions(layout) {
+		byValue[opt.value] = opt
+	}
+
+	if byValue["dev"].disabled {
+		t.Errorf("the configured environment cannot be chosen: %+v", byValue["dev"])
+	}
+	if !strings.Contains(byValue["dev"].note, "524121347244") {
+		t.Errorf("the configured environment does not name its account: %q", byValue["dev"].note)
+	}
+	for _, name := range []string{"stg", "prd"} {
+		if !byValue[name].disabled {
+			t.Errorf("%s has no section and was offered anyway: %+v", name, byValue[name])
+		}
+		if !strings.Contains(byValue[name].note, "environments.conf") {
+			t.Errorf("%s does not say why it cannot be chosen: %q", name, byValue[name].note)
+		}
+	}
+}
+
+// With nothing configured there is no question to ask, and the answer is a
+// different command.
+func TestNoConfiguredEnvironmentSendsTheOperatorToInit(t *testing.T) {
+	layout, err := infra.NewLayout(fakeCheckout(t, "", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq)
+	opts := options{}
+
+	err = guidedRun(infra.Catalog{}, &opts, ask, layout, nil)
+
+	if err == nil {
+		t.Fatal("a run was offered environments that are all unusable")
+	}
+	if !strings.Contains(err.Error(), "lerian infra init") {
+		t.Errorf("the error does not say how to configure one: %v", err)
+	}
+	if strings.Contains(painted.String(), "Which environment") {
+		t.Errorf("a question was asked that had no answer:\n%s", painted.String())
+	}
+}
+
+// configuredLayout is a checkout whose environments.conf declares every
+// environment, for tests about the questions rather than about the configuration.
+func configuredLayout(t *testing.T) infra.Layout {
+	t.Helper()
+
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = dev-profile",
+		"stg": "account_id = 444455556666\nregion = us-east-1\nprofile = stg-profile",
+		"prd": "account_id = 999988887777\nregion = us-east-1\nprofile = prd-profile",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return layout
 }
