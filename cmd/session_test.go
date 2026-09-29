@@ -144,8 +144,9 @@ func TestAParentCommandOffersItsChildren(t *testing.T) {
 	root.AddCommand(auth)
 	root.AddCommand(&cobra.Command{Use: "version", Short: "Print version", Run: func(*cobra.Command, []string) {}})
 
-	var offered []string
-	for _, choice := range childChoices(root, "auth") {
+	children := childChoices(root, "auth")
+	offered := make([]string, 0, len(children))
+	for _, choice := range children {
 		offered = append(offered, choice.Value)
 	}
 
