@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,7 +175,7 @@ func TestPreflightReportsBothToolsAtOnce(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // neither binary resolvable
 
 	var out bytes.Buffer
-	_, err := preflight(context.Background(), &out, layout, sourceFlag, false)
+	_, err := preflight(context.Background(), nil, &out, layout, sourceFlag, false)
 
 	if err == nil {
 		t.Fatal("preflight passed with no terraform and no aws in PATH")
@@ -192,7 +193,7 @@ func TestPreflightExemptsTheAWSCLIOnADryRun(t *testing.T) {
 	layout := layoutFor(t)
 
 	var out bytes.Buffer
-	_, err := preflight(context.Background(), &out, layout, sourceFlag, true)
+	_, err := preflight(context.Background(), nil, &out, layout, sourceFlag, true)
 
 	if err != nil && strings.Contains(out.String(), "aws") {
 		t.Errorf("a dry run was gated on the AWS CLI:\n%s", out.String())
@@ -205,7 +206,7 @@ func TestPreflightDoesNotGateOnGit(t *testing.T) {
 	layout := layoutFor(t)
 
 	var out bytes.Buffer
-	_, _ = preflight(context.Background(), &out, layout, sourceFlag, true)
+	_, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, true)
 
 	if strings.Contains(out.String(), "git") {
 		t.Errorf("a run was gated on git, which only init uses:\n%s", out.String())
@@ -250,7 +251,7 @@ func awsConfig(t *testing.T, profiles ...string) {
 func TestAnExpiredSessionIsReportedBeforeTheQuestions(t *testing.T) {
 	awsConfig(t, "sandbox", "production")
 
-	result := checkAWSSession(context.Background(), stubIdentity{})
+	result, _ := checkAWSSession(context.Background(), stubIdentity{})
 
 	if result.ok {
 		t.Fatal("a machine with no usable profile passed the session check")
@@ -265,7 +266,7 @@ func TestAnExpiredSessionIsReportedBeforeTheQuestions(t *testing.T) {
 func TestOneUsableProfileIsEnough(t *testing.T) {
 	awsConfig(t, "sandbox", "production")
 
-	result := checkAWSSession(context.Background(), stubIdentity{usable: map[string]bool{"production": true}})
+	result, _ := checkAWSSession(context.Background(), stubIdentity{usable: map[string]bool{"production": true}})
 
 	if !result.ok {
 		t.Errorf("a machine with a usable profile failed the session check: %s", result.detail)
@@ -280,7 +281,7 @@ func TestOneUsableProfileIsEnough(t *testing.T) {
 func TestNoProfilesAtAllSaysSo(t *testing.T) {
 	awsConfig(t)
 
-	result := checkAWSSession(context.Background(), stubIdentity{})
+	result, _ := checkAWSSession(context.Background(), stubIdentity{})
 
 	if result.ok {
 		t.Fatal("a machine with no profiles at all passed the session check")
@@ -309,7 +310,7 @@ func TestThePreflightAsksWhetherTheOperatorIsLoggedIn(t *testing.T) {
 	t.Cleanup(func() { checkIdentity = previous })
 
 	var out bytes.Buffer
-	_, _ = preflight(context.Background(), &out, layout, sourceFlag, false)
+	_, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, false)
 
 	if !strings.Contains(out.String(), "aws session") {
 		t.Errorf("the preflight never asked whether there is a session:\n%s", out.String())
@@ -391,4 +392,121 @@ func stripANSI(text string) string {
 		text = text[1:]
 	}
 	return out.String()
+}
+
+// Being told to run `aws sso login` and then run this again is a round trip
+// through another program for something this one has everything it needs to do:
+// the AWS CLI is already a verified dependency, and the session name is already
+// in the profile it just read.
+func TestAnExpiredSessionCanBeRevivedWithoutLeaving(t *testing.T) {
+	layout := layoutFor(t)
+	awsConfig(t, "sandbox", "production")
+
+	// Nothing resolves, then everything does — which is what logging in changes.
+	loggedIn := false
+	previous := checkIdentity
+	checkIdentity = conditionalIdentity{usable: &loggedIn}
+	t.Cleanup(func() { checkIdentity = previous })
+
+	var attempted []infra.SSOTarget
+	previousLogin := ssoLogin
+	ssoLogin = func(_ context.Context, target infra.SSOTarget, _ io.Reader, _, _ io.Writer) error {
+		attempted = append(attempted, target)
+		loggedIn = true
+		return nil
+	}
+	t.Cleanup(func() { ssoLogin = previousLogin })
+
+	ask, _ := selectorFor(t, keyEnterSeq)
+
+	var out bytes.Buffer
+	_, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+
+	if len(attempted) != 1 {
+		t.Fatalf("logged in %d times, want once: %v", len(attempted), attempted)
+	}
+	if attempted[0].Session != "lerian" {
+		t.Errorf("logged into %q, want the session the profiles share", attempted[0].Session)
+	}
+	// And the run carries on: the reason it stopped is gone.
+	if err != nil && strings.Contains(err.Error(), "aws session") {
+		t.Errorf("the session was still reported as failed after logging in: %v\n%s", err, out.String())
+	}
+}
+
+// Declining leaves the command exactly where it was: the report, the login
+// instruction, and a non-zero exit.
+func TestDecliningTheLoginLeavesTheInstruction(t *testing.T) {
+	layout := layoutFor(t)
+	awsConfig(t, "sandbox")
+
+	previous := checkIdentity
+	checkIdentity = stubIdentity{}
+	t.Cleanup(func() { checkIdentity = previous })
+
+	called := false
+	previousLogin := ssoLogin
+	ssoLogin = func(context.Context, infra.SSOTarget, io.Reader, io.Writer, io.Writer) error {
+		called = true
+		return nil
+	}
+	t.Cleanup(func() { ssoLogin = previousLogin })
+
+	// Down once, onto "cancel", then Enter.
+	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq)
+
+	var out bytes.Buffer
+	_, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+
+	if called {
+		t.Error("the login ran without being accepted")
+	}
+	if err == nil {
+		t.Fatal("declining the login let the run continue with no session")
+	}
+	if !strings.Contains(out.String(), "aws sso login") {
+		t.Errorf("the instruction for doing it by hand is gone:\n%s", out.String())
+	}
+}
+
+// A profile backed by a static access key has no session to revive, so there is
+// nothing to offer and offering anyway would run a command that cannot work.
+func TestNoLoginIsOfferedForProfilesWithoutASession(t *testing.T) {
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "static", Source: "credentials"}, Err: errors.New("expired")},
+	}
+
+	if targets := loginTargets(resolved); len(targets) != 0 {
+		t.Errorf("offered %v for a profile with no SSO session", targets)
+	}
+}
+
+// Profiles behind one session share one login, which is the whole reason the
+// session name is worth reading: a dozen account profiles are revived by a single
+// command, not by a dozen identical ones.
+func TestProfilesSharingASessionShareOneLogin(t *testing.T) {
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "dev", SSOSession: "acme"}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "stg", SSOSession: "acme"}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "other", SSOSession: "second"}, Err: errors.New("expired")},
+	}
+
+	targets := loginTargets(resolved)
+
+	if len(targets) != 2 {
+		t.Fatalf("got %d targets, want one per session: %v", len(targets), targets)
+	}
+	if targets[0].Session != "acme" || targets[1].Session != "second" {
+		t.Errorf("targets = %v, want the two sessions in order", targets)
+	}
+}
+
+// conditionalIdentity resolves once the flag it watches is set.
+type conditionalIdentity struct{ usable *bool }
+
+func (c conditionalIdentity) CallerIdentity(_ context.Context, profile, _ string) (infra.Caller, error) {
+	if *c.usable {
+		return infra.Caller{Account: "111122223333", ARN: "arn:aws:iam::111122223333:user/" + profile}, nil
+	}
+	return infra.Caller{}, errors.New("the SSO session has expired")
 }

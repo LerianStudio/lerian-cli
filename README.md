@@ -270,21 +270,30 @@ checks the machine before it asks anything:
 
 ```
   ==> Environment check
-  terraform    /opt/homebrew/bin/terraform                    ok
-  aws          /opt/homebrew/bin/aws                          ok
-  templates    ~/lerian/lerian-terraform-foundation @ v1.6.0  ok
-  aws session  not logged in                                  missing
+  ok       terraform    /opt/homebrew/bin/terraform
+  ok       aws          /opt/homebrew/bin/aws
+  ok       templates    ~/lerian/lerian-terraform-foundation @ v1.6.0
+  missing  aws session  not logged in
 
-  aws session
-    None of the 9 profile(s) in ~/.aws resolve right now.
-    An expired SSO session is the usual cause. This revives them:
-
-      aws sso login --sso-session lerian-sso
-
-    Then run this command again.
-
-  1 of 4 checks failed.
+  Log in to AWS now?
+  Runs aws sso login --sso-session <your-session>, which opens a browser.
+  ↑↓ move · enter choose · q cancel
+  ❯ log in now  opens the browser and waits
+    cancel      leaves the instructions below
 ```
+
+The verdict leads each row so that scanning for what failed is running an eye
+down the left edge rather than a ragged right one.
+
+When there is no session, it offers to log in rather than telling you to leave.
+The AWS CLI is already a verified dependency and the session name is already in
+the profile it just read, so sending you to another program and asking you to
+start over buys nothing. It runs `aws sso login`, which opens the browser, and
+then re-checks. Declining leaves the report and the command to run by hand.
+
+One login per `[sso-session]`, not one per profile: profiles behind the same
+session are revived together. A profile backed by a static key in
+`~/.aws/credentials` has no session to revive, so none is offered for it.
 
 It runs before the questions, not after them: the three questions — which
 environment, which stacks, plan or apply — take real thought, and a machine that

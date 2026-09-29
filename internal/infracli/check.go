@@ -150,7 +150,7 @@ func checkTemplates(ctx context.Context, repo, envRepo, templatesDir string) che
 // The only check here that makes an AWS call, which is why it is not part of
 // `lerian infra check` unless asked for: that command is a CI gate, and a gate
 // that needs credentials cannot run before they exist.
-func checkAWSSession(ctx context.Context, identity infra.Identity) checkResult {
+func checkAWSSession(ctx context.Context, identity infra.Identity) (checkResult, []infra.ResolvedProfile) {
 	result := checkResult{name: "aws session", ok: true}
 
 	profiles, err := infra.ListAWSProfiles()
@@ -158,7 +158,7 @@ func checkAWSSession(ctx context.Context, identity infra.Identity) checkResult {
 		result.ok = false
 		result.summary = "cannot read ~/.aws"
 		result.detail = err.Error()
-		return result
+		return result, nil
 	}
 	if len(profiles) == 0 {
 		result.ok = false
@@ -166,7 +166,7 @@ func checkAWSSession(ctx context.Context, identity infra.Identity) checkResult {
 		result.detail = "There is no profile in ~/.aws to log in with. Create one:\n\n" +
 			"  aws configure sso\n\n" +
 			"Then run this command again."
-		return result
+		return result, nil
 	}
 
 	resolved := infra.ResolveProfiles(ctx, identity, profiles, "")
@@ -187,12 +187,99 @@ func checkAWSSession(ctx context.Context, identity infra.Identity) checkResult {
 		result.detail = fmt.Sprintf("None of the %d profile(s) in ~/.aws resolve right now.\n"+
 			"An expired SSO session is the usual cause. This revives them:\n\n  %s\n\n"+
 			"Then run this command again.", len(resolved), hint)
-		return result
+		return result, resolved
 	}
 
 	result.summary = fmt.Sprintf("%d of %d profiles resolve: %s",
 		len(usable), len(resolved), strings.Join(usable, ", "))
-	return result
+	return result, resolved
+}
+
+// ssoLogin is a variable so the offer can be exercised without an AWS account
+// and without opening a browser.
+var ssoLogin = infra.SSOLogin
+
+// loginTargets is what can be logged into, one per SSO session, in the order the
+// sessions were first seen.
+//
+// One per session rather than one per profile: profiles behind the same
+// [sso-session] are revived together, and offering the same login a dozen times
+// is the noise LoginHint was written to avoid. A profile with no session — a
+// static access key in ~/.aws/credentials — has nothing to log into and is left
+// out rather than offered a command that cannot work.
+func loginTargets(resolved []infra.ResolvedProfile) []infra.SSOTarget {
+	seen := map[string]bool{}
+	targets := make([]infra.SSOTarget, 0, len(resolved))
+
+	for _, entry := range resolved {
+		if entry.Usable() || entry.Profile.SSOSession == "" {
+			continue
+		}
+		if seen[entry.Profile.SSOSession] {
+			continue
+		}
+		seen[entry.Profile.SSOSession] = true
+		targets = append(targets, infra.SSOTarget{Session: entry.Profile.SSOSession})
+	}
+	return targets
+}
+
+// offerLogin asks whether to log in now, and does it.
+//
+// The alternative is telling the operator to leave, run a command in another
+// program and start over — for a command this one can run, with a session name it
+// has already read. Reported rather than silent: logging somebody into an AWS
+// account without asking is not a default worth having, however convenient.
+func offerLogin(
+	ctx context.Context,
+	ask *prompter,
+	out io.Writer,
+	targets []infra.SSOTarget,
+) (bool, error) {
+	if ask == nil || !ask.interactive || len(targets) == 0 {
+		return false, nil
+	}
+
+	target := targets[0]
+	if len(targets) > 1 {
+		options := make([]option, 0, len(targets))
+		for _, candidate := range targets {
+			options = append(options, option{
+				value: candidate.Name(),
+				label: candidate.Name(),
+				note:  "aws " + strings.Join(candidate.Args(), " "),
+			})
+		}
+		chosen, err := ask.pick("Which SSO session should be revived?",
+			"The profiles behind it are logged in together.", "", options, "")
+		if err != nil {
+			return false, err
+		}
+		for _, candidate := range targets {
+			if candidate.Name() == chosen {
+				target = candidate
+			}
+		}
+	}
+
+	answer, err := ask.pick("Log in to AWS now?",
+		"Runs aws "+strings.Join(target.Args(), " ")+", which opens a browser.", "",
+		[]option{
+			{value: "yes", label: "log in now", note: "opens the browser and waits"},
+			{value: "no", label: "cancel", note: "leaves the instructions below"},
+		}, "")
+	if err != nil || answer != "yes" {
+		// Declining is not a failure of its own: the session check has already
+		// written the reason and the command to fix it by hand.
+		return false, nil
+	}
+
+	fmt.Fprintf(out, "\n  %s\n\n", newStyle(out).dim("aws "+strings.Join(target.Args(), " ")))
+	if err := ssoLogin(ctx, target, os.Stdin, out, out); err != nil {
+		fmt.Fprintf(out, "\n  %v\n", err)
+		return false, nil
+	}
+	return true, nil
 }
 
 // binaryPath is for the report only. The verification is the infra function next
@@ -296,6 +383,7 @@ var checkIdentity infra.Identity = infra.CLIIdentity{}
 
 func preflight(
 	ctx context.Context,
+	ask *prompter,
 	out io.Writer,
 	layout infra.Layout,
 	source checkoutSource,
@@ -321,7 +409,18 @@ func preflight(
 	// session check fails for the reason already on the line above it, and two
 	// rows for one problem read as two problems.
 	if !dryRun && awsCLI.ok {
-		results = append(results, checkAWSSession(ctx, checkIdentity))
+		session, resolved := checkAWSSession(ctx, checkIdentity)
+
+		// Offered before the report rather than after it: the report ends the
+		// command, and the whole point is not to end it.
+		if !session.ok {
+			if loggedIn, err := offerLogin(ctx, ask, out, loginTargets(resolved)); err != nil {
+				return nil, err
+			} else if loggedIn {
+				session, _ = checkAWSSession(ctx, checkIdentity)
+			}
+		}
+		results = append(results, session)
 	}
 
 	for _, r := range results {

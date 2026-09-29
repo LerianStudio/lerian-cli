@@ -269,7 +269,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// way it happens once, because the probe shells out to the binary.
 	if terraform == nil {
 		var err error
-		if terraform, err = preflight(ctx, stderr, layout, source, opts.dryRun); err != nil {
+		if terraform, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun); err != nil {
 			return err
 		}
 	}
@@ -1411,7 +1411,7 @@ func prepareChoices(
 	var terraform *infra.CLI
 	if ask.interactive {
 		var err error
-		if terraform, err = preflight(ctx, stderr, layout, source, opts.dryRun); err != nil {
+		if terraform, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun); err != nil {
 			return nil, err
 		}
 	}
