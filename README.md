@@ -287,7 +287,21 @@ checks the machine before it asks anything:
   4 checks, all ok.
 ```
 
-It then asks the one question an operator can answer:
+With one account to deploy into, there is no question at all — it says which one
+and moves on to what you came to do:
+
+```
+  4 checks, all ok.
+
+  lerian-sandbox · account 524121347244  ·  deploys as dev
+
+  What do you want to operate on?
+```
+
+A stale session elsewhere in `~/.aws` does not turn that into a question: nobody
+knows which account an expired profile reaches, so counting it as an alternative
+would interrupt every operator who has one lying around. With more than one
+account ready — or with none, where logging in is the only way forward — it asks:
 
 ```
   Which AWS account?

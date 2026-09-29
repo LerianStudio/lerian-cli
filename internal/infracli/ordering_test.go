@@ -472,3 +472,151 @@ func TestTheUsableAccountsComeFirst(t *testing.T) {
 		t.Errorf("the last row is %q, want the one nothing can be done about here", options[2].value)
 	}
 }
+
+// With one account to deploy into there is no question to ask. The operator is
+// logged in; what they came to choose was the action — infra, auth, version —
+// and being asked to confirm the only possible answer is a keypress that decides
+// nothing.
+//
+// It is still said out loud, because "which account" is the one fact worth
+// knowing before anything is created.
+func TestOneAccountIsNotAQuestion(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+		// Reachable, but nothing here can deploy into it.
+		{Profile: infra.AWSProfile{Name: "elsewhere"}, Caller: infra.Caller{Account: "999988887777"}},
+	}
+
+	// Only the two questions that remain: what to operate on, and what to do.
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq)
+	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, resolved, nil); err != nil {
+		t.Fatalf("guidedRun = %v\n%s", err, painted.String())
+	}
+
+	if strings.Contains(painted.String(), "Which AWS account") {
+		t.Errorf("the operator was asked to choose between one thing:\n%s", painted.String())
+	}
+	if !strings.Contains(painted.String(), "111122223333") {
+		t.Errorf("the account it settled on was never named:\n%s", painted.String())
+	}
+	if opts.environment != "dev" {
+		t.Errorf("environment = %q, want the one the single account maps to", opts.environment)
+	}
+	// And the questions that are real were still asked.
+	if !strings.Contains(painted.String(), "operate on") {
+		t.Errorf("the run stopped before asking what to operate on:\n%s", painted.String())
+	}
+}
+
+// Two accounts is a real question, and it is still asked: picking one for the
+// operator is picking which AWS account gets written to.
+func TestTwoAccountsIsStillAQuestion(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+		"prd": "account_id = 999988887777\nregion = us-east-1\nprofile = production",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+		{Profile: infra.AWSProfile{Name: "production"}, Caller: infra.Caller{Account: "999988887777"}},
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, resolved, nil); err != nil {
+		t.Fatalf("guidedRun = %v", err)
+	}
+
+	if !strings.Contains(painted.String(), "Which AWS account") {
+		t.Errorf("two accounts and no question:\n%s", painted.String())
+	}
+}
+
+// A stale session somewhere in ~/.aws is not a second destination. Nobody knows
+// which account it reaches — that is what expired means — so counting it as an
+// alternative would put a question in front of every operator who has one lying
+// around, which is most of them.
+func TestAStaleProfileIsNotASecondDestination(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+		{Profile: infra.AWSProfile{Name: "default", SSOSession: "acme"}, Err: errors.New("expired")},
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq)
+	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, resolved, nil); err != nil {
+		t.Fatalf("guidedRun = %v\n%s", err, painted.String())
+	}
+
+	if strings.Contains(painted.String(), "Which AWS account") {
+		t.Errorf("an expired session turned the single destination into a question:\n%s", painted.String())
+	}
+	if opts.environment != "dev" {
+		t.Errorf("environment = %q", opts.environment)
+	}
+}
+
+// With nothing ready, the question comes back — it is the only way to say which
+// session to revive.
+func TestNothingReadyStillAsks(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme"}, Err: errors.New("expired")},
+	}
+
+	previousLogin := ssoLogin
+	ssoLogin = func(context.Context, infra.SSOTarget, io.Reader, io.Writer, io.Writer) error { return nil }
+	t.Cleanup(func() { ssoLogin = previousLogin })
+	previousIdentity := checkIdentity
+	checkIdentity = stubIdentity{usable: map[string]bool{"sandbox": true}}
+	t.Cleanup(func() { checkIdentity = previousIdentity })
+
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, resolved, nil); err != nil {
+		t.Fatalf("guidedRun = %v\n%s", err, painted.String())
+	}
+	if !strings.Contains(painted.String(), "Which AWS account") {
+		t.Errorf("with nothing ready there was no way to choose what to log into:\n%s", painted.String())
+	}
+}

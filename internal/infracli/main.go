@@ -1099,6 +1099,17 @@ func askForAccount(
 			"  lerian infra init")
 	}
 
+	// One account to deploy into is not a question. The operator is logged in, and
+	// what they came here to choose is the action; asking them to confirm the only
+	// possible answer is a keypress that decides nothing.
+	//
+	// Said out loud rather than assumed silently: which account is being written to
+	// is the one fact worth knowing before anything is created.
+	if only, ok := theOnlyAccount(choices); ok {
+		fmt.Fprintf(out, "\n  %s\n", newStyle(out).dim(only.label+" · "+only.note))
+		return environmentFor(layout, resolved, only.value)
+	}
+
 	profile, err := ask.pick(
 		"Which AWS account?",
 		"Everything is created there. The state backend and the sizing follow from it.",
@@ -1134,6 +1145,46 @@ func askForAccount(
 	if !ok {
 		return "", fmt.Errorf("account %s is not configured in this checkout\n"+
 			"  lerian infra init", chosen.Caller.Account)
+	}
+	return environment, nil
+}
+
+// theOnlyAccount returns the single account that is ready to deploy into, if it
+// is the only one.
+//
+// An expired profile does not count as an alternative. Nobody knows which account
+// it reaches — that is what expired means — so it might not even be a destination
+// this checkout configures, and counting it would put a question in front of every
+// operator who has one stale session lying around in ~/.aws, which is most of
+// them. It stays in the list for the case below, where there is nothing ready and
+// logging in is the only way forward.
+func theOnlyAccount(choices []option) (option, bool) {
+	var ready option
+	found := 0
+
+	for _, opt := range choices {
+		if opt.disabled || strings.Contains(opt.note, "log in") {
+			continue
+		}
+		found++
+		ready = opt
+	}
+	if found == 1 {
+		return ready, true
+	}
+	return option{}, false
+}
+
+// environmentFor is the tail of askForAccount for a profile already decided.
+func environmentFor(layout infra.Layout, resolved []infra.ResolvedProfile, profile string) (string, error) {
+	chosen := findProfile(resolved, profile)
+	if chosen == nil {
+		return "", fmt.Errorf("profile %q is not one of the profiles offered", profile)
+	}
+	environment, ok := environmentForProfile(layout, chosen.Profile.Name, chosen.Caller.Account)
+	if !ok {
+		return "", fmt.Errorf("account %s is not configured in this checkout\n  lerian infra init",
+			chosen.Caller.Account)
 	}
 	return environment, nil
 }
