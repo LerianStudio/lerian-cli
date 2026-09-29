@@ -221,10 +221,10 @@ func runIsOver(dir string) bool {
 	// it, and the content is parsed as an integer and discarded — nothing read here
 	// is executed, echoed or returned.
 	//
-	// Two annotations because two tools are looking: golangci-lint reads the
-	// nolint directive, and the gosec that feeds code scanning reads only #nosec.
-	// The nolint alone silenced the lint job and left a fresh alert on every push.
-	//nolint:gosec // G304: see the #nosec above.
+	// This spelling and not the one used elsewhere in the package: gosec reads
+	// #nosec whether it runs standalone for code scanning or inside golangci-lint,
+	// so it covers both. The suppression the rest of this repo uses covers only the
+	// second, which is why an alert kept appearing on every push.
 	recorded, err := os.ReadFile(filepath.Join(dir, runOwnerFile))
 	if err != nil {
 		// Missing is the only error that means unclaimed. On a shared /tmp another

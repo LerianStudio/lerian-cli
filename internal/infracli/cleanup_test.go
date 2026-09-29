@@ -327,7 +327,7 @@ func TestAnUnreadableMarkerCountsAsRunning(t *testing.T) {
 	}
 }
 
-// A run whose marker could not be written is a run no cleanup can recognise as
+// A run whose marker could not be written is a run no cleanup can recognize as
 // running, so it would offer the directory this run is still logging into. The
 // write is part of creating the directory, and it fails the same way.
 func TestARunThatCannotClaimItsDirectoryFails(t *testing.T) {
