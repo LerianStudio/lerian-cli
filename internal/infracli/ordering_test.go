@@ -275,14 +275,13 @@ func TestTheQuestionIsWhichAccount(t *testing.T) {
 		t.Errorf("the row does not name the account: %+v", byValue["sandbox"])
 	}
 
-	// An account with no section cannot be deployed into — there is no state
-	// backend and no variables file for it — and the row says so instead of
-	// offering a choice that fails later.
-	if !byValue["elsewhere"].disabled {
-		t.Error("an account with no configuration was offered")
+	// An account with no section is offered too: choosing it is how it gets set
+	// up. It says that, rather than naming a second command to go and run.
+	if byValue["elsewhere"].disabled {
+		t.Error("an account that could be set up was offered as unusable")
 	}
-	if !strings.Contains(byValue["elsewhere"].note, "init") {
-		t.Errorf("the row does not say how to configure it: %q", byValue["elsewhere"].note)
+	if !strings.Contains(byValue["elsewhere"].note, "sets it up") {
+		t.Errorf("the row does not say what choosing it does: %q", byValue["elsewhere"].note)
 	}
 
 	// A profile whose session died is offered, because choosing it is how you say
@@ -623,5 +622,115 @@ func TestSigningOutLogsBackIn(t *testing.T) {
 	}
 	if environment != "dev" {
 		t.Errorf("environment = %q after signing back in", environment)
+	}
+}
+
+// An account with no section is chosen, not refused.
+//
+// Telling somebody "run lerian infra init" is telling them to leave, learn a
+// second command, and know which of three environment names to give it. They
+// picked the account; setting it up is this command's job.
+func TestAnUnsetAccountIsSetUpRatherThanRefused(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+		{Profile: infra.AWSProfile{Name: "other", Region: "sa-east-1"}, Caller: infra.Caller{Account: "999988887777"}},
+	}
+
+	for _, opt := range accountOptions(layout, resolved) {
+		if opt.value == "other" {
+			if opt.disabled {
+				t.Error("an account that could be set up was offered as unusable")
+			}
+			if strings.Contains(opt.note, "lerian infra init") {
+				t.Errorf("the row still sends the operator to another command: %q", opt.note)
+			}
+			return
+		}
+	}
+	t.Error("the unconfigured account is not in the list at all")
+}
+
+// Choosing it runs init for that account, with everything already known filled
+// in — and the environment slot picked from whichever is free, because that is
+// bookkeeping rather than a decision.
+func TestChoosingAnUnsetAccountConfiguresIt(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	previous := runInitCommand
+	runInitCommand = func(_ context.Context, args []string, _, _ io.Writer) error {
+		got = args
+		// What init would have written, so the run can carry on.
+		writeEnvConfig(t, checkout, map[string]string{
+			"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+			"stg": "account_id = 999988887777\nregion = sa-east-1\nprofile = other",
+		})
+		return nil
+	}
+	t.Cleanup(func() { runInitCommand = previous })
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "other", Region: "sa-east-1"}, Caller: infra.Caller{Account: "999988887777"}},
+	}
+
+	var out bytes.Buffer
+	ask, _ := selectorFor(t, keyEnterSeq)
+
+	environment, err := askForAccount(context.Background(), ask, &out, layout, resolved)
+	if err != nil {
+		t.Fatalf("askForAccount = %v\n%s", err, out.String())
+	}
+
+	joined := strings.Join(got, " ")
+	for _, want := range []string{"--profile other", "--account 999988887777", "--region sa-east-1", "--env stg"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("init was run as %q, missing %q", joined, want)
+		}
+	}
+	if environment != "stg" {
+		t.Errorf("environment = %q, want the slot it was configured into", environment)
+	}
+}
+
+// Three is all there is. backend/<env>.hcl and envs/<env>.tfvars are files in the
+// templates repo, one set per environment name, and there are three names — so a
+// checkout already holding three accounts cannot take a fourth, and saying so is
+// better than failing later with a missing file.
+func TestAFourthAccountSaysWhatIsInTheWay(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111111111111\nregion = us-east-1\nprofile = one",
+		"stg": "account_id = 222222222222\nregion = us-east-1\nprofile = two",
+		"prd": "account_id = 333333333333\nregion = us-east-1\nprofile = three",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = configureAccount(context.Background(), &bytes.Buffer{}, layout,
+		infra.ResolvedProfile{Profile: infra.AWSProfile{Name: "four"}, Caller: infra.Caller{Account: "444444444444"}})
+
+	if err == nil {
+		t.Fatal("a fourth account was configured into a checkout that holds three")
+	}
+	if !strings.Contains(err.Error(), "three") {
+		t.Errorf("the error does not explain the limit: %v", err)
 	}
 }

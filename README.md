@@ -294,27 +294,35 @@ It then asks which account, every run:
   Everything is created there. The state backend and the sizing follow from it.
   ❯ lerian-sandbox           account 524121347244  ·  deploys as dev
     default                  session expired — choose to log in
-    other-profile            (unavailable)  account 239025757440 is not configured
+    other-profile            account 239025757440  ·  not set up here yet — choosing it sets it up
     sign in as someone else  ends the session for every AWS tool on this machine
 ```
 
-Always asked, even with one account ready: deploying into an AWS account is not a
-step to infer on somebody's behalf, and the answer stays in the scrollback.
+Three kinds of row, and every one of them is choosable:
 
-The last row is the way to arrive as a different identity — the profiles in
-`~/.aws` are fixed, and which accounts they reach is decided by who is signed in.
-It is a row rather than something the command does on its own, because
-`aws sso logout` clears a token in `~/.aws/sso/cache` that **every** AWS client on
-the machine reads: another terminal, Terraform, anything on the shared config.
-Ending that automatically at start-up would break sessions that have nothing to do
-with this tool.
+- **ready** — deploys into that account;
+- **expired** — choosing it logs into that profile's session, then carries on;
+- **not set up** — choosing it sets the account up, here, without sending you to
+  a second command or asking you to pick an environment name.
 
-`dev`, `stg` and `prd` are names of files in the templates repo —
-`backend/<env>.hcl` holds the state, `envs/<env>.tfvars` holds the sizing — so
-they cannot be removed from the model. They can stop being the question. What is
-being decided is the account: it is what the guard checks before anything runs,
-and it is the thing that belongs to whoever is deploying rather than to us. The
-environment is derived from it and shown as a consequence.
+The last row signs out and back in, which is the only way to arrive as a
+different identity. It is a row rather than something the command does at
+start-up, because `aws sso logout` clears a token in `~/.aws/sso/cache` that
+**every** AWS client on the machine reads — another terminal, Terraform, anything
+on the shared config.
+
+### The three-account ceiling
+
+An account has to occupy one of `backend/<env>.hcl` and `envs/<env>.tfvars`, and
+the templates provide three sets: `dev`, `stg`, `prd`. So a checkout holds at most
+three accounts, and the CLI picks the free slot itself — which one is bookkeeping,
+not a decision worth a question. A fourth account says so plainly rather than
+failing later with a missing file; the answer is a second checkout.
+
+`dev`, `stg` and `prd` never appear as a question. They stay in the model because
+they name the files above, and the account guard still checks the account before
+anything runs — but what is decided here is the account, and the environment
+follows from it.
 
 Every profile in `~/.aws` gets a row, ordered by what can be done with it. One
 reaching a configured account is ready. One whose session has expired is

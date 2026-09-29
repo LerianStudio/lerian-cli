@@ -1135,11 +1135,79 @@ func askForAccount(
 	}
 
 	environment, ok := environmentForProfile(layout, chosen.Profile.Name, chosen.Caller.Account)
-	if !ok {
-		return "", fmt.Errorf("account %s is not configured in this checkout\n"+
-			"  lerian infra init", chosen.Caller.Account)
+	if ok {
+		return environment, nil
 	}
-	return environment, nil
+
+	// Chosen but not set up. Telling somebody to leave and run a second command —
+	// and to know which of three names to give it — is asking them to do the part
+	// this already knows how to do.
+	return configureAccount(ctx, out, layout, *chosen)
+}
+
+// runInitCommand is a variable so the chaining can be exercised without writing
+// into a checkout.
+var runInitCommand = runInit
+
+// configureAccount sets up the chosen account and returns the slot it went into.
+//
+// The environment name is bookkeeping, not a decision: backend/<env>.hcl and
+// envs/<env>.tfvars are files in the templates repo, one set per name, so an
+// account has to occupy one of them. Which one does not matter to whoever is
+// deploying, so it is not asked — the first free slot is used.
+//
+// There are three names, and that is a real ceiling: a checkout already holding
+// three accounts cannot take a fourth. Better said here than discovered later as
+// a missing file.
+func configureAccount(
+	ctx context.Context,
+	out io.Writer,
+	layout infra.Layout,
+	chosen infra.ResolvedProfile,
+) (string, error) {
+	slot, ok := freeEnvironment(layout)
+	if !ok {
+		return "", fmt.Errorf("this checkout already holds three accounts, which is all it can hold\n"+
+			"Each account occupies one of backend/<env>.hcl and envs/<env>.tfvars, and the\n"+
+			"templates provide three sets: %s.\n\n"+
+			"Use a separate checkout for account %s, or free one of the three in\n"+
+			"examples/aws/environments.conf.",
+			strings.Join(infra.Environments, ", "), chosen.Caller.Account)
+	}
+
+	theme := newStyle(out)
+	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Setting up account "+chosen.Caller.Account))
+	fmt.Fprintf(out, "  %s\n", theme.dim("first time for this account in this checkout"))
+
+	region := chosen.Profile.Region
+	args := []string{
+		"--env", slot,
+		"--profile", chosen.Profile.Name,
+		"--account", chosen.Caller.Account,
+	}
+	if region != "" {
+		args = append(args, "--region", region)
+	}
+	if err := runInitCommand(ctx, args, out, out); err != nil {
+		return "", err
+	}
+
+	// Read back rather than assumed: init is what decides what was written, and a
+	// run against a section that is not there fails later with a missing file.
+	if _, err := infra.LoadEnvConfig(layout, slot); err != nil {
+		return "", fmt.Errorf("account %s was not set up: %w", chosen.Caller.Account, err)
+	}
+	return slot, nil
+}
+
+// freeEnvironment is the first slot no account has taken.
+func freeEnvironment(layout infra.Layout) (string, bool) {
+	for _, name := range infra.Environments {
+		if _, err := infra.LoadEnvConfig(layout, name); err != nil {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // signOutChoice is the row that ends the SSO session and starts a new one.
@@ -1264,8 +1332,7 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 				opt.note = "account " + entry.Caller.Account + "  ·  deploys as " + environment
 			} else {
 				rank = unconfigured
-				opt.disabled = true
-				opt.note = "account " + entry.Caller.Account + " is not configured — lerian infra init"
+				opt.note = "account " + entry.Caller.Account + "  ·  not set up here yet — choosing it sets it up"
 			}
 		}
 		rows = append(rows, row{option: opt, rank: rank})
