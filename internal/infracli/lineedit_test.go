@@ -184,3 +184,41 @@ func TestTheEditorIsKeptAcrossQuestions(t *testing.T) {
 		t.Error("a buffer was taken for a terminal")
 	}
 }
+
+// The editor and the selector want different numbers from the same terminal.
+//
+// The selector caps at 120 because a row it draws wider than that is a row it
+// cannot redraw. The editor is not drawing rows: it is deciding where the line
+// wraps, and that happens at the terminal's real edge. Told 120 on a 160-column
+// terminal it wraps the path early and puts the cursor a screen-row away from
+// the character it is editing.
+//
+// Measured widths need a terminal, which go test does not have; this pins the
+// arithmetic both callers depend on.
+func TestTheEditorIsNotCappedWhereTheSelectorIs(t *testing.T) {
+	tests := []struct {
+		measured, layout int
+	}{
+		{80, 80},
+		{120, 120},
+		{160, 120}, // the selector stops here, the editor does not
+		{200, 120},
+	}
+
+	for _, test := range tests {
+		if got := capForLayout(test.measured); got != test.layout {
+			t.Errorf("capForLayout(%d) = %d, want %d", test.measured, got, test.layout)
+		}
+		if test.measured > 120 && capForLayout(test.measured) == test.measured {
+			t.Errorf("the selector was handed %d columns it cannot redraw", test.measured)
+		}
+	}
+}
+
+// A writer that is not a terminal has no width to measure, and saying 80 would
+// have the editor size itself to a screen that does not exist.
+func TestThereIsNoWidthWithoutATerminal(t *testing.T) {
+	if got := screenWidth(&bytes.Buffer{}); got != 0 {
+		t.Errorf("screenWidth of a buffer = %d, want 0", got)
+	}
+}

@@ -53,8 +53,9 @@ func (p *prompter) editableLine(out io.Writer, prompt string) (answer string, ha
 	terminal.SetPrompt(prompt)
 	// term.NewTerminal assumes 80 columns and does its cursor arithmetic with
 	// that number, so on any other width a long path wraps where the editor does
-	// not expect it and the cursor lands in the wrong place.
-	if width := terminalWidth(out); width > 0 {
+	// not expect it and the cursor lands in the wrong place. Measured, not capped:
+	// the editor wraps at the terminal's edge, wherever that is.
+	if width := screenWidth(out); width > 0 {
 		_ = terminal.SetSize(width, 24)
 	}
 
