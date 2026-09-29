@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,7 +108,7 @@ func TestTheCredentialIsCheckedAsSoonAsTheEnvironmentIsKnown(t *testing.T) {
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	expired := errors.New("the SSO session for profile \"lerian-sandbox\" has expired")
-	err := guidedRun(catalog, &opts, ask, func(string) error { return expired })
+	err := guidedRun(catalog, &opts, ask, infra.Layout{}, func(string) error { return expired })
 
 	if !errors.Is(err, expired) {
 		t.Fatalf("guidedRun = %v, want the credential failure", err)
@@ -131,7 +132,7 @@ func TestAWorkingCredentialAsksTheRestOfTheQuestions(t *testing.T) {
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	var checked string
-	if err := guidedRun(catalog, &opts, ask, func(env string) error { checked = env; return nil }); err != nil {
+	if err := guidedRun(catalog, &opts, ask, infra.Layout{}, func(env string) error { checked = env; return nil }); err != nil {
 		t.Fatalf("guidedRun = %v", err)
 	}
 
@@ -140,5 +141,77 @@ func TestAWorkingCredentialAsksTheRestOfTheQuestions(t *testing.T) {
 	}
 	if !strings.Contains(painted.String(), "operate on") {
 		t.Errorf("the questions stopped at the environment:\n%s", painted.String())
+	}
+}
+
+// The environment picks the AWS account, and until now the account only appeared
+// on the confirmation before an apply — so a plan never named it at all, and even
+// an apply named it after every question had been answered. It is the one fact
+// worth knowing before choosing, not after.
+func TestTheEnvironmentOptionsNameTheAccount(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+		"prd": "account_id = 999988887777\nregion = us-east-1\nprofile = production",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	options := environmentOptions(layout)
+
+	byValue := map[string]option{}
+	for _, opt := range options {
+		byValue[opt.value] = opt
+	}
+	if !strings.Contains(byValue["dev"].note, "111122223333") {
+		t.Errorf("dev does not name its account: %q", byValue["dev"].note)
+	}
+	if !strings.Contains(byValue["dev"].note, "sandbox") {
+		t.Errorf("dev does not name the profile it uses: %q", byValue["dev"].note)
+	}
+	if !strings.Contains(byValue["prd"].note, "999988887777") {
+		t.Errorf("prd does not name its account: %q", byValue["prd"].note)
+	}
+	// Two environments must never look alike here: picking the wrong one is
+	// picking the wrong account.
+	if byValue["dev"].note == byValue["prd"].note {
+		t.Errorf("dev and prd read identically: %q", byValue["dev"].note)
+	}
+}
+
+// An environment the configuration says nothing about keeps its plain
+// description rather than claiming an account it does not have.
+func TestAnUnconfiguredEnvironmentClaimsNoAccount(t *testing.T) {
+	layout, err := infra.NewLayout(fakeCheckout(t, "", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, opt := range environmentOptions(layout) {
+		if strings.Contains(opt.note, "account") {
+			t.Errorf("%s claims an account with no configuration to read: %q", opt.value, opt.note)
+		}
+		if opt.note == "" {
+			t.Errorf("%s lost its description", opt.value)
+		}
+	}
+}
+
+// writeEnvConfig writes an environments.conf holding the given sections.
+func writeEnvConfig(t *testing.T, checkout string, sections map[string]string) {
+	t.Helper()
+
+	var body strings.Builder
+	for name, values := range sections {
+		fmt.Fprintf(&body, "[%s]\n%s\n\n", name, values)
+	}
+	path := filepath.Join(checkout, "examples", "aws", "environments.conf")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body.String()), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

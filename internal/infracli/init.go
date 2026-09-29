@@ -382,7 +382,7 @@ func buildInitPlan(
 		answer, err := ask.pick(
 			"Which environment are you setting up?",
 			"Picks the AWS account, the state bucket and the sizing of every resource.",
-			"--env", environmentOptions(), "dev")
+			"--env", environmentOptions(layout), "dev")
 		if err != nil {
 			return plan, err
 		}
@@ -1098,15 +1098,36 @@ func printModeDisclaimer(out io.Writer, plan initPlan) {
 
 // environmentOptions is the closed set every environment-keyed file agrees on:
 // envs/<env>.tfvars, backend/<env>.hcl and the bootstrap workspace.
-func environmentOptions() []option {
+// environmentOptions lists the three environments, each with the AWS account it
+// lands in.
+//
+// The account is the consequence of this answer and the one fact worth reading
+// before giving it. It used to appear only on the confirmation before an apply —
+// so a plan never named it at all, and an apply named it after every other
+// question had been answered. environments.conf already declares it, and it is
+// the same number the account guard later refuses to run against if it does not
+// match.
+//
+// An environment the configuration says nothing about keeps its plain
+// description: claiming an account that cannot be read would be worse than not
+// naming one.
+func environmentOptions(layout infra.Layout) []option {
 	notes := map[string]string{
 		"dev": "day to day, smallest sizing",
 		"stg": "pre-production",
 		"prd": "production",
 	}
+
 	options := make([]option, 0, len(infra.Environments))
 	for _, name := range infra.Environments {
-		options = append(options, option{value: name, label: name, note: notes[name]})
+		note := notes[name]
+		if config, err := infra.LoadEnvConfig(layout, name); err == nil && config.AccountID != "" {
+			note += "  ·  account " + config.AccountID
+			if config.Profile != "" {
+				note += " via " + config.Profile
+			}
+		}
+		options = append(options, option{value: name, label: name, note: note})
 	}
 	return options
 }

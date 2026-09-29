@@ -1027,7 +1027,13 @@ func printDryRun(
 // its error stops the remaining questions. It exists for one check: the
 // environment names the AWS account, the account names the profile, and an
 // expired session for that profile makes every later answer worthless.
-func guidedRun(catalog infra.Catalog, opts *options, ask *prompter, afterEnvironment func(string) error) error {
+func guidedRun(
+	catalog infra.Catalog,
+	opts *options,
+	ask *prompter,
+	layout infra.Layout,
+	afterEnvironment func(string) error,
+) error {
 	if !ask.interactive {
 		return nil
 	}
@@ -1035,7 +1041,7 @@ func guidedRun(catalog infra.Catalog, opts *options, ask *prompter, afterEnviron
 	environment, err := ask.pick(
 		"Which environment?",
 		"Picks the AWS account, the state backend and the variables file of every stack.",
-		"--env", environmentOptions(), "")
+		"--env", environmentOptions(layout), "")
 	if err != nil {
 		return err
 	}
@@ -1430,7 +1436,7 @@ func prepareChoices(
 			return nil, err
 		}
 	}
-	if err := guidedRun(catalog, opts, ask, credentialCheck(ctx, layout, opts.dryRun)); err != nil {
+	if err := guidedRun(catalog, opts, ask, layout, credentialCheck(ctx, layout, opts.dryRun)); err != nil {
 		return nil, err
 	}
 	return terraform, nil

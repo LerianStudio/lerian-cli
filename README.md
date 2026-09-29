@@ -278,6 +278,23 @@ checks the machine before it asks anything:
   4 checks, all ok.
 ```
 
+The environment question then names the account each choice lands in:
+
+```
+  Which environment?
+  Picks the AWS account, the state backend and the variables file of every stack.
+  ❯ dev  day to day, smallest sizing  ·  account 524121347244 via lerian-sandbox
+    stg  pre-production                ·  account 111122223333 via lerian-staging
+    prd  production                    ·  account 999988887777 via lerian-prod
+```
+
+The account is the consequence of that answer, and it used to appear only on the
+confirmation before an apply — so a plan never named it at all, and an apply
+named it after every other question had been answered. It is read from
+`environments.conf`, which is the same number the account guard later refuses to
+run against if the credential does not match. An environment the configuration
+says nothing about keeps its plain description rather than claiming an account.
+
 The block appears whether or not anything is wrong: which checkout and which
 terraform a run is about to use is worth a line each, and showing them only on
 failure means never seeing them on the run that matters. A scripted invocation —
