@@ -20,12 +20,12 @@ func fakeRoot(t *testing.T) *cobra.Command {
 	return root
 }
 
-// The menu must not run what it picked. A child's Execute walks up to the root
-// and starts from there, so running the choice from inside the root's own RunE
-// re-enters the menu and never returns. Recording the answer is what breaks that
-// cycle, and Execute dispatches it afterwards.
-func TestChooseCommandDoesNotRunTheChoice(t *testing.T) {
-	t.Cleanup(func() { chosenCommand = "" })
+// Asking must not run what it picked. A child's Execute walks up to the root and
+// starts from there, so running the choice from inside the root's own RunE
+// re-enters it and never returns. The session runs the answer afterwards, from
+// outside that RunE, which is what breaks the cycle.
+func TestAskingDoesNotRunTheChoice(t *testing.T) {
+	t.Cleanup(func() { wantsSession = false })
 
 	ran := false
 	root := &cobra.Command{Use: "lerian"}
@@ -38,10 +38,10 @@ func TestChooseCommandDoesNotRunTheChoice(t *testing.T) {
 
 	// No terminal here, so the selector refuses rather than reading a key. What
 	// is under test is that nothing was executed either way.
-	_ = chooseCommand(root)
+	_, _ = menuAsk(root)()
 
 	if ran {
-		t.Error("chooseCommand executed the chosen command, which re-enters the root and loops")
+		t.Error("asking executed the chosen command, which re-enters the root and loops")
 	}
 }
 
@@ -96,5 +96,59 @@ func TestAnUnknownCommandIsStillRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "nonexistent") {
 		t.Errorf("the error does not name the command: %v", err)
+	}
+}
+
+// The menu is a shorter list than the command set. A command can be worth having
+// and not worth offering — midaz is the whole ledger surface, reached with
+// arguments the menu cannot ask for, so offering it lands the operator in a help
+// page rather than in anything they chose to do.
+//
+// Marked on the command rather than filtered by name here, so the two places do
+// not have to be kept in agreement.
+func TestACommandCanBeKeptOutOfTheMenu(t *testing.T) {
+	root := fakeRoot(t)
+	root.AddCommand(&cobra.Command{
+		Use:         "midaz",
+		Short:       "Midaz ledger management commands",
+		Annotations: map[string]string{menuAnnotation: menuSkip},
+		Run:         func(*cobra.Command, []string) {},
+	})
+
+	for _, choice := range menuChoices(root) {
+		if choice.Value == "midaz" {
+			t.Error("a command marked as not offered was offered")
+		}
+	}
+
+	// Still a command. Kept out of the menu is not removed from the CLI, and
+	// `lerian midaz ledger list` has to keep working.
+	found := false
+	for _, child := range root.Commands() {
+		if child.Name() == "midaz" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the command was removed from the CLI, not just from the menu")
+	}
+}
+
+// And the menu still offers what it should.
+func TestTheMenuOffersAuthInfraAndVersion(t *testing.T) {
+	choices := menuChoices(rootCmd)
+	offered := make([]string, 0, len(choices))
+	for _, choice := range choices {
+		offered = append(offered, choice.Value)
+	}
+
+	want := []string{"auth", "infra", "version"}
+	if len(offered) != len(want) {
+		t.Fatalf("the menu offers %v, want exactly %v", offered, want)
+	}
+	for index, name := range want {
+		if offered[index] != name {
+			t.Errorf("offered[%d] = %q, want %q (%v)", index, offered[index], name, offered)
+		}
 	}
 }

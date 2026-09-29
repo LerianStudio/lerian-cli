@@ -3,9 +3,15 @@ package infracli
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
 // The reason this command exists: a run verifies each dependency immediately
@@ -21,7 +27,7 @@ func TestReportListsEveryFailureAtOnce(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := reportChecks(&out, results)
+	err := reportChecks(&out, results, "")
 
 	if err == nil {
 		t.Fatal("reportChecks returned nil with three failures; the exit code is what makes this usable as a CI gate")
@@ -49,7 +55,7 @@ func TestReportSucceedsWhenEverythingIsPresent(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := reportChecks(&out, results); err != nil {
+	if err := reportChecks(&out, results, ""); err != nil {
 		t.Fatalf("reportChecks on an all-ok report = %v, want nil", err)
 	}
 	if !strings.Contains(out.String(), "all ok") {
@@ -60,13 +66,38 @@ func TestReportSucceedsWhenEverythingIsPresent(t *testing.T) {
 // The command promises to touch no AWS API, which is what lets it answer "can
 // this machine run the tool" without a configured profile. Saying so in the
 // output is part of the contract.
-func TestReportSaysNoAWSCallWasMade(t *testing.T) {
+// The footer is the caller's claim, not the report's, because only the caller
+// knows what it just did: this command reaches no AWS API, and the preflight —
+// which asks AWS who every profile is — must not say the same thing.
+func TestReportPrintsTheNoteItIsGiven(t *testing.T) {
 	var out bytes.Buffer
-	if err := reportChecks(&out, []checkResult{{name: "git", summary: "/usr/bin/git", ok: true}}); err != nil {
+	results := []checkResult{{name: "git", summary: "/usr/bin/git", ok: true}}
+
+	if err := reportChecks(&out, results, " No AWS call was made."); err != nil {
 		t.Fatalf("reportChecks = %v, want nil", err)
 	}
 	if !strings.Contains(out.String(), "No AWS call was made") {
-		t.Errorf("report does not state that no AWS call was made:\n%s", out.String())
+		t.Errorf("report does not carry the note it was given:\n%s", out.String())
+	}
+
+	var bare bytes.Buffer
+	_ = reportChecks(&bare, results, "")
+	if strings.Contains(bare.String(), "AWS call") {
+		t.Errorf("a report given no note made a claim anyway:\n%s", bare.String())
+	}
+}
+
+// And `lerian infra check` is the caller that makes it.
+func TestTheCheckCommandClaimsItMadeNoAWSCall(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	t.Setenv("LERIAN_TF_REPO", checkout)
+
+	var out, errOut bytes.Buffer
+	if err := runCheck(context.Background(), nil, &out, &errOut); err != nil {
+		t.Skipf("this machine is missing a dependency, so there is no clean report to read: %v", err)
+	}
+	if !strings.Contains(out.String(), "No AWS call was made") {
+		t.Errorf("the check no longer states that it reached no AWS API:\n%s", out.String())
 	}
 }
 
@@ -74,7 +105,7 @@ func TestReportSaysNoAWSCallWasMade(t *testing.T) {
 // PATH resolves to a different binary than the operator expects.
 func TestReportKeepsThePathOfAPassingCheck(t *testing.T) {
 	var out bytes.Buffer
-	_ = reportChecks(&out, []checkResult{{name: "aws", summary: "/opt/homebrew/bin/aws", ok: true}})
+	_ = reportChecks(&out, []checkResult{{name: "aws", summary: "/opt/homebrew/bin/aws", ok: true}}, "")
 
 	if !strings.Contains(out.String(), "/opt/homebrew/bin/aws") {
 		t.Errorf("report dropped the resolved path:\n%s", out.String())
@@ -134,10 +165,13 @@ func TestCheckReadsTheRepoEnvironmentVariable(t *testing.T) {
 }
 
 // templatesRow returns the report line for the templates check.
+// templatesRow finds the row by its name field rather than by the start of the
+// line: the verdict leads every row, so "templates" is the second field.
 func templatesRow(t *testing.T, report string) string {
 	t.Helper()
 	for _, line := range strings.Split(report, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "templates") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == "templates" {
 			return strings.TrimSpace(line)
 		}
 	}
@@ -161,14 +195,15 @@ func TestCheckRejectsAPositionalArgument(t *testing.T) {
 // The gate exists to collapse a round trip: returning at the first gap sends the
 // operator to install terraform, run again, and only then learn the AWS CLI is
 // missing too.
-func TestRequireEnvironmentReportsBothToolsAtOnce(t *testing.T) {
+func TestPreflightReportsBothToolsAtOnce(t *testing.T) {
+	layout := layoutFor(t)
 	t.Setenv("PATH", t.TempDir()) // neither binary resolvable
 
 	var out bytes.Buffer
-	_, err := requireEnvironment(context.Background(), &out, false)
+	_, err := preflight(context.Background(), nil, &out, layout, sourceFlag, false)
 
 	if err == nil {
-		t.Fatal("requireEnvironment passed with no terraform and no aws in PATH")
+		t.Fatal("preflight passed with no terraform and no aws in PATH")
 	}
 	for _, tool := range []string{"terraform", "aws"} {
 		if !strings.Contains(out.String(), tool) {
@@ -179,9 +214,11 @@ func TestRequireEnvironmentReportsBothToolsAtOnce(t *testing.T) {
 
 // A dry run makes no AWS call, so demanding the AWS CLI for one would block a
 // command that never uses it.
-func TestRequireEnvironmentExemptsTheAWSCLIOnADryRun(t *testing.T) {
+func TestPreflightExemptsTheAWSCLIOnADryRun(t *testing.T) {
+	layout := layoutFor(t)
+
 	var out bytes.Buffer
-	_, err := requireEnvironment(context.Background(), &out, true)
+	_, err := preflight(context.Background(), nil, &out, layout, sourceFlag, true)
 
 	if err != nil && strings.Contains(out.String(), "aws") {
 		t.Errorf("a dry run was gated on the AWS CLI:\n%s", out.String())
@@ -190,11 +227,556 @@ func TestRequireEnvironmentExemptsTheAWSCLIOnADryRun(t *testing.T) {
 
 // git is only used by init, to clone. Gating a run on it would demand a tool the
 // run never calls.
-func TestRequireEnvironmentDoesNotGateOnGit(t *testing.T) {
+func TestPreflightDoesNotGateOnGit(t *testing.T) {
+	layout := layoutFor(t)
+
 	var out bytes.Buffer
-	_, _ = requireEnvironment(context.Background(), &out, true)
+	_, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, true)
 
 	if strings.Contains(out.String(), "git") {
 		t.Errorf("a run was gated on git, which only init uses:\n%s", out.String())
 	}
+}
+
+// stubIdentity answers for profiles without an AWS account behind them.
+type stubIdentity struct {
+	usable map[string]bool
+}
+
+func (s stubIdentity) CallerIdentity(_ context.Context, profile, _ string) (infra.Caller, error) {
+	if s.usable[profile] {
+		return infra.Caller{Account: "111122223333", ARN: "arn:aws:iam::111122223333:user/" + profile}, nil
+	}
+	return infra.Caller{}, errors.New("the SSO session has expired")
+}
+
+// awsConfig writes a ~/.aws/config holding the named profiles, and points HOME at
+// it so the profile listing reads this one rather than the machine's.
+func awsConfig(t *testing.T, profiles ...string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var body strings.Builder
+	for _, name := range profiles {
+		fmt.Fprintf(&body, "[profile %s]\nregion = us-east-1\nsso_session = lerian\n\n", name)
+	}
+	dir := filepath.Join(home, ".aws")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(body.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A machine where nothing in ~/.aws resolves cannot run a single stage, and the
+// operator finds out before answering anything rather than after — the questions
+// are three, and the answer to all of them is wasted on a run that cannot start.
+func TestAnExpiredSessionIsReportedBeforeTheQuestions(t *testing.T) {
+	awsConfig(t, "sandbox", "production")
+
+	result, _ := checkAWSSession(context.Background(), stubIdentity{})
+
+	if result.ok {
+		t.Fatal("a machine with no usable profile passed the session check")
+	}
+	if !strings.Contains(result.detail, "aws sso login") {
+		t.Errorf("the failure does not say how to fix it:\n%s", result.detail)
+	}
+}
+
+// One profile that resolves is enough to start. Which one is the right one is a
+// later question — this one only asks whether the operator is logged in at all.
+func TestOneUsableProfileIsEnough(t *testing.T) {
+	awsConfig(t, "sandbox", "production")
+
+	result, _ := checkAWSSession(context.Background(), stubIdentity{usable: map[string]bool{"production": true}})
+
+	if !result.ok {
+		t.Errorf("a machine with a usable profile failed the session check: %s", result.detail)
+	}
+	if !strings.Contains(result.summary, "production") {
+		t.Errorf("the summary does not name the profile that resolves: %q", result.summary)
+	}
+}
+
+// An empty ~/.aws is a different failure from an expired session, and it needs a
+// different fix: there is nothing to log in to yet.
+func TestNoProfilesAtAllSaysSo(t *testing.T) {
+	awsConfig(t)
+
+	result, _ := checkAWSSession(context.Background(), stubIdentity{})
+
+	if result.ok {
+		t.Fatal("a machine with no profiles at all passed the session check")
+	}
+	if !strings.Contains(result.detail, "aws configure sso") {
+		t.Errorf("the failure does not say how to create a profile:\n%s", result.detail)
+	}
+}
+
+// layoutFor is a checkout the preflight can report on without resolving one.
+func layoutFor(t *testing.T) infra.Layout {
+	t.Helper()
+	layout, err := infra.NewLayout(fakeCheckout(t, "", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return layout
+}
+
+// The session is part of the preflight, not something a later stage discovers.
+func TestThePreflightAsksWhetherTheOperatorIsLoggedIn(t *testing.T) {
+	layout := layoutFor(t)
+	awsConfig(t, "sandbox")
+	previous := checkIdentity
+	checkIdentity = stubIdentity{}
+	t.Cleanup(func() { checkIdentity = previous })
+
+	var out bytes.Buffer
+	_, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, false)
+
+	if !strings.Contains(out.String(), "aws session") {
+		t.Errorf("the preflight never asked whether there is a session:\n%s", out.String())
+	}
+}
+
+// The verdict comes first. Scanning for what failed should be running an eye
+// down the left edge, not down a ragged right one — the summaries are paths and
+// versions of wildly different lengths, and on a narrow terminal the column that
+// holds the verdict is the first thing to wrap off the screen.
+func TestTheVerdictIsTheFirstThingOnTheLine(t *testing.T) {
+	results := []checkResult{
+		{name: "terraform", summary: "/opt/homebrew/bin/terraform", ok: true},
+		{name: "aws session", summary: "not logged in", detail: "log in", ok: false},
+	}
+
+	var out bytes.Buffer
+	_ = reportChecks(&out, results, "")
+
+	for _, line := range strings.Split(out.String(), "\n") {
+		trimmed := strings.TrimSpace(stripANSI(line))
+		switch {
+		case strings.HasPrefix(trimmed, "terraform"), strings.HasPrefix(trimmed, "aws session /"):
+			t.Errorf("the line starts with the name rather than the verdict: %q", trimmed)
+		}
+	}
+	if !strings.Contains(stripANSI(out.String()), "ok       terraform") {
+		t.Errorf("the verdict does not lead the row:\n%s", stripANSI(out.String()))
+	}
+	if !strings.Contains(stripANSI(out.String()), "missing  aws session") {
+		t.Errorf("the failing verdict does not lead its row:\n%s", stripANSI(out.String()))
+	}
+}
+
+// The names line up under each other whether or not the verdict beside them is
+// colored. Padding a string that carries escape sequences counts the escapes,
+// which is how a colored column ends up one word to the right of the plain ones.
+//
+// Two things had to be got right here. writeRows is called directly with each
+// style, because newStyle enables color only for an *os.File that is a terminal —
+// a wrapper around a buffer gets none, both reports come out plain, and the
+// comparison is between a string and itself. And the columns are compared between
+// the rows of one report, not between the two reports: "ok" and "missing" are
+// different lengths, so dropping the padding moves both reports identically and a
+// report-to-report comparison notices nothing. Both mistakes were in the first
+// version of this test, and it passed with the padding deleted.
+func TestTheNamesLineUpWhateverTheVerdictIs(t *testing.T) {
+	results := []checkResult{
+		{name: "terraform", summary: "ok", ok: true},
+		{name: "aws session", summary: "no", detail: "x", ok: false},
+	}
+	width := len("aws session")
+
+	for _, test := range []struct {
+		name  string
+		theme style
+	}{
+		{"plain", style{}},
+		{"colored", style{enabled: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var out bytes.Buffer
+			writeRows(&out, test.theme, results, width)
+
+			if test.theme.enabled && !strings.Contains(out.String(), "\x1b") {
+				t.Fatal("nothing was colored, so this run proves nothing")
+			}
+
+			// The passing row and the failing row must put their name in the same
+			// column, which is what "ok" and "missing" being different lengths
+			// threatens.
+			first := columnOf(t, stripANSI(out.String()), "terraform")
+			second := columnOf(t, stripANSI(out.String()), "aws session")
+			if first != second {
+				t.Errorf("terraform sits at column %d and aws session at %d:\n%s",
+					first, second, stripANSI(out.String()))
+			}
+		})
+	}
+}
+
+func columnOf(t *testing.T, text, name string) int {
+	t.Helper()
+	for _, line := range strings.Split(text, "\n") {
+		if at := strings.Index(line, name); at != -1 {
+			return at
+		}
+	}
+	t.Fatalf("%q is not in:\n%s", name, text)
+	return -1
+}
+
+func stripANSI(text string) string {
+	var out strings.Builder
+	for len(text) > 0 {
+		if strings.HasPrefix(text, "\x1b[") {
+			if end := strings.IndexByte(text, 'm'); end != -1 {
+				text = text[end+1:]
+				continue
+			}
+		}
+		out.WriteByte(text[0])
+		text = text[1:]
+	}
+	return out.String()
+}
+
+// Being told to run `aws sso login` and then run this again is a round trip
+// through another program for something this one has everything it needs to do:
+// the AWS CLI is already a verified dependency, and the session name is already
+// in the profile it just read.
+func TestAnExpiredSessionCanBeRevivedWithoutLeaving(t *testing.T) {
+	layout := layoutFor(t)
+	awsConfig(t, "sandbox", "production")
+
+	// Nothing resolves, then everything does — which is what logging in changes.
+	loggedIn := false
+	previous := checkIdentity
+	checkIdentity = conditionalIdentity{usable: &loggedIn}
+	t.Cleanup(func() { checkIdentity = previous })
+
+	var attempted []infra.SSOTarget
+	previousLogin := ssoLogin
+	ssoLogin = func(_ context.Context, target infra.SSOTarget, _ io.Reader, _, _ io.Writer) error {
+		attempted = append(attempted, target)
+		loggedIn = true
+		return nil
+	}
+	t.Cleanup(func() { ssoLogin = previousLogin })
+
+	ask, _ := selectorFor(t, keyEnterSeq)
+
+	var out bytes.Buffer
+	_, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+
+	if len(attempted) != 1 {
+		t.Fatalf("logged in %d times, want once: %v", len(attempted), attempted)
+	}
+	if attempted[0].Session != "lerian" {
+		t.Errorf("logged into %q, want the session the profiles share", attempted[0].Session)
+	}
+	// And the run carries on: the reason it stopped is gone.
+	if err != nil && strings.Contains(err.Error(), "aws session") {
+		t.Errorf("the session was still reported as failed after logging in: %v\n%s", err, out.String())
+	}
+}
+
+// Declining leaves the command exactly where it was: the report, the login
+// instruction, and a non-zero exit.
+func TestDecliningTheLoginLeavesTheInstruction(t *testing.T) {
+	layout := layoutFor(t)
+	awsConfig(t, "sandbox")
+
+	previous := checkIdentity
+	checkIdentity = stubIdentity{}
+	t.Cleanup(func() { checkIdentity = previous })
+
+	called := false
+	previousLogin := ssoLogin
+	ssoLogin = func(context.Context, infra.SSOTarget, io.Reader, io.Writer, io.Writer) error {
+		called = true
+		return nil
+	}
+	t.Cleanup(func() { ssoLogin = previousLogin })
+
+	// Down once, onto "cancel", then Enter.
+	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq)
+
+	var out bytes.Buffer
+	_, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+
+	if called {
+		t.Error("the login ran without being accepted")
+	}
+	if err == nil {
+		t.Fatal("declining the login let the run continue with no session")
+	}
+	if !strings.Contains(out.String(), "aws sso login") {
+		t.Errorf("the instruction for doing it by hand is gone:\n%s", out.String())
+	}
+}
+
+// A profile backed by a static access key has no session to revive, so there is
+// nothing to offer and offering anyway would run a command that cannot work.
+func TestNoLoginIsOfferedForProfilesWithoutASession(t *testing.T) {
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "static", Source: "credentials"}, Err: errors.New("expired")},
+	}
+
+	if targets := loginTargets(resolved); len(targets) != 0 {
+		t.Errorf("offered %v for a profile with no SSO session", targets)
+	}
+}
+
+// Profiles behind one session share one login, which is the whole reason the
+// session name is worth reading: a dozen account profiles are revived by a single
+// command, not by a dozen identical ones.
+func TestProfilesSharingASessionShareOneLogin(t *testing.T) {
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "dev", SSOSession: "acme"}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "stg", SSOSession: "acme"}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "other", SSOSession: "second"}, Err: errors.New("expired")},
+	}
+
+	targets := loginTargets(resolved)
+
+	if len(targets) != 2 {
+		t.Fatalf("got %d targets, want one per session: %v", len(targets), targets)
+	}
+	if targets[0].Session != "acme" || targets[1].Session != "second" {
+		t.Errorf("targets = %v, want the two sessions in order", targets)
+	}
+}
+
+// conditionalIdentity resolves once the flag it watches is set.
+type conditionalIdentity struct{ usable *bool }
+
+func (c conditionalIdentity) CallerIdentity(_ context.Context, profile, _ string) (infra.Caller, error) {
+	if *c.usable {
+		return infra.Caller{Account: "111122223333", ARN: "arn:aws:iam::111122223333:user/" + profile}, nil
+	}
+	return infra.Caller{}, errors.New("the SSO session has expired")
+}
+
+// The report is what the operator asked for by picking infra, not an error
+// message that happens to be formatted as a table. It appears whether or not
+// anything is wrong: knowing which checkout and which terraform a run is about to
+// use is worth a line each, and seeing them only when something breaks means
+// never seeing them on the run that matters.
+func TestTheReportAppearsEvenWhenEverythingPasses(t *testing.T) {
+	layout := layoutFor(t)
+	awsConfig(t, "sandbox")
+	machineWithTools(t)
+
+	previous := checkIdentity
+	checkIdentity = stubIdentity{usable: map[string]bool{"sandbox": true}}
+	t.Cleanup(func() { checkIdentity = previous })
+
+	ask, _ := selectorFor(t, "")
+
+	var out bytes.Buffer
+	if _, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false); err != nil {
+		t.Fatalf("preflight on a working machine = %v\n%s", err, out.String())
+	}
+
+	report := stripANSI(out.String())
+	if !strings.Contains(report, "Environment check") {
+		t.Errorf("nothing was reported for a machine where everything passed:\n%s", report)
+	}
+	for _, row := range []string{"terraform", "templates", "aws session"} {
+		if !strings.Contains(report, row) {
+			t.Errorf("the %q row is missing from a passing report:\n%s", row, report)
+		}
+	}
+}
+
+// A scripted run — one that named its --env and asked nothing — keeps the output
+// it always had. The block is for the person who chose from a menu; a pipeline
+// gets a table it did not ask for on every single invocation.
+func TestAScriptedRunIsNotGivenTheReport(t *testing.T) {
+	layout := layoutFor(t)
+	awsConfig(t, "sandbox")
+	machineWithTools(t)
+
+	previous := checkIdentity
+	checkIdentity = stubIdentity{usable: map[string]bool{"sandbox": true}}
+	t.Cleanup(func() { checkIdentity = previous })
+
+	var out bytes.Buffer
+	if _, err := preflight(context.Background(), nil, &out, layout, sourceFlag, false); err != nil {
+		t.Fatalf("preflight = %v", err)
+	}
+
+	if out.Len() != 0 {
+		t.Errorf("a scripted run was given a report it did not ask for:\n%s", out.String())
+	}
+}
+
+// "No AWS call was made" is true of `lerian infra check` and false of the
+// preflight, which asks AWS who the profiles are. A footer that says otherwise is
+// a claim about what just happened, and it would be wrong.
+func TestTheNoAWSCallClaimIsOnlyMadeWhereItHolds(t *testing.T) {
+	layout := layoutFor(t)
+	awsConfig(t, "sandbox")
+	machineWithTools(t)
+
+	previous := checkIdentity
+	checkIdentity = stubIdentity{usable: map[string]bool{"sandbox": true}}
+	t.Cleanup(func() { checkIdentity = previous })
+
+	ask, _ := selectorFor(t, "")
+
+	var out bytes.Buffer
+	_, _ = preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+
+	if strings.Contains(out.String(), "No AWS call") {
+		t.Errorf("the preflight claimed it made no AWS call, having just made several:\n%s", out.String())
+	}
+}
+
+// The row answers one question — is there a session — so it says how many
+// resolve and names a few. Naming all of them turns a one-line verdict into a
+// wrapped paragraph on a machine with a profile per account, which is the machine
+// this tool is built for.
+func TestTheSessionRowStaysOneLine(t *testing.T) {
+	names := []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india"}
+	awsConfig(t, names...)
+
+	usable := map[string]bool{}
+	for _, name := range names {
+		usable[name] = true
+	}
+
+	result, _ := checkAWSSession(context.Background(), stubIdentity{usable: usable})
+
+	if !result.ok {
+		t.Fatalf("every profile resolves and the check failed: %s", result.detail)
+	}
+	if displayWidth(result.summary) > 60 {
+		t.Errorf("the summary is %d columns and will wrap:\n%s", displayWidth(result.summary), result.summary)
+	}
+	if !strings.Contains(result.summary, "9") {
+		t.Errorf("the summary does not say how many resolve: %q", result.summary)
+	}
+}
+
+// The templates row is a verification, not a label. A directory that is not a
+// checkout, or one older than this binary can read, is a run that fails later
+// with a missing file or an unknown variable — and the row that was supposed to
+// warn about it said "ok".
+func TestTheTemplatesRowFailsWhenTheCheckoutCannotBeUsed(t *testing.T) {
+	tests := []struct {
+		name    string
+		root    string
+		ref     string
+		wantOK  bool
+		wantSay string
+	}{
+		{
+			name:    "a directory that is not a checkout",
+			root:    t.TempDir(),
+			ref:     "v9.9.9",
+			wantOK:  false,
+			wantSay: "examples/aws/_modules",
+		},
+		{
+			name:    "a checkout older than this binary reads",
+			root:    fakeCheckout(t, "", ""),
+			ref:     "v0.0.1",
+			wantOK:  false,
+			wantSay: infra.TemplatesMinRef,
+		},
+		{
+			name:   "a checkout this binary can read",
+			root:   fakeCheckout(t, "", ""),
+			ref:    infra.TemplatesMinRef,
+			wantOK: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := templatesVerdict(test.root, test.ref, test.root+" @ "+test.ref)
+
+			if result.ok != test.wantOK {
+				t.Fatalf("ok = %v, want %v (%s)", result.ok, test.wantOK, result.detail)
+			}
+			if test.wantSay != "" && !strings.Contains(result.detail, test.wantSay) {
+				t.Errorf("the failure does not mention %q:\n%s", test.wantSay, result.detail)
+			}
+		})
+	}
+}
+
+// Color on both verdicts, and the word under it either way. The color is
+// redundant by design — a reader without it, or reading a saved log, loses
+// nothing — so it can afford to be there.
+func TestBothVerdictsAreColoredAndStillReadable(t *testing.T) {
+	results := []checkResult{
+		{name: "terraform", summary: "/usr/bin/terraform", ok: true},
+		{name: "templates", summary: "not found", detail: "clone it", ok: false},
+	}
+
+	var painted bytes.Buffer
+	theme := style{enabled: true}
+	writeRows(&painted, theme, results, len("terraform"))
+
+	if !strings.Contains(painted.String(), theme.pass("ok     ")) {
+		t.Errorf("the passing verdict is not colored:\n%q", painted.String())
+	}
+	if !strings.Contains(painted.String(), theme.alert("missing")) {
+		t.Errorf("the failing verdict is not colored:\n%q", painted.String())
+	}
+
+	plain := stripANSI(painted.String())
+	for _, word := range []string{"ok", "missing"} {
+		if !strings.Contains(plain, word) {
+			t.Errorf("%q survives only as color:\n%s", word, plain)
+		}
+	}
+}
+
+// And with styling off there is no color at all, because the same report is
+// routinely redirected into a file or a CI log.
+func TestNoColorWhereThereIsNoTerminal(t *testing.T) {
+	var out bytes.Buffer
+	_ = reportChecks(&out, []checkResult{{name: "terraform", summary: "/usr/bin/terraform", ok: true}}, "")
+
+	if strings.Contains(out.String(), "\x1b") {
+		t.Errorf("an escape sequence reached a report nobody is watching:\n%q", out.String())
+	}
+}
+
+// machineWithTools puts a terraform and an aws on PATH that answer the two
+// questions the preflight asks of them: a version each.
+//
+// Stubs rather than a skip. A test skipped for want of terraform is a test that
+// never runs in CI — which is the one place these two assertions matter, because
+// the machine there has neither binary and is exactly where "the report appears"
+// would silently stop being true.
+func machineWithTools(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	write := func(name, body string) {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// tfexec asks for `version -json` and parses the answer. The version is read
+	// off the constant the code enforces, so a bump to the minimum does not turn
+	// into a puzzling failure in a test that has nothing to do with versions.
+	write("terraform", `
+case "$*" in
+  *"-json"*) echo '{"terraform_version":"`+infra.MinTerraformVersion+`","platform":"linux_amd64","provider_selections":{},"terraform_outdated":false}' ;;
+  *) echo "Terraform v`+infra.MinTerraformVersion+`" ;;
+esac
+`)
+	write("aws", `echo "aws-cli/2.19.1 Python/3.12.6 Linux/6.8 exe/x86_64"`)
+
+	t.Setenv("PATH", dir)
 }

@@ -166,7 +166,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// to ask, it asks instead. Nothing else changes: --env present means no
 	// question, so every invocation that works today behaves exactly as it did,
 	// and without a terminal the error below is still what happens.
-	terraform, err := prepareChoices(ctx, newPrompter(stderr), catalog, &opts, stderr)
+	terraform, err := prepareChoices(ctx, newPrompter(stderr), catalog, &opts, layout, source, stderr)
 	if err != nil {
 		return err
 	}
@@ -271,7 +271,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// way it happens once, because the probe shells out to the binary.
 	if terraform == nil {
 		var err error
-		if terraform, err = requireEnvironment(ctx, stderr, opts.dryRun); err != nil {
+		if terraform, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun); err != nil {
 			return err
 		}
 	}
@@ -458,21 +458,36 @@ func resolveLayout(flagRepo, envRepo, templatesDir string) (infra.Layout, checko
 // mismatch gets noticed by someone who never runs init — and it stays a note on the
 // line, not a block, because a plan or a destroy is not the moment to lecture.
 func templatesLine(ctx context.Context, layout infra.Layout, source checkoutSource) string {
+	line, _ := inspectTemplates(ctx, layout, source)
+	return line
+}
+
+// inspectTemplates returns the line describing the checkout and the ref it found,
+// in one pass. The ref is returned rather than recovered by a second call because
+// reading it shells out to git, and the caller that judges the checkout needs the
+// same answer the line was built from.
+func inspectTemplates(ctx context.Context, layout infra.Layout, source checkoutSource) (string, string) {
 	line := layout.Root
-	if git, err := infra.NewGitCLI(); err == nil {
-		state := infra.InspectCheckout(ctx, git, layout.Root, source == sourceManaged)
-		ref := state.Ref
-		if ref == "" {
-			ref = "untagged"
-		}
-		line += " @ " + ref
-		if infra.RefBelowMin(state.Ref) {
-			line += fmt.Sprintf("  (%s)  — older than %s, the oldest this binary reads",
-				source, infra.TemplatesMinRef)
-			return line
-		}
+
+	git, err := infra.NewGitCLI()
+	if err != nil {
+		// No git means no ref to read. The path is still worth reporting, and the
+		// checkout is still verifiable by its directories.
+		return fmt.Sprintf("%s  (%s)", line, source), ""
 	}
-	return fmt.Sprintf("%s  (%s)", line, source)
+
+	state := infra.InspectCheckout(ctx, git, layout.Root, source == sourceManaged)
+	ref := state.Ref
+	if ref == "" {
+		ref = "untagged"
+	}
+	line += " @ " + ref
+	if infra.RefBelowMin(state.Ref) {
+		line += fmt.Sprintf("  (%s)  — older than %s, the oldest this binary reads",
+			source, infra.TemplatesMinRef)
+		return line, state.Ref
+	}
+	return fmt.Sprintf("%s  (%s)", line, source), state.Ref
 }
 
 // notACheckout is the failure for a path the operator NAMED that turns out not to
@@ -1007,19 +1022,46 @@ func printDryRun(
 //
 // The questions go to stderr: the action is one of the things being chosen, and
 // helm-values needs stdout to carry nothing but the document.
-func guidedRun(catalog infra.Catalog, opts *options, ask *prompter) error {
+// afterEnvironment is called with the environment as soon as it is chosen, and
+// its error stops the remaining questions. It exists for one check: the
+// environment names the AWS account, the account names the profile, and an
+// expired session for that profile makes every later answer worthless.
+func guidedRun(
+	catalog infra.Catalog,
+	opts *options,
+	ask *prompter,
+	layout infra.Layout,
+	afterEnvironment func(string) error,
+) error {
 	if !ask.interactive {
 		return nil
+	}
+
+	choices := runEnvironmentOptions(layout)
+	if !anyEnabled(choices) {
+		return fmt.Errorf("no environment is configured in this checkout\n"+
+			"examples/aws/environments.conf declares the account, profile and region of\n"+
+			"each environment, and it has no section this tool can use.\n\n"+
+			"  lerian infra init --env %s", infra.Environments[0])
 	}
 
 	environment, err := ask.pick(
 		"Which environment?",
 		"Picks the AWS account, the state backend and the variables file of every stack.",
-		"--env", environmentOptions(), "")
+		"--env", choices, "")
 	if err != nil {
 		return err
 	}
 	opts.environment = environment
+
+	// Before the next question rather than after the last one: this is the point
+	// at which the profile is known, and asking two more questions to then report
+	// a login failure throws both answers away.
+	if afterEnvironment != nil {
+		if err := afterEnvironment(environment); err != nil {
+			return err
+		}
+	}
 
 	targets, err := ask.pickMany(
 		"What do you want to operate on?",
@@ -1041,6 +1083,35 @@ func guidedRun(catalog infra.Catalog, opts *options, ask *prompter) error {
 	}
 	opts.action = action
 	return nil
+}
+
+// runEnvironmentOptions is environmentOptions for a run rather than for init.
+//
+// An environment with no section in environments.conf has no account to verify
+// against and no profile to verify with, so a run against it fails at the step
+// after this one. It is shown and disabled rather than hidden: "stg is not set up
+// in this checkout" is the useful fact, and leaving it out reads as stg not
+// existing at all.
+//
+// init offers all three, because it is the command that creates the section.
+func runEnvironmentOptions(layout infra.Layout) []option {
+	options := environmentOptions(layout)
+	for index, opt := range options {
+		if _, err := infra.LoadEnvConfig(layout, opt.value); err != nil {
+			options[index].disabled = true
+			options[index].note = "no [" + opt.value + "] section in environments.conf"
+		}
+	}
+	return options
+}
+
+func anyEnabled(options []option) bool {
+	for _, opt := range options {
+		if !opt.disabled {
+			return true
+		}
+	}
+	return false
 }
 
 // runTargetOptions is the catalog --list prints, plus the two targets that are
@@ -1386,6 +1457,8 @@ func prepareChoices(
 	ask *prompter,
 	catalog infra.Catalog,
 	opts *options,
+	layout infra.Layout,
+	source checkoutSource,
 	stderr io.Writer,
 ) (*infra.CLI, error) {
 	if opts.environment != "" {
@@ -1395,12 +1468,36 @@ func prepareChoices(
 	var terraform *infra.CLI
 	if ask.interactive {
 		var err error
-		if terraform, err = requireEnvironment(ctx, stderr, opts.dryRun); err != nil {
+		if terraform, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun); err != nil {
 			return nil, err
 		}
 	}
-	if err := guidedRun(catalog, opts, ask); err != nil {
+	if err := guidedRun(catalog, opts, ask, layout, credentialCheck(ctx, layout, opts.dryRun)); err != nil {
 		return nil, err
 	}
 	return terraform, nil
+}
+
+// credentialCheck resolves the profile the chosen environment maps to and asks
+// whether it still answers. A nil result means there is nothing to check — a dry
+// run makes no AWS call by definition.
+func credentialCheck(ctx context.Context, layout infra.Layout, dryRun bool) func(string) error {
+	if dryRun {
+		return nil
+	}
+	return func(environment string) error {
+		config, err := infra.LoadEnvConfig(layout, environment)
+		//nolint:nilerr // Not this check's failure to report. A configuration that
+		// cannot be read has its own error further down, written for the case where
+		// it is the only problem; surfacing it here would report a missing section as
+		// a credential failure.
+		if err != nil {
+			return nil
+		}
+		if config.Profile == "" {
+			return nil
+		}
+		_, err = infra.ResolveCredentials(ctx, config.Profile)
+		return err
+	}
 }

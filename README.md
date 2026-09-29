@@ -157,6 +157,58 @@ lerian completion powershell > lerian.ps1
 
 ## Quick Start
 
+### The interactive session
+
+`lerian` with nothing after it opens a session: it offers the commands, runs the
+one you pick, and asks again when that command is done. `q` closes it.
+
+```
+  ██╗     ███████╗██████╗ ██╗ █████╗ ███╗   ██╗        ██████╗██╗     ██╗
+  ██║     ██╔════╝██╔══██╗██║██╔══██╗████╗  ██║       ██╔════╝██║     ██║
+  ██║     █████╗  ██████╔╝██║███████║██╔██╗ ██║ █████╗██║     ██║     ██║
+  ██║     ██╔══╝  ██╔══██╗██║██╔══██║██║╚██╗██║ ╚════╝██║     ██║     ██║
+  ███████╗███████╗██║  ██║██║██║  ██║██║ ╚████║       ╚██████╗███████╗██║
+  ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝        ╚═════╝╚══════╝╚═╝
+
+  ─────────────────────────────────────────────────────────────  v1.7.0
+
+  What do you want to do?
+  ↑↓ move · enter choose · q cancel
+  ❯ auth     Authentication commands
+    infra    Deploy the AWS stacks of lerian-terraform-foundation
+    version  Print version information
+```
+
+Choosing a command that only groups others — `auth` — offers its subcommands
+rather than printing a help page:
+
+```
+  Which auth command?
+  ❯ login   Configure authentication credentials
+    logout  Remove authentication credentials
+```
+
+The menu is a shorter list than the command set. `midaz` is reached with ledger
+ids, regions and sizes a menu has no way to ask for, so picking it from a list
+would land you on a help page rather than on anything you chose to do — it stays
+a command (`lerian midaz ledger list` is unaffected) and stays out of the menu.
+
+The session exists because these commands come in sequences — check the machine,
+then init; init fails, read what it says, run it again — and each of those used
+to cost a fresh start. A command that fails does not close it either. The exit
+code is the last command's, so `lerian && something` still means what it says.
+
+The wordmark lights up a line at a time and the rule draws itself across, which
+takes about a fifth of a second and happens once per session. Below the width the
+wordmark needs it gives way to a single line — a wrapped wordmark is six broken
+lines, and the terminal decides where it wraps.
+
+Only on a terminal. Piped, redirected or in CI, `lerian` prints its help exactly
+as before: a prompt there waits for an answer that is never coming. The banner
+follows the same rule, and `LERIAN_NO_BANNER=1` turns it off for anyone who has
+seen it enough times. `NO_COLOR` and `TERM=dumb` are honored throughout — both
+skip the animation and print the banner whole.
+
 ### First Steps
 
 1. **Login to Lerian Platform**
@@ -222,8 +274,93 @@ this group takes flags rather than subcommands — it kept the command line of t
 `lerian-infra` binary it replaces, so anything written against that binary keeps
 working with `lerian infra` in front of it.
 
+Picking `infra` from the session — or running `lerian infra` with no `--env` —
+checks the machine before it asks anything:
+
+```
+  ==> Environment check
+  ok       terraform    /opt/homebrew/bin/terraform
+  ok       aws          /opt/homebrew/bin/aws
+  ok       templates    ~/lerian/lerian-terraform-foundation @ v1.6.0
+  ok       aws session  8 of 9 profiles resolve: dev, stg, prd and 5 more
+
+  4 checks, all ok.
+```
+
+The environment question then names the account each choice lands in:
+
+```
+  Which environment?
+  Picks the AWS account, the state backend and the variables file of every stack.
+  ❯ dev  day to day, smallest sizing  ·  account 524121347244 via lerian-sandbox
+    stg  (unavailable)  no [stg] section in environments.conf
+    prd  (unavailable)  no [prd] section in environments.conf
+```
+
+The account is not a separate choice, and it is worth saying why: the environment
+*is* the account. `environments.conf` binds the two, and the account guard refuses
+to run when the active credential resolves anywhere other than the account
+declared for the environment being applied — there is no flag to skip it. Offering
+the account as its own question would let you build a pair the guard exists to
+reject.
+
+An environment with no section there cannot be run — nothing to verify against,
+nothing to verify with — so it is shown and disabled rather than hidden: "stg is
+not set up in this checkout" is the useful fact, and leaving it out reads as stg
+not existing. With none configured, the error names `lerian infra init` instead of
+asking a question with no answer.
+
+The account is the consequence of that answer, and it used to appear only on the
+confirmation before an apply — so a plan never named it at all, and an apply
+named it after every other question had been answered. It is read from
+`environments.conf`, which is the same number the account guard later refuses to
+run against if the credential does not match. An environment the configuration
+says nothing about keeps its plain description rather than claiming an account.
+
+The block appears whether or not anything is wrong: which checkout and which
+terraform a run is about to use is worth a line each, and showing them only on
+failure means never seeing them on the run that matters. A scripted invocation —
+one that named its `--env` and asked nothing — keeps the output it always had.
+
+When something is missing, the remediation follows the table, and a missing
+session is offered a way out:
+
+```
+  missing  aws session  not logged in
+
+  Log in to AWS now?
+  Runs aws sso login --sso-session <your-session>, which opens a browser.
+  ↑↓ move · enter choose · q cancel
+  ❯ log in now  opens the browser and waits
+    cancel      leaves the instructions below
+```
+
+The verdict leads each row so that scanning for what failed is running an eye
+down the left edge rather than a ragged right one.
+
+When there is no session, it offers to log in rather than telling you to leave.
+The AWS CLI is already a verified dependency and the session name is already in
+the profile it just read, so sending you to another program and asking you to
+start over buys nothing. It runs `aws sso login`, which opens the browser, and
+then re-checks. Declining leaves the report and the command to run by hand.
+
+One login per `[sso-session]`, not one per profile: profiles behind the same
+session are revived together. A profile backed by a static key in
+`~/.aws/credentials` has no session to revive, so none is offered for it.
+
+It runs before the questions, not after them: the three questions — which
+environment, which stacks, plan or apply — take real thought, and a machine that
+cannot run anything makes all three answers worthless. And the credential is
+checked the moment the environment names its profile, rather than when the first
+stage tries to start, for the same reason: by then the target and the action have
+been answered too.
+
+`git` is not part of it. Only `init --clone` uses git, and a run that already has
+its checkout never calls it.
+
 ```bash
 # Verify this machine: dependencies, checkout, and what it would use
+# (local only — makes no AWS call, so it works as a CI gate)
 lerian infra check
 
 # Write the configuration a fresh checkout needs
