@@ -1099,23 +1099,16 @@ func askForAccount(
 			"  lerian infra init")
 	}
 
-	// One account to deploy into is not a question. The operator is logged in, and
-	// what they came here to choose is the action; asking them to confirm the only
-	// possible answer is a keypress that decides nothing.
-	//
-	// Said out loud rather than assumed silently: which account is being written to
-	// is the one fact worth knowing before anything is created.
-	if only, ok := theOnlyAccount(choices); ok {
-		fmt.Fprintf(out, "\n  %s\n", newStyle(out).dim(only.label+" · "+only.note))
-		return environmentFor(layout, resolved, only.value)
-	}
-
 	profile, err := ask.pick(
 		"Which AWS account?",
 		"Everything is created there. The state backend and the sizing follow from it.",
 		"", choices, "")
 	if err != nil {
 		return "", err
+	}
+
+	if profile == signOutChoice {
+		return signOutAndBackIn(ctx, ask, out, layout, resolved)
 	}
 
 	chosen := findProfile(resolved, profile)
@@ -1149,44 +1142,70 @@ func askForAccount(
 	return environment, nil
 }
 
-// theOnlyAccount returns the single account that is ready to deploy into, if it
-// is the only one.
-//
-// An expired profile does not count as an alternative. Nobody knows which account
-// it reaches — that is what expired means — so it might not even be a destination
-// this checkout configures, and counting it would put a question in front of every
-// operator who has one stale session lying around in ~/.aws, which is most of
-// them. It stays in the list for the case below, where there is nothing ready and
-// logging in is the only way forward.
-func theOnlyAccount(choices []option) (option, bool) {
-	var ready option
-	found := 0
+// signOutChoice is the row that ends the SSO session and starts a new one.
+const signOutChoice = "\x00sign-out"
 
-	for _, opt := range choices {
-		if opt.disabled || strings.Contains(opt.note, "log in") {
-			continue
-		}
-		found++
-		ready = opt
+// ssoLogout is a variable for the same reason ssoLogin is: so the choice can be
+// exercised without ending anybody's real session.
+var ssoLogout = infra.SSOLogout
+
+// signOutAndBackIn ends the session, logs in again, and re-reads who the profiles
+// resolve as.
+//
+// This is the only way to arrive as a different identity: the profiles in ~/.aws
+// are fixed, and which accounts they reach is decided by whoever is signed in. It
+// is a row rather than something the command does on its own, because the token
+// it clears lives in ~/.aws/sso/cache and every AWS client on the machine reads
+// it — another terminal, Terraform, anything on the shared config.
+func signOutAndBackIn(
+	ctx context.Context,
+	ask *prompter,
+	out io.Writer,
+	layout infra.Layout,
+	resolved []infra.ResolvedProfile,
+) (string, error) {
+	if err := ssoLogout(ctx, os.Stdin, out, out); err != nil {
+		return "", err
 	}
-	if found == 1 {
-		return ready, true
+	fmt.Fprintf(out, "\n  %s\n", newStyle(out).dim("signed out"))
+
+	targets := sessionsOf(resolved)
+	if len(targets) == 0 {
+		return "", fmt.Errorf("no SSO session in ~/.aws to sign in to\n  aws configure sso")
 	}
-	return option{}, false
+	if _, err := offerLogin(ctx, ask, out, targets); err != nil {
+		return "", err
+	}
+
+	// Who everything resolves as has just changed, so nothing read before this is
+	// still true.
+	refreshed := infra.ResolveProfiles(ctx, checkIdentity, profilesOf(resolved), "")
+	return askForAccount(ctx, ask, out, layout, refreshed)
 }
 
-// environmentFor is the tail of askForAccount for a profile already decided.
-func environmentFor(layout infra.Layout, resolved []infra.ResolvedProfile, profile string) (string, error) {
-	chosen := findProfile(resolved, profile)
-	if chosen == nil {
-		return "", fmt.Errorf("profile %q is not one of the profiles offered", profile)
+// sessionsOf is every SSO session the known profiles sit behind, first seen
+// first.
+func sessionsOf(resolved []infra.ResolvedProfile) []infra.SSOTarget {
+	seen := map[string]bool{}
+	targets := make([]infra.SSOTarget, 0, len(resolved))
+
+	for _, entry := range resolved {
+		session := entry.Profile.SSOSession
+		if session == "" || seen[session] {
+			continue
+		}
+		seen[session] = true
+		targets = append(targets, infra.SSOTarget{Session: session})
 	}
-	environment, ok := environmentForProfile(layout, chosen.Profile.Name, chosen.Caller.Account)
-	if !ok {
-		return "", fmt.Errorf("account %s is not configured in this checkout\n  lerian infra init",
-			chosen.Caller.Account)
+	return targets
+}
+
+func profilesOf(resolved []infra.ResolvedProfile) []infra.AWSProfile {
+	profiles := make([]infra.AWSProfile, 0, len(resolved))
+	for _, entry := range resolved {
+		profiles = append(profiles, entry.Profile)
 	}
-	return environment, nil
+	return profiles
 }
 
 func findProfile(resolved []infra.ResolvedProfile, name string) *infra.ResolvedProfile {
@@ -1254,9 +1273,19 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].rank < rows[j].rank })
 
-	options := make([]option, 0, len(rows))
+	options := make([]option, 0, len(rows)+1)
 	for _, r := range rows {
 		options = append(options, r.option)
+	}
+
+	// Last, because it is the answer to a different question — not "which of these"
+	// but "none of these". Offered only where there is a session to end.
+	if len(sessionsOf(resolved)) > 0 {
+		options = append(options, option{
+			value: signOutChoice,
+			label: "sign in as someone else",
+			note:  "ends the session for every AWS tool on this machine, then logs in again",
+		})
 	}
 	return options
 }

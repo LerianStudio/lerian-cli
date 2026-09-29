@@ -473,119 +473,6 @@ func TestTheUsableAccountsComeFirst(t *testing.T) {
 	}
 }
 
-// With one account to deploy into there is no question to ask. The operator is
-// logged in; what they came to choose was the action — infra, auth, version —
-// and being asked to confirm the only possible answer is a keypress that decides
-// nothing.
-//
-// It is still said out loud, because "which account" is the one fact worth
-// knowing before anything is created.
-func TestOneAccountIsNotAQuestion(t *testing.T) {
-	checkout := fakeCheckout(t, "", "")
-	writeEnvConfig(t, checkout, map[string]string{
-		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
-	})
-	layout, err := infra.NewLayout(checkout)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resolved := []infra.ResolvedProfile{
-		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
-		// Reachable, but nothing here can deploy into it.
-		{Profile: infra.AWSProfile{Name: "elsewhere"}, Caller: infra.Caller{Account: "999988887777"}},
-	}
-
-	// Only the two questions that remain: what to operate on, and what to do.
-	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq)
-	opts := options{}
-	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
-
-	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, resolved, nil); err != nil {
-		t.Fatalf("guidedRun = %v\n%s", err, painted.String())
-	}
-
-	if strings.Contains(painted.String(), "Which AWS account") {
-		t.Errorf("the operator was asked to choose between one thing:\n%s", painted.String())
-	}
-	if !strings.Contains(painted.String(), "111122223333") {
-		t.Errorf("the account it settled on was never named:\n%s", painted.String())
-	}
-	if opts.environment != "dev" {
-		t.Errorf("environment = %q, want the one the single account maps to", opts.environment)
-	}
-	// And the questions that are real were still asked.
-	if !strings.Contains(painted.String(), "operate on") {
-		t.Errorf("the run stopped before asking what to operate on:\n%s", painted.String())
-	}
-}
-
-// Two accounts is a real question, and it is still asked: picking one for the
-// operator is picking which AWS account gets written to.
-func TestTwoAccountsIsStillAQuestion(t *testing.T) {
-	checkout := fakeCheckout(t, "", "")
-	writeEnvConfig(t, checkout, map[string]string{
-		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
-		"prd": "account_id = 999988887777\nregion = us-east-1\nprofile = production",
-	})
-	layout, err := infra.NewLayout(checkout)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resolved := []infra.ResolvedProfile{
-		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
-		{Profile: infra.AWSProfile{Name: "production"}, Caller: infra.Caller{Account: "999988887777"}},
-	}
-
-	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
-	opts := options{}
-	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
-
-	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, resolved, nil); err != nil {
-		t.Fatalf("guidedRun = %v", err)
-	}
-
-	if !strings.Contains(painted.String(), "Which AWS account") {
-		t.Errorf("two accounts and no question:\n%s", painted.String())
-	}
-}
-
-// A stale session somewhere in ~/.aws is not a second destination. Nobody knows
-// which account it reaches — that is what expired means — so counting it as an
-// alternative would put a question in front of every operator who has one lying
-// around, which is most of them.
-func TestAStaleProfileIsNotASecondDestination(t *testing.T) {
-	checkout := fakeCheckout(t, "", "")
-	writeEnvConfig(t, checkout, map[string]string{
-		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
-	})
-	layout, err := infra.NewLayout(checkout)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resolved := []infra.ResolvedProfile{
-		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
-		{Profile: infra.AWSProfile{Name: "default", SSOSession: "acme"}, Err: errors.New("expired")},
-	}
-
-	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq)
-	opts := options{}
-	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
-
-	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, resolved, nil); err != nil {
-		t.Fatalf("guidedRun = %v\n%s", err, painted.String())
-	}
-
-	if strings.Contains(painted.String(), "Which AWS account") {
-		t.Errorf("an expired session turned the single destination into a question:\n%s", painted.String())
-	}
-	if opts.environment != "dev" {
-		t.Errorf("environment = %q", opts.environment)
-	}
-}
-
 // With nothing ready, the question comes back — it is the only way to say which
 // session to revive.
 func TestNothingReadyStillAsks(t *testing.T) {
@@ -618,5 +505,123 @@ func TestNothingReadyStillAsks(t *testing.T) {
 	}
 	if !strings.Contains(painted.String(), "Which AWS account") {
 		t.Errorf("with nothing ready there was no way to choose what to log into:\n%s", painted.String())
+	}
+}
+
+// The account is always asked for, even when only one is ready.
+//
+// Deploying into an AWS account is not a step to be inferred on somebody's
+// behalf: the operator says which one, every run, and the answer is visible in
+// the scrollback afterwards.
+func TestTheAccountIsAlwaysAsked(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, resolved, nil); err != nil {
+		t.Fatalf("guidedRun = %v\n%s", err, painted.String())
+	}
+
+	if !strings.Contains(painted.String(), "Which AWS account") {
+		t.Errorf("the account was decided without asking:\n%s", painted.String())
+	}
+	if opts.environment != "dev" {
+		t.Errorf("environment = %q", opts.environment)
+	}
+}
+
+// And there is a way to arrive as somebody else: signing out and back in, which
+// is the only way to change which identity the profiles resolve as.
+func TestSigningOutIsOfferedAsAChoice(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	for _, opt := range accountOptions(layout, resolved) {
+		if opt.value == signOutChoice {
+			if opt.disabled {
+				t.Error("the sign-out row cannot be chosen")
+			}
+			if !strings.Contains(opt.note, "ends the session") {
+				t.Errorf("the row does not say what it costs: %q", opt.note)
+			}
+			return
+		}
+	}
+	t.Error("there is no way to arrive as a different identity")
+}
+
+// Choosing it signs out, logs back in, and re-reads who the profiles are.
+func TestSigningOutLogsBackIn(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var order []string
+	previousLogout := ssoLogout
+	ssoLogout = func(context.Context, io.Reader, io.Writer, io.Writer) error {
+		order = append(order, "logout")
+		return nil
+	}
+	t.Cleanup(func() { ssoLogout = previousLogout })
+
+	previousLogin := ssoLogin
+	ssoLogin = func(_ context.Context, target infra.SSOTarget, _ io.Reader, _, _ io.Writer) error {
+		order = append(order, "login:"+target.Name())
+		return nil
+	}
+	t.Cleanup(func() { ssoLogin = previousLogin })
+
+	previousIdentity := checkIdentity
+	checkIdentity = stubIdentity{usable: map[string]bool{"sandbox": true}}
+	t.Cleanup(func() { checkIdentity = previousIdentity })
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	var out bytes.Buffer
+	// Down onto the sign-out row and Enter; Enter to accept the login; Enter again
+	// for the account, because after signing in as somebody else the question is
+	// asked afresh — which accounts are reachable has just changed.
+	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
+
+	environment, err := askForAccount(context.Background(), ask, &out, layout, resolved)
+	if err != nil {
+		t.Fatalf("askForAccount = %v\n%s", err, out.String())
+	}
+
+	if len(order) != 2 || order[0] != "logout" || order[1] != "login:acme" {
+		t.Errorf("did %v, want a logout followed by a login", order)
+	}
+	if environment != "dev" {
+		t.Errorf("environment = %q after signing back in", environment)
 	}
 }

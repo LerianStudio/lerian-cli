@@ -287,29 +287,27 @@ checks the machine before it asks anything:
   4 checks, all ok.
 ```
 
-With one account to deploy into, there is no question at all — it says which one
-and moves on to what you came to do:
-
-```
-  4 checks, all ok.
-
-  lerian-sandbox · account 524121347244  ·  deploys as dev
-
-  What do you want to operate on?
-```
-
-A stale session elsewhere in `~/.aws` does not turn that into a question: nobody
-knows which account an expired profile reaches, so counting it as an alternative
-would interrupt every operator who has one lying around. With more than one
-account ready — or with none, where logging in is the only way forward — it asks:
+It then asks which account, every run:
 
 ```
   Which AWS account?
   Everything is created there. The state backend and the sizing follow from it.
-  ❯ lerian-sandbox  account 524121347244  ·  deploys as dev
-    default         session expired — choose to log in
-    other-profile   (unavailable)  account 239025757440 is not configured — lerian infra init
+  ❯ lerian-sandbox           account 524121347244  ·  deploys as dev
+    default                  session expired — choose to log in
+    other-profile            (unavailable)  account 239025757440 is not configured
+    sign in as someone else  ends the session for every AWS tool on this machine
 ```
+
+Always asked, even with one account ready: deploying into an AWS account is not a
+step to infer on somebody's behalf, and the answer stays in the scrollback.
+
+The last row is the way to arrive as a different identity — the profiles in
+`~/.aws` are fixed, and which accounts they reach is decided by who is signed in.
+It is a row rather than something the command does on its own, because
+`aws sso logout` clears a token in `~/.aws/sso/cache` that **every** AWS client on
+the machine reads: another terminal, Terraform, anything on the shared config.
+Ending that automatically at start-up would break sessions that have nothing to do
+with this tool.
 
 `dev`, `stg` and `prd` are names of files in the templates repo —
 `backend/<env>.hcl` holds the state, `envs/<env>.tfvars` holds the sizing — so
