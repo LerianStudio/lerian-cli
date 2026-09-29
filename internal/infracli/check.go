@@ -162,11 +162,22 @@ func checkAWSSession(ctx context.Context, identity infra.Identity) (checkResult,
 		result.detail = err.Error()
 		return result, nil
 	}
+
+	// No profiles is not the same as no credentials. CI exports them, and so does
+	// anyone who has a key rather than a portal — neither has a ~/.aws to read, and
+	// both can deploy.
 	if len(profiles) == 0 {
+		if caller, err := identity.CallerIdentity(ctx, "", ""); err == nil && caller.Account != "" {
+			result.summary = "credentials in the environment reach account " + caller.Account
+			return result, []infra.ResolvedProfile{{Caller: caller}}
+		}
+
 		result.ok = false
-		result.summary = "no profiles"
-		result.detail = "There is no profile in ~/.aws to log in with. Create one:\n\n" +
-			"  aws configure sso\n\n" +
+		result.summary = "no credentials"
+		result.detail = "There is nothing in ~/.aws and no credentials in the environment.\n" +
+			"Either sign in to an IAM Identity Center portal, or configure an access key:\n\n" +
+			"  aws configure sso\n" +
+			"  aws configure\n\n" +
 			"Then run this command again."
 		return result, nil
 	}
@@ -215,6 +226,45 @@ func nameAFew(names []string) string {
 // ssoLogin is a variable so the offer can be exercised without an AWS account
 // and without opening a browser.
 var ssoLogin = infra.SSOLogin
+
+// awsConfigure is a variable for the same reason: so the setup can be exercised
+// without writing into anybody's ~/.aws.
+var awsConfigure = infra.ConfigureAWS
+
+// offerSetup asks how this machine should get credentials, and runs it.
+//
+// A machine with nothing in ~/.aws is the normal state of a machine somebody has
+// just been handed, and this CLI is not only run by people who already have our
+// profiles configured. Reporting "create a profile, then run this again" makes
+// the first experience of the tool a round trip through a second program.
+func offerSetup(ctx context.Context, ask *prompter, out io.Writer) (bool, error) {
+	if ask == nil || !ask.interactive {
+		return false, nil
+	}
+
+	answer, err := ask.pick("This machine has no AWS credentials. Set them up now?",
+		"Either one writes to ~/.aws, which is where every AWS tool reads them from.", "",
+		[]option{
+			{value: "sso", label: "sign in to an SSO portal",
+				note: "aws configure sso — what an organization hands out; opens a browser"},
+			{value: "keys", label: "use an access key",
+				note: "aws configure — an access key id and secret"},
+			{value: "no", label: "not now", note: "leaves the instructions below"},
+		}, "")
+	if err != nil || answer == "no" {
+		//nolint:nilerr // Declining is not a failure: the check below has already
+		// written what to run by hand, and a selector that could not draw is not a
+		// reason to replace that with "the prompt failed".
+		return false, nil
+	}
+
+	fmt.Fprintln(out)
+	if err := awsConfigure(ctx, answer, os.Stdin, out, out); err != nil {
+		fmt.Fprintf(out, "\n  %v\n", err)
+		return false, nil
+	}
+	return true, nil
+}
 
 // loginTargets is what can be logged into, one per SSO session, in the order the
 // sessions were first seen.
@@ -447,7 +497,15 @@ func preflight(
 		// Offered before the report rather than after it: the report ends the
 		// command, and the whole point is not to end it.
 		if !session.ok {
-			if loggedIn, err := offerLogin(ctx, ask, out, loginTargets(resolved)); err != nil {
+			// Two different failures with two different answers: nothing configured
+			// at all is a setup, an expired session is a login.
+			if session.summary == "no credentials" {
+				if configured, err := offerSetup(ctx, ask, out); err != nil {
+					return nil, nil, err
+				} else if configured {
+					session, profiles = checkAWSSession(ctx, checkIdentity)
+				}
+			} else if loggedIn, err := offerLogin(ctx, ask, out, loginTargets(resolved)); err != nil {
 				return nil, nil, err
 			} else if loggedIn {
 				session, profiles = checkAWSSession(ctx, checkIdentity)

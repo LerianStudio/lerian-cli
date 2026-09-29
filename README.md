@@ -311,6 +311,25 @@ start-up, because `aws sso logout` clears a token in `~/.aws/sso/cache` that
 **every** AWS client on the machine reads — another terminal, Terraform, anything
 on the shared config.
 
+### A machine with nothing configured
+
+This CLI is not only run on machines that already have our profiles. On one with
+no `~/.aws` at all — the normal state of a machine somebody has just been handed —
+the check offers to set it up rather than sending you away:
+
+```
+  This machine has no AWS credentials. Set them up now?
+  Either one writes to ~/.aws, which is where every AWS tool reads them from.
+  ❯ sign in to an SSO portal  aws configure sso — what an organization hands out
+    use an access key         aws configure — an access key id and secret
+    not now                   leaves the instructions below
+```
+
+Credentials already in the environment count as a session, with no `~/.aws`
+needed: CI exports them, and so does anyone who has a key rather than a portal.
+They appear in the account list as "credentials in this environment", and map to
+whichever environment declares `profile = -`.
+
 ### The three-account ceiling
 
 An account has to occupy one of `backend/<env>.hcl` and `envs/<env>.tfvars`, and

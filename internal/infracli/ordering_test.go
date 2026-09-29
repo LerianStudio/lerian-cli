@@ -734,3 +734,36 @@ func TestAFourthAccountSaysWhatIsInTheWay(t *testing.T) {
 		t.Errorf("the error does not explain the limit: %v", err)
 	}
 }
+
+// Credentials in the environment have no profile name, and a row labelled with an
+// empty string is a row nobody can read. They are named for what they are.
+func TestAmbientCredentialsAreNamedInTheList(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = -",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{{Caller: infra.Caller{Account: "111122223333"}}}
+
+	options := accountOptions(layout, resolved)
+	if len(options) == 0 {
+		t.Fatal("ambient credentials produced no row")
+	}
+	if strings.TrimSpace(options[0].label) == "" {
+		t.Errorf("the row has no label: %+v", options[0])
+	}
+	if !strings.Contains(options[0].label, "environment") {
+		t.Errorf("label = %q, want it to say where the credentials come from", options[0].label)
+	}
+	if options[0].disabled {
+		t.Error("ambient credentials that reach a configured account cannot be chosen")
+	}
+	// And they map to the environment whose section says "no profile".
+	if got, ok := environmentForProfile(layout, "", "111122223333"); !ok || got != "dev" {
+		t.Errorf("environmentForProfile = %q,%v — want dev", got, ok)
+	}
+}

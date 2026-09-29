@@ -113,3 +113,36 @@ func SSOLogout(ctx context.Context, in io.Reader, out, errOut io.Writer) error {
 	}
 	return nil
 }
+
+// ConfigureAWS runs the AWS CLI's own setup, so a machine with nothing in
+// ~/.aws can be given credentials without leaving.
+//
+// mode is "sso" for IAM Identity Center — what an organization hands out, and
+// what the rest of this tool assumes — or "keys" for a long-lived access key,
+// which is what somebody gets when there is no portal to log into.
+//
+// Shelled out for the same reason the login is: the answers land in ~/.aws in the
+// layout every AWS client reads, and the CLI that owns that file is already a
+// verified dependency here. The streams pass through because both flows are
+// conversations — one opens a browser, the other asks four questions.
+func ConfigureAWS(ctx context.Context, mode string, in io.Reader, out, errOut io.Writer) error {
+	var args []string
+	switch mode {
+	case "sso":
+		args = []string{"configure", "sso"}
+	case "keys":
+		args = []string{"configure"}
+	default:
+		return fmt.Errorf("infra: unknown AWS setup %q", mode)
+	}
+
+	command := exec.CommandContext(ctx, "aws", args...)
+	command.Stdin = in
+	command.Stdout = out
+	command.Stderr = errOut
+
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("infra: aws %s failed: %w", strings.Join(args, " "), err)
+	}
+	return nil
+}

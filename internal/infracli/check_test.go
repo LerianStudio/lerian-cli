@@ -780,3 +780,90 @@ esac
 
 	t.Setenv("PATH", dir)
 }
+
+// A machine with no ~/.aws at all is the normal state of a machine that has just
+// been handed to somebody. Reporting "create a profile, then run this again" is a
+// round trip through another program for a thing this can do here.
+func TestNoAWSConfigIsOfferedASetup(t *testing.T) {
+	layout := layoutFor(t)
+	machineWithTools(t)
+	t.Setenv("HOME", t.TempDir()) // no ~/.aws of any kind
+
+	var attempted []string
+	previous := awsConfigure
+	awsConfigure = func(_ context.Context, mode string, _ io.Reader, _, _ io.Writer) error {
+		attempted = append(attempted, mode)
+		return nil
+	}
+	t.Cleanup(func() { awsConfigure = previous })
+
+	previousIdentity := checkIdentity
+	checkIdentity = stubIdentity{}
+	t.Cleanup(func() { checkIdentity = previousIdentity })
+
+	// Enter takes the first row of the setup menu.
+	ask, _ := selectorFor(t, keyEnterSeq)
+
+	var out bytes.Buffer
+	_, _, _ = preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+
+	if len(attempted) != 1 {
+		t.Fatalf("ran %v, want one setup", attempted)
+	}
+	if attempted[0] != "sso" {
+		t.Errorf("ran %q first; SSO is what an organization hands out", attempted[0])
+	}
+}
+
+// An access key is the other way in, for somebody who was given one rather than
+// an SSO portal.
+func TestAnAccessKeyIsTheOtherWayIn(t *testing.T) {
+	layout := layoutFor(t)
+	machineWithTools(t)
+	t.Setenv("HOME", t.TempDir())
+
+	var attempted []string
+	previous := awsConfigure
+	awsConfigure = func(_ context.Context, mode string, _ io.Reader, _, _ io.Writer) error {
+		attempted = append(attempted, mode)
+		return nil
+	}
+	t.Cleanup(func() { awsConfigure = previous })
+
+	previousIdentity := checkIdentity
+	checkIdentity = stubIdentity{}
+	t.Cleanup(func() { checkIdentity = previousIdentity })
+
+	// Down once, onto the access-key row.
+	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq)
+
+	var out bytes.Buffer
+	_, _, _ = preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+
+	if len(attempted) != 1 || attempted[0] != "keys" {
+		t.Errorf("ran %v, want the access-key setup", attempted)
+	}
+}
+
+// Credentials already in the environment are a session. CI sets them, and so does
+// anyone who exports a key rather than writing a profile — and neither of them
+// has a ~/.aws to read.
+func TestCredentialsInTheEnvironmentCount(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	previous := checkIdentity
+	checkIdentity = stubIdentity{usable: map[string]bool{"": true}}
+	t.Cleanup(func() { checkIdentity = previous })
+
+	result, resolved := checkAWSSession(context.Background(), checkIdentity)
+
+	if !result.ok {
+		t.Fatalf("ambient credentials were not recognized as a session: %s", result.detail)
+	}
+	if len(resolved) != 1 || resolved[0].Profile.Name != "" {
+		t.Errorf("resolved = %+v, want the one ambient entry", resolved)
+	}
+	if !strings.Contains(result.summary, "environment") {
+		t.Errorf("the row does not say where the credentials came from: %q", result.summary)
+	}
+}
