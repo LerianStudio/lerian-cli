@@ -118,14 +118,17 @@ func TestADryRunRemovesNothing(t *testing.T) {
 	isolatedHome(t)
 	t.Chdir(t.TempDir())
 
-	logDir := filepath.Join(os.TempDir(), "lerian-infra-dry-run-test")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	// Created rather than named: the glob runLogDirs uses looks in the real temp
+	// directory, and a fixed name is one another run — or another copy of this
+	// test — may already own and be using.
+	logDir, err := os.MkdirTemp("", "lerian-infra-dry-run-test")
+	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.RemoveAll(logDir) }()
 
 	var stdout, stderr bytes.Buffer
-	if err := runCleanup(context.Background(), []string{"--dry-run"}, &stdout, &stderr); err != nil {
+	if err := runCleanup(context.Background(), []string{"--dry-run", "--logs"}, &stdout, &stderr); err != nil {
 		t.Fatalf("runCleanup --dry-run = %v", err)
 	}
 
@@ -182,4 +185,111 @@ func names(items []leftover) []string {
 		out = append(out, item.name)
 	}
 	return out
+}
+
+// A dry run of a named group reports that group. Listing everything found while
+// the flags say --plugins describes a removal that is not the one about to
+// happen, which is the one question a dry run exists to answer.
+func TestADryRunReportsOnlyWhatWasNamed(t *testing.T) {
+	isolatedHome(t)
+	t.Chdir(t.TempDir())
+
+	logDir, err := os.MkdirTemp("", "lerian-infra-named-dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(logDir) }()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.TemplatesCheckout = fakeCheckout(t, "", "")
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := runCleanup(context.Background(), []string{"--dry-run", "--logs"}, &stdout, &stderr); err != nil {
+		t.Fatalf("runCleanup = %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "logs") {
+		t.Errorf("the named group is missing from the report:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "remembered") {
+		t.Errorf("a group that --logs does not remove was reported as going:\n%s", stdout.String())
+	}
+}
+
+// A recorded path whose clone was deleted or moved is the one most worth
+// forgetting, and it is exactly the one a validity check hides: the group
+// disappears from the list, so --remembered has nothing to clear and the stale
+// entry stays in the config for good.
+func TestAStaleRecordedPathCanStillBeForgotten(t *testing.T) {
+	isolatedHome(t)
+	t.Chdir(t.TempDir())
+
+	gone := filepath.Join(t.TempDir(), "moved-away")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.TemplatesCheckout = gone
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := runCleanup(context.Background(), []string{"--remembered"}, &stdout, &stderr); err != nil {
+		t.Fatalf("runCleanup --remembered = %v", err)
+	}
+
+	after, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.TemplatesCheckout != "" {
+		t.Errorf("the stale path survived: %q", after.TemplatesCheckout)
+	}
+}
+
+// The run directory of a command still running holds its plans and its log, and
+// it is the log somebody reads when that run fails. Offering it for removal is
+// offering to delete the evidence of a run in progress.
+func TestARunDirectoryInUseIsNotOffered(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("TMPDIR", temp)
+
+	mine, err := os.MkdirTemp("", "lerian-infra-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimRunDir(mine)
+
+	finished, err := os.MkdirTemp("", "lerian-infra-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A pid no process has. Claimed and then gone is what a finished run leaves.
+	if err := os.WriteFile(filepath.Join(finished, runOwnerFile), []byte("4194304"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	offered := runLogDirs()
+
+	for _, dir := range offered {
+		if dir == mine {
+			t.Errorf("the directory of a running command was offered for removal: %s", dir)
+		}
+	}
+	var sawFinished bool
+	for _, dir := range offered {
+		if dir == finished {
+			sawFinished = true
+		}
+	}
+	if !sawFinished {
+		t.Errorf("a finished run's directory was not offered:\n%v", offered)
+	}
 }

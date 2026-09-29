@@ -8,6 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 
 	"github.com/lerian-studio/lerian-cli/internal/config"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
@@ -74,7 +77,14 @@ func runCleanup(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return nil
 	}
 
-	report(stdout, found)
+	// What the flags name, so a dry run describes the removal about to happen
+	// rather than everything that happens to be on the machine.
+	shown := found
+	if opts.all || opts.plugins || opts.logs || opts.remembered {
+		shown = namedGroups(found, opts.plugins, opts.logs, opts.remembered, opts.all)
+	}
+
+	report(stdout, shown)
 	if opts.dryRun {
 		fmt.Fprintf(stdout, "\n  dry run — nothing was removed.\n")
 		return nil
@@ -121,10 +131,18 @@ func findLeftovers(_ context.Context) []leftover {
 		})
 	}
 
-	if remembered := rememberedCheckout(); remembered != "" {
+	// Read as recorded, not as validated. A path whose clone was moved or deleted
+	// is the one most worth forgetting, and rememberedCheckout hides exactly that
+	// one: it returns empty for a path that is no longer a checkout, the group
+	// vanishes from the list, and --remembered has nothing left to clear.
+	if recorded := recordedCheckout(); recorded != "" {
+		summary := "the checkout path in the config: " + recorded
+		if !infra.IsCheckout(recorded) {
+			summary += " (no longer a checkout)"
+		}
 		found = append(found, leftover{
 			name:       "remembered",
-			summary:    "the checkout path in the config: " + remembered,
+			summary:    summary,
 			configOnly: true,
 		})
 	}
@@ -155,12 +173,62 @@ func providerCaches(root string) []string {
 	return caches
 }
 
+// runOwnerFile names the process that created a run directory. A run writes its
+// plans and its log there, and the log is what somebody reads when that run
+// fails — so a directory another lerian infra is still using is not one to
+// offer for removal.
+const runOwnerFile = ".owner-pid"
+
+// claimRunDir records this process as the owner of a run directory.
+func claimRunDir(dir string) {
+	pid := strconv.Itoa(os.Getpid())
+	_ = os.WriteFile(filepath.Join(dir, runOwnerFile), []byte(pid), 0o600)
+}
+
 func runLogDirs() []string {
 	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "lerian-infra-*"))
 	if err != nil {
 		return nil
 	}
-	return matches
+
+	finished := make([]string, 0, len(matches))
+	for _, dir := range matches {
+		if !runIsOver(dir) {
+			continue
+		}
+		finished = append(finished, dir)
+	}
+	return finished
+}
+
+// runIsOver reports whether the process that claimed this directory is gone.
+//
+// An unclaimed directory counts as finished: it was left by a version that did
+// not write the file, and those are the oldest leftovers of all. Anything else
+// uncertain counts as running, because the cost of being wrong is asymmetric —
+// keeping a directory wastes disk, deleting one takes a running command's log.
+func runIsOver(dir string) bool {
+	recorded, err := os.ReadFile(filepath.Join(dir, runOwnerFile))
+	if err != nil {
+		return true
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(recorded)))
+	if err != nil || pid <= 0 {
+		return true
+	}
+	if pid == os.Getpid() {
+		return false
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return true
+	}
+	// Signal 0 asks about the process without disturbing it. ErrProcessDone is
+	// the only answer that means gone; every other error leaves the question open,
+	// and an open question is not grounds for deleting a log.
+	err = process.Signal(syscall.Signal(0))
+	return errors.Is(err, os.ErrProcessDone)
 }
 
 func totalSize(paths []string) int64 {
@@ -211,16 +279,8 @@ func chooseLeftovers(
 	plugins, logs, remembered, all bool,
 	stderr io.Writer,
 ) ([]leftover, error) {
-	named := map[string]bool{"plugins": plugins, "logs": logs, "remembered": remembered}
-
 	if all || plugins || logs || remembered {
-		var chosen []leftover
-		for _, item := range found {
-			if all || named[item.name] {
-				chosen = append(chosen, item)
-			}
-		}
-		return chosen, nil
+		return namedGroups(found, plugins, logs, remembered, all), nil
 	}
 
 	ask := newPrompter(stderr)
@@ -258,6 +318,20 @@ func chooseLeftovers(
 		}
 	}
 	return chosen, nil
+}
+
+// namedGroups is the found groups the flags select, in the order they were
+// found.
+func namedGroups(found []leftover, plugins, logs, remembered, all bool) []leftover {
+	named := map[string]bool{"plugins": plugins, "logs": logs, "remembered": remembered}
+
+	chosen := make([]leftover, 0, len(found))
+	for _, item := range found {
+		if all || named[item.name] {
+			chosen = append(chosen, item)
+		}
+	}
+	return chosen
 }
 
 func remove(out io.Writer, chosen []leftover) error {

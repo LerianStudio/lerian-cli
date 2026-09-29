@@ -335,6 +335,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := os.Chmod(runDir, 0o700); err != nil {
 		return fmt.Errorf("cannot restrict the run directory: %w", err)
 	}
+	// So a cleanup running alongside this one can tell a finished run's logs from
+	// the log this run is still writing.
+	claimRunDir(runDir)
 	// Saved plans can contain values read from state; the logs are kept so a
 	// failure can be read after the run.
 	defer removePlans(runDir)
