@@ -312,3 +312,80 @@ func TestThePreflightAsksWhetherTheOperatorIsLoggedIn(t *testing.T) {
 		t.Errorf("the preflight never asked whether there is a session:\n%s", out.String())
 	}
 }
+
+// The verdict comes first. Scanning for what failed should be running an eye
+// down the left edge, not down a ragged right one — the summaries are paths and
+// versions of wildly different lengths, and on a narrow terminal the column that
+// holds the verdict is the first thing to wrap off the screen.
+func TestTheVerdictIsTheFirstThingOnTheLine(t *testing.T) {
+	results := []checkResult{
+		{name: "terraform", summary: "/opt/homebrew/bin/terraform", ok: true},
+		{name: "aws session", summary: "not logged in", detail: "log in", ok: false},
+	}
+
+	var out bytes.Buffer
+	_ = reportChecks(&out, results)
+
+	for _, line := range strings.Split(out.String(), "\n") {
+		trimmed := strings.TrimSpace(stripANSI(line))
+		switch {
+		case strings.HasPrefix(trimmed, "terraform"), strings.HasPrefix(trimmed, "aws session /"):
+			t.Errorf("the line starts with the name rather than the verdict: %q", trimmed)
+		}
+	}
+	if !strings.Contains(stripANSI(out.String()), "ok       terraform") {
+		t.Errorf("the verdict does not lead the row:\n%s", stripANSI(out.String()))
+	}
+	if !strings.Contains(stripANSI(out.String()), "missing  aws session") {
+		t.Errorf("the failing verdict does not lead its row:\n%s", stripANSI(out.String()))
+	}
+}
+
+// The names line up under each other whether or not the verdict beside them is
+// coloured. Padding a string that carries escape sequences counts the escapes,
+// which is how a coloured column ends up one word to the right of the plain ones.
+func TestTheNamesLineUpWhateverTheVerdictIs(t *testing.T) {
+	results := []checkResult{
+		{name: "terraform", summary: "ok", ok: true},
+		{name: "aws session", summary: "no", detail: "x", ok: false},
+	}
+
+	var plain, coloured bytes.Buffer
+	_ = reportChecks(&plain, results)
+	_ = reportChecks(&colouredWriter{&coloured}, results)
+
+	if columnOf(t, stripANSI(plain.String()), "terraform") != columnOf(t, stripANSI(coloured.String()), "terraform") {
+		t.Errorf("colour moved the name column:\nplain:\n%s\ncoloured:\n%s", plain.String(), stripANSI(coloured.String()))
+	}
+}
+
+func columnOf(t *testing.T, text, name string) int {
+	t.Helper()
+	for _, line := range strings.Split(text, "\n") {
+		if at := strings.Index(line, name); at != -1 {
+			return at
+		}
+	}
+	t.Fatalf("%q is not in:\n%s", name, text)
+	return -1
+}
+
+// colouredWriter is a writer the style believes is a terminal.
+type colouredWriter struct{ inner *bytes.Buffer }
+
+func (c *colouredWriter) Write(p []byte) (int, error) { return c.inner.Write(p) }
+
+func stripANSI(text string) string {
+	var out strings.Builder
+	for len(text) > 0 {
+		if strings.HasPrefix(text, "\x1b[") {
+			if end := strings.IndexByte(text, 'm'); end != -1 {
+				text = text[end+1:]
+				continue
+			}
+		}
+		out.WriteByte(text[0])
+		text = text[1:]
+	}
+	return out.String()
+}

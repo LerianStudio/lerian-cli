@@ -217,14 +217,23 @@ func reportChecks(out io.Writer, results []checkResult) error {
 		}
 	}
 
+	// The verdict leads the row. Scanning for what failed is then running an eye
+	// down the left edge rather than down a ragged right one: the summaries are
+	// paths and versions of wildly different lengths, and a verdict at the end of
+	// them is the first thing to wrap off a narrow terminal.
+	const verdictWidth = 7 // "missing"
+
 	failed := 0
 	for _, r := range results {
-		mark := "ok"
+		// Padded before it is coloured. Padding a string that already carries escape
+		// sequences counts the escapes as characters, and the coloured column lands
+		// one word to the right of the plain ones.
+		mark := fmt.Sprintf("%-*s", verdictWidth, "ok")
 		if !r.ok {
-			mark = theme.alert("missing")
+			mark = theme.alert(fmt.Sprintf("%-*s", verdictWidth, "missing"))
 			failed++
 		}
-		fmt.Fprintf(out, "  %-*s  %-52s %s\n", width, r.name, r.summary, mark)
+		fmt.Fprintf(out, "  %s  %-*s  %s\n", mark, width, r.name, r.summary)
 	}
 
 	// The remediations come after the table rather than inline, so the table stays
