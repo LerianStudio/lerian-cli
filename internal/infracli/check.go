@@ -418,10 +418,12 @@ func preflight(
 	layout infra.Layout,
 	source checkoutSource,
 	dryRun bool,
-) (*infra.CLI, error) {
+) (*infra.CLI, []infra.ResolvedProfile, error) {
 	terraform, tfErr := infra.NewCLI(ctx)
 
 	results := []checkResult{terraformResult(tfErr)}
+
+	var profiles []infra.ResolvedProfile
 
 	awsCLI := checkResult{name: "aws", ok: true}
 	if !dryRun {
@@ -440,14 +442,15 @@ func preflight(
 	// rows for one problem read as two problems.
 	if !dryRun && awsCLI.ok {
 		session, resolved := checkAWSSession(ctx, checkIdentity)
+		profiles = resolved
 
 		// Offered before the report rather than after it: the report ends the
 		// command, and the whole point is not to end it.
 		if !session.ok {
 			if loggedIn, err := offerLogin(ctx, ask, out, loginTargets(resolved)); err != nil {
-				return nil, err
+				return nil, nil, err
 			} else if loggedIn {
-				session, _ = checkAWSSession(ctx, checkIdentity)
+				session, profiles = checkAWSSession(ctx, checkIdentity)
 			}
 		}
 		results = append(results, session)
@@ -463,15 +466,15 @@ func preflight(
 	watching := ask != nil && ask.interactive
 	for _, r := range results {
 		if !r.ok {
-			return nil, reportChecks(out, results, "")
+			return nil, nil, reportChecks(out, results, "")
 		}
 	}
 	if watching {
 		if err := reportChecks(out, results, ""); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return terraform, nil
+	return terraform, profiles, nil
 }
 
 // templatesResult verifies the lerian-terraform-foundation checkout a run has

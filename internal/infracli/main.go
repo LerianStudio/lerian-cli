@@ -269,7 +269,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// way it happens once, because the probe shells out to the binary.
 	if terraform == nil {
 		var err error
-		if terraform, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun); err != nil {
+		if terraform, _, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun); err != nil {
 			return err
 		}
 	}
@@ -1028,28 +1028,19 @@ func printDryRun(
 // environment names the AWS account, the account names the profile, and an
 // expired session for that profile makes every later answer worthless.
 func guidedRun(
+	ctx context.Context,
 	catalog infra.Catalog,
 	opts *options,
 	ask *prompter,
 	layout infra.Layout,
+	resolved []infra.ResolvedProfile,
 	afterEnvironment func(string) error,
 ) error {
 	if !ask.interactive {
 		return nil
 	}
 
-	choices := runEnvironmentOptions(layout)
-	if !anyEnabled(choices) {
-		return fmt.Errorf("no environment is configured in this checkout\n"+
-			"examples/aws/environments.conf declares the account, profile and region of\n"+
-			"each environment, and it has no section this tool can use.\n\n"+
-			"  lerian infra init --env %s", infra.Environments[0])
-	}
-
-	environment, err := ask.pick(
-		"Which environment?",
-		"Picks the AWS account, the state backend and the variables file of every stack.",
-		"--env", choices, "")
+	environment, err := askForAccount(ctx, ask, ask.out, layout, resolved)
 	if err != nil {
 		return err
 	}
@@ -1086,24 +1077,162 @@ func guidedRun(
 	return nil
 }
 
-// runEnvironmentOptions is environmentOptions for a run rather than for init.
+// askForAccount asks which account to deploy into and returns the environment it
+// maps to.
 //
-// An environment with no section in environments.conf has no account to verify
-// against and no profile to verify with, so a run against it fails at the step
-// after this one. It is shown and disabled rather than hidden: "stg is not set up
-// in this checkout" is the useful fact, and leaving it out reads as stg not
-// existing at all.
-//
-// init offers all three, because it is the command that creates the section.
-func runEnvironmentOptions(layout infra.Layout) []option {
-	options := environmentOptions(layout)
-	for index, opt := range options {
-		if _, err := infra.LoadEnvConfig(layout, opt.value); err != nil {
-			options[index].disabled = true
-			options[index].note = "no [" + opt.value + "] section in environments.conf"
+// The environment is derived rather than asked for: it names the state backend
+// and the variables file, so the run needs it, but it is our vocabulary and not
+// the operator's. What they are deciding is the account.
+func askForAccount(
+	ctx context.Context,
+	ask *prompter,
+	out io.Writer,
+	layout infra.Layout,
+	resolved []infra.ResolvedProfile,
+) (string, error) {
+	choices := accountOptions(layout, resolved)
+	if !anyEnabled(choices) {
+		return "", fmt.Errorf("no AWS account this machine can reach is configured in this checkout\n" +
+			"examples/aws/environments.conf declares the account, profile and region to\n" +
+			"deploy into, and none of its sections names an account any profile in ~/.aws\n" +
+			"resolves to.\n\n" +
+			"  lerian infra init")
+	}
+
+	profile, err := ask.pick(
+		"Which AWS account?",
+		"Everything is created there. The state backend and the sizing follow from it.",
+		"", choices, "")
+	if err != nil {
+		return "", err
+	}
+
+	chosen := findProfile(resolved, profile)
+	if chosen == nil {
+		return "", fmt.Errorf("profile %q is not one of the profiles offered", profile)
+	}
+
+	// A profile with no session yet is chosen precisely to log into it. The login
+	// is for that profile's session, not for whichever one came first in the list.
+	if !chosen.Usable() {
+		target := infra.SSOTarget{Session: chosen.Profile.SSOSession, Profile: chosen.Profile.Name}
+		if _, err := offerLogin(ctx, ask, out, []infra.SSOTarget{target}); err != nil {
+			return "", err
+		}
+
+		// Ask again who it is now. The account is what maps to an environment, and
+		// before the login there was none to read.
+		refreshed, err := checkIdentity.CallerIdentity(ctx, chosen.Profile.Name, chosen.Profile.Region)
+		if err != nil {
+			return "", fmt.Errorf("profile %q still does not resolve: %w\n  aws sso login --profile %s",
+				profile, err, profile)
+		}
+		chosen.Caller = refreshed
+	}
+
+	environment, ok := environmentForProfile(layout, chosen.Profile.Name, chosen.Caller.Account)
+	if !ok {
+		return "", fmt.Errorf("account %s is not configured in this checkout\n"+
+			"  lerian infra init", chosen.Caller.Account)
+	}
+	return environment, nil
+}
+
+func findProfile(resolved []infra.ResolvedProfile, name string) *infra.ResolvedProfile {
+	for index := range resolved {
+		if resolved[index].Profile.Name == name {
+			return &resolved[index]
 		}
 	}
+	return nil
+}
+
+// accountOptions is the question a run actually asks: which AWS account.
+//
+// dev, stg and prd are names of files in the templates repo — backend/<env>.hcl
+// holds the state, envs/<env>.tfvars holds the sizing — so they cannot be removed
+// from the model. They can stop being the question. The account is what is being
+// decided, it is what the guard checks before anything runs, and it is the thing
+// that belongs to the operator rather than to us.
+//
+// Every profile in ~/.aws gets a row:
+//
+//   - one reaching a configured account is choosable, and the environment it maps
+//     to is shown as a consequence rather than asked for;
+//   - one reaching an account with no section cannot be deployed into — there is
+//     no state backend and no variables file for it — so the row says how to
+//     create one instead of offering a choice that fails two questions later;
+//   - one whose session has expired is choosable, because choosing it is how an
+//     operator says "log me into that one".
+func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []option {
+	// Ordered by what can be done with the row, because the cursor starts on the
+	// first one: a list that opens on something unusable makes the most likely
+	// keypress a mistake. Ready first, then the ones a login would revive, then the
+	// ones nothing can be done about from here.
+	const (
+		ready = iota
+		needsLogin
+		unconfigured
+	)
+
+	type row struct {
+		option option
+		rank   int
+	}
+
+	rows := make([]row, 0, len(resolved))
+	for _, entry := range resolved {
+		opt := option{value: entry.Profile.Name, label: entry.Profile.Name}
+		rank := ready
+
+		switch {
+		case !entry.Usable():
+			rank = needsLogin
+			opt.note = "session expired — choose to log in"
+		default:
+			if environment, ok := environmentForProfile(layout, entry.Profile.Name, entry.Caller.Account); ok {
+				opt.note = "account " + entry.Caller.Account + "  ·  deploys as " + environment
+			} else {
+				rank = unconfigured
+				opt.disabled = true
+				opt.note = "account " + entry.Caller.Account + " is not configured — lerian infra init"
+			}
+		}
+		rows = append(rows, row{option: opt, rank: rank})
+	}
+
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].rank < rows[j].rank })
+
+	options := make([]option, 0, len(rows))
+	for _, r := range rows {
+		options = append(options, r.option)
+	}
 	return options
+}
+
+// environmentForProfile finds the environment whose section names this account,
+// preferring one that also names this profile.
+//
+// The account is what decides it, because the account is what the guard checks.
+// The profile breaks a tie: two environments in one account is a real
+// configuration — a dev and a staging sharing a sandbox — and then the profile is
+// what tells them apart.
+func environmentForProfile(layout infra.Layout, profile, account string) (string, bool) {
+	var byAccount string
+
+	for _, name := range infra.Environments {
+		config, err := infra.LoadEnvConfig(layout, name)
+		if err != nil || config.AccountID != account {
+			continue
+		}
+		if config.Profile == profile {
+			return name, true
+		}
+		if byAccount == "" {
+			byAccount = name
+		}
+	}
+	return byAccount, byAccount != ""
 }
 
 func anyEnabled(options []option) bool {
@@ -1466,14 +1595,18 @@ func prepareChoices(
 		return nil, nil
 	}
 
-	var terraform *infra.CLI
+	var (
+		terraform *infra.CLI
+		profiles  []infra.ResolvedProfile
+	)
 	if ask.interactive {
 		var err error
-		if terraform, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun); err != nil {
+		terraform, profiles, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun)
+		if err != nil {
 			return nil, err
 		}
 	}
-	if err := guidedRun(catalog, opts, ask, layout, credentialCheck(ctx, layout, opts.dryRun)); err != nil {
+	if err := guidedRun(ctx, catalog, opts, ask, layout, profiles, credentialCheck(ctx, layout, opts.dryRun)); err != nil {
 		return nil, err
 	}
 	return terraform, nil

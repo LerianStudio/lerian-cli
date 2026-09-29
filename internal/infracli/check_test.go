@@ -200,7 +200,7 @@ func TestPreflightReportsBothToolsAtOnce(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // neither binary resolvable
 
 	var out bytes.Buffer
-	_, err := preflight(context.Background(), nil, &out, layout, sourceFlag, false)
+	_, _, err := preflight(context.Background(), nil, &out, layout, sourceFlag, false)
 
 	if err == nil {
 		t.Fatal("preflight passed with no terraform and no aws in PATH")
@@ -218,7 +218,7 @@ func TestPreflightExemptsTheAWSCLIOnADryRun(t *testing.T) {
 	layout := layoutFor(t)
 
 	var out bytes.Buffer
-	_, err := preflight(context.Background(), nil, &out, layout, sourceFlag, true)
+	_, _, err := preflight(context.Background(), nil, &out, layout, sourceFlag, true)
 
 	if err != nil && strings.Contains(out.String(), "aws") {
 		t.Errorf("a dry run was gated on the AWS CLI:\n%s", out.String())
@@ -231,7 +231,7 @@ func TestPreflightDoesNotGateOnGit(t *testing.T) {
 	layout := layoutFor(t)
 
 	var out bytes.Buffer
-	_, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, true)
+	_, _, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, true)
 
 	if strings.Contains(out.String(), "git") {
 		t.Errorf("a run was gated on git, which only init uses:\n%s", out.String())
@@ -335,7 +335,7 @@ func TestThePreflightAsksWhetherTheOperatorIsLoggedIn(t *testing.T) {
 	t.Cleanup(func() { checkIdentity = previous })
 
 	var out bytes.Buffer
-	_, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, false)
+	_, _, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, false)
 
 	if !strings.Contains(out.String(), "aws session") {
 		t.Errorf("the preflight never asked whether there is a session:\n%s", out.String())
@@ -469,7 +469,7 @@ func TestAnExpiredSessionCanBeRevivedWithoutLeaving(t *testing.T) {
 	ask, _ := selectorFor(t, keyEnterSeq)
 
 	var out bytes.Buffer
-	_, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+	_, _, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
 
 	if len(attempted) != 1 {
 		t.Fatalf("logged in %d times, want once: %v", len(attempted), attempted)
@@ -505,7 +505,7 @@ func TestDecliningTheLoginLeavesTheInstruction(t *testing.T) {
 	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq)
 
 	var out bytes.Buffer
-	_, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+	_, _, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
 
 	if called {
 		t.Error("the login ran without being accepted")
@@ -577,7 +577,7 @@ func TestTheReportAppearsEvenWhenEverythingPasses(t *testing.T) {
 	ask, _ := selectorFor(t, "")
 
 	var out bytes.Buffer
-	if _, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false); err != nil {
+	if _, _, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false); err != nil {
 		t.Fatalf("preflight on a working machine = %v\n%s", err, out.String())
 	}
 
@@ -605,7 +605,7 @@ func TestAScriptedRunIsNotGivenTheReport(t *testing.T) {
 	t.Cleanup(func() { checkIdentity = previous })
 
 	var out bytes.Buffer
-	if _, err := preflight(context.Background(), nil, &out, layout, sourceFlag, false); err != nil {
+	if _, _, err := preflight(context.Background(), nil, &out, layout, sourceFlag, false); err != nil {
 		t.Fatalf("preflight = %v", err)
 	}
 
@@ -629,7 +629,7 @@ func TestTheNoAWSCallClaimIsOnlyMadeWhereItHolds(t *testing.T) {
 	ask, _ := selectorFor(t, "")
 
 	var out bytes.Buffer
-	_, _ = preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+	_, _, _ = preflight(context.Background(), ask, &out, layout, sourceFlag, false)
 
 	if strings.Contains(out.String(), "No AWS call") {
 		t.Errorf("the preflight claimed it made no AWS call, having just made several:\n%s", out.String())

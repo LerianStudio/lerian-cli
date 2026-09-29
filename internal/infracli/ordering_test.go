@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,7 +109,7 @@ func TestTheCredentialIsCheckedAsSoonAsTheEnvironmentIsKnown(t *testing.T) {
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	expired := errors.New("the SSO session for profile \"lerian-sandbox\" has expired")
-	err := guidedRun(catalog, &opts, ask, configuredLayout(t), func(string) error { return expired })
+	err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), func(string) error { return expired })
 
 	if !errors.Is(err, expired) {
 		t.Fatalf("guidedRun = %v, want the credential failure", err)
@@ -132,7 +133,7 @@ func TestAWorkingCredentialAsksTheRestOfTheQuestions(t *testing.T) {
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	var checked string
-	if err := guidedRun(catalog, &opts, ask, configuredLayout(t), func(env string) error { checked = env; return nil }); err != nil {
+	if err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), func(env string) error { checked = env; return nil }); err != nil {
 		t.Fatalf("guidedRun = %v", err)
 	}
 
@@ -216,66 +217,6 @@ func writeEnvConfig(t *testing.T, checkout string, sections map[string]string) {
 	}
 }
 
-// An environment with no section in environments.conf cannot be run: there is no
-// account to verify against and no profile to verify with. Offering it as a
-// choice spends an answer on a run that fails at the next step, so it is shown
-// and disabled — shown, because "stg is not set up here" is the useful fact, and
-// hiding it would read as stg not existing.
-func TestAnUnconfiguredEnvironmentCannotBeChosenForARun(t *testing.T) {
-	checkout := fakeCheckout(t, "", "")
-	writeEnvConfig(t, checkout, map[string]string{
-		"dev": "account_id = 524121347244\nregion = us-east-2\nprofile = lerian-sandbox",
-	})
-	layout, err := infra.NewLayout(checkout)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	byValue := map[string]option{}
-	for _, opt := range runEnvironmentOptions(layout) {
-		byValue[opt.value] = opt
-	}
-
-	if byValue["dev"].disabled {
-		t.Errorf("the configured environment cannot be chosen: %+v", byValue["dev"])
-	}
-	if !strings.Contains(byValue["dev"].note, "524121347244") {
-		t.Errorf("the configured environment does not name its account: %q", byValue["dev"].note)
-	}
-	for _, name := range []string{"stg", "prd"} {
-		if !byValue[name].disabled {
-			t.Errorf("%s has no section and was offered anyway: %+v", name, byValue[name])
-		}
-		if !strings.Contains(byValue[name].note, "environments.conf") {
-			t.Errorf("%s does not say why it cannot be chosen: %q", name, byValue[name].note)
-		}
-	}
-}
-
-// With nothing configured there is no question to ask, and the answer is a
-// different command.
-func TestNoConfiguredEnvironmentSendsTheOperatorToInit(t *testing.T) {
-	layout, err := infra.NewLayout(fakeCheckout(t, "", ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ask, painted := selectorFor(t, keyEnterSeq)
-	opts := options{}
-
-	err = guidedRun(infra.Catalog{}, &opts, ask, layout, nil)
-
-	if err == nil {
-		t.Fatal("a run was offered environments that are all unusable")
-	}
-	if !strings.Contains(err.Error(), "lerian infra init") {
-		t.Errorf("the error does not say how to configure one: %v", err)
-	}
-	if strings.Contains(painted.String(), "Which environment") {
-		t.Errorf("a question was asked that had no answer:\n%s", painted.String())
-	}
-}
-
 // configuredLayout is a checkout whose environments.conf declares every
 // environment, for tests about the questions rather than about the configuration.
 func configuredLayout(t *testing.T) infra.Layout {
@@ -292,4 +233,242 @@ func configuredLayout(t *testing.T) infra.Layout {
 		t.Fatal(err)
 	}
 	return layout
+}
+
+// The question an operator can answer is "which account", not "which of our
+// three environment names".
+//
+// dev, stg and prd are the names of files in the templates repo —
+// backend/<env>.hcl holds the state, envs/<env>.tfvars holds the sizing — so they
+// cannot be removed from the model. They can stop being the question. The account
+// is what the operator is deciding, it is what the guard checks, and it is the
+// thing that is theirs rather than ours.
+func TestTheQuestionIsWhichAccount(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+		{Profile: infra.AWSProfile{Name: "elsewhere"}, Caller: infra.Caller{Account: "999988887777"}},
+		{Profile: infra.AWSProfile{Name: "stale", SSOSession: "acme"}, Err: errors.New("expired")},
+	}
+
+	options := accountOptions(layout, resolved)
+
+	byValue := map[string]option{}
+	for _, opt := range options {
+		byValue[opt.value] = opt
+	}
+
+	// The configured one is choosable and says what it is, in the operator's terms
+	// first: the account, then the profile that reaches it.
+	if byValue["sandbox"].disabled {
+		t.Error("the configured account cannot be chosen")
+	}
+	if !strings.Contains(byValue["sandbox"].label+byValue["sandbox"].note, "111122223333") {
+		t.Errorf("the row does not name the account: %+v", byValue["sandbox"])
+	}
+
+	// An account with no section cannot be deployed into — there is no state
+	// backend and no variables file for it — and the row says so instead of
+	// offering a choice that fails later.
+	if !byValue["elsewhere"].disabled {
+		t.Error("an account with no configuration was offered")
+	}
+	if !strings.Contains(byValue["elsewhere"].note, "init") {
+		t.Errorf("the row does not say how to configure it: %q", byValue["elsewhere"].note)
+	}
+
+	// A profile whose session died is offered, because choosing it is how you say
+	// "log me into that one".
+	if byValue["stale"].disabled {
+		t.Error("a profile with an expired session was not offered, so there is no way to log into it")
+	}
+	if !strings.Contains(byValue["stale"].note, "log in") {
+		t.Errorf("the row does not say it needs a login: %q", byValue["stale"].note)
+	}
+}
+
+// The environment is derived from the account rather than asked for.
+func TestTheEnvironmentComesFromTheAccount(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+		"prd": "account_id = 999988887777\nregion = us-east-1\nprofile = production",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := environmentForProfile(layout, "sandbox", "111122223333"); !ok || got != "dev" {
+		t.Errorf("sandbox/111122223333 = %q,%v — want dev", got, ok)
+	}
+	if got, ok := environmentForProfile(layout, "production", "999988887777"); !ok || got != "prd" {
+		t.Errorf("production/999988887777 = %q,%v — want prd", got, ok)
+	}
+	if _, ok := environmentForProfile(layout, "nobody", "000000000000"); ok {
+		t.Error("an unconfigured account resolved to an environment")
+	}
+}
+
+// The guided run asks for the account and never mentions an environment name.
+func TestTheGuidedRunAsksForTheAccount(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, resolved, nil); err != nil {
+		t.Fatalf("guidedRun = %v\n%s", err, painted.String())
+	}
+
+	if !strings.Contains(painted.String(), "account") {
+		t.Errorf("the account was never mentioned:\n%s", painted.String())
+	}
+	if strings.Contains(painted.String(), "Which environment") {
+		t.Errorf("the operator was asked for one of our environment names:\n%s", painted.String())
+	}
+	// And the environment still reaches the rest of the run, derived.
+	if opts.environment != "dev" {
+		t.Errorf("environment = %q, want dev derived from the account", opts.environment)
+	}
+}
+
+// With no profile reaching a configured account there is nothing to ask, and the
+// answer is init rather than a menu of dead rows.
+func TestNoConfiguredAccountSendsTheOperatorToInit(t *testing.T) {
+	layout, err := infra.NewLayout(fakeCheckout(t, "", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq)
+	opts := options{}
+
+	err = guidedRun(context.Background(), infra.Catalog{}, &opts, ask, layout, resolved, nil)
+
+	if err == nil {
+		t.Fatal("a run was offered an account it cannot deploy into")
+	}
+	if !strings.Contains(err.Error(), "lerian infra init") {
+		t.Errorf("the error does not say how to configure one: %v", err)
+	}
+	if strings.Contains(painted.String(), "Which account") {
+		t.Errorf("a question was asked that had no answer:\n%s", painted.String())
+	}
+}
+
+// configuredProfiles are the profiles that reach the accounts configuredLayout
+// declares, in the order the environments are declared, so the first row of the
+// menu is dev.
+func configuredProfiles() []infra.ResolvedProfile {
+	return []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "dev-profile"}, Caller: infra.Caller{Account: "111122223333"}},
+		{Profile: infra.AWSProfile{Name: "stg-profile"}, Caller: infra.Caller{Account: "444455556666"}},
+		{Profile: infra.AWSProfile{Name: "prd-profile"}, Caller: infra.Caller{Account: "999988887777"}},
+	}
+}
+
+// Choosing a profile whose session has died is how an operator says "log me into
+// that one". It logs into that profile's session — not into whichever one the
+// preflight happened to offer first — and then carries on with the account they
+// picked.
+func TestChoosingAnExpiredProfileLogsIntoThatOne(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme"}, Err: errors.New("expired")},
+	}
+
+	var attempted []infra.SSOTarget
+	previousLogin := ssoLogin
+	ssoLogin = func(_ context.Context, target infra.SSOTarget, _ io.Reader, _, _ io.Writer) error {
+		attempted = append(attempted, target)
+		return nil
+	}
+	t.Cleanup(func() { ssoLogin = previousLogin })
+
+	previousIdentity := checkIdentity
+	checkIdentity = stubIdentity{usable: map[string]bool{"sandbox": true}}
+	t.Cleanup(func() { checkIdentity = previousIdentity })
+
+	// Enter picks sandbox, Enter accepts the login, then the remaining questions.
+	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, resolved, nil); err != nil {
+		t.Fatalf("guidedRun = %v", err)
+	}
+
+	if len(attempted) != 1 || attempted[0].Session != "acme" {
+		t.Fatalf("logged into %v, want the session behind the chosen profile", attempted)
+	}
+	if opts.environment != "dev" {
+		t.Errorf("environment = %q, want the one the chosen account maps to", opts.environment)
+	}
+}
+
+// The accounts that can be deployed into come first, because the cursor starts on
+// the first row: a list that opens on something unusable makes the most likely
+// keypress a mistake. Then the ones a login would revive, then the rest.
+func TestTheUsableAccountsComeFirst(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "aaa-unconfigured"}, Caller: infra.Caller{Account: "999988887777"}},
+		{Profile: infra.AWSProfile{Name: "bbb-expired", SSOSession: "acme"}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	options := accountOptions(layout, resolved)
+
+	if options[0].value != "sandbox" {
+		t.Errorf("the list opens on %q, which is not the one that can be deployed into", options[0].value)
+	}
+	if options[0].disabled {
+		t.Error("the first row cannot be chosen")
+	}
+	if options[1].value != "bbb-expired" {
+		t.Errorf("the second row is %q, want the one a login would revive", options[1].value)
+	}
+	if options[2].value != "aaa-unconfigured" {
+		t.Errorf("the last row is %q, want the one nothing can be done about here", options[2].value)
+	}
 }

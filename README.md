@@ -287,35 +287,30 @@ checks the machine before it asks anything:
   4 checks, all ok.
 ```
 
-The environment question then names the account each choice lands in:
+It then asks the one question an operator can answer:
 
 ```
-  Which environment?
-  Picks the AWS account, the state backend and the variables file of every stack.
-  ❯ dev  day to day, smallest sizing  ·  account 524121347244 via lerian-sandbox
-    stg  (unavailable)  no [stg] section in environments.conf
-    prd  (unavailable)  no [prd] section in environments.conf
+  Which AWS account?
+  Everything is created there. The state backend and the sizing follow from it.
+  ❯ lerian-sandbox  account 524121347244  ·  deploys as dev
+    default         session expired — choose to log in
+    other-profile   (unavailable)  account 239025757440 is not configured — lerian infra init
 ```
 
-The account is not a separate choice, and it is worth saying why: the environment
-*is* the account. `environments.conf` binds the two, and the account guard refuses
-to run when the active credential resolves anywhere other than the account
-declared for the environment being applied — there is no flag to skip it. Offering
-the account as its own question would let you build a pair the guard exists to
-reject.
+`dev`, `stg` and `prd` are names of files in the templates repo —
+`backend/<env>.hcl` holds the state, `envs/<env>.tfvars` holds the sizing — so
+they cannot be removed from the model. They can stop being the question. What is
+being decided is the account: it is what the guard checks before anything runs,
+and it is the thing that belongs to whoever is deploying rather than to us. The
+environment is derived from it and shown as a consequence.
 
-An environment with no section there cannot be run — nothing to verify against,
-nothing to verify with — so it is shown and disabled rather than hidden: "stg is
-not set up in this checkout" is the useful fact, and leaving it out reads as stg
-not existing. With none configured, the error names `lerian infra init` instead of
-asking a question with no answer.
-
-The account is the consequence of that answer, and it used to appear only on the
-confirmation before an apply — so a plan never named it at all, and an apply
-named it after every other question had been answered. It is read from
-`environments.conf`, which is the same number the account guard later refuses to
-run against if the credential does not match. An environment the configuration
-says nothing about keeps its plain description rather than claiming an account.
+Every profile in `~/.aws` gets a row, ordered by what can be done with it. One
+reaching a configured account is ready. One whose session has expired is
+choosable — choosing it is how you say "log me into that one", and the login is
+for that profile's session. One reaching an account with no section cannot be
+deployed into, because there is no state backend and no variables file for it, so
+the row says how to create one instead of offering a choice that fails two
+questions later.
 
 The block appears whether or not anything is wrong: which checkout and which
 terraform a run is about to use is worth a line each, and showing them only on
