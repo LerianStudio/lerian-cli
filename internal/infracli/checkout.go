@@ -27,6 +27,17 @@ func rememberedCheckout() string {
 	return cfg.TemplatesCheckout
 }
 
+// recordedCheckout is the path in the config as written, valid or not. The
+// cleanup reads this one: forgetting a recorded path is a thing to do precisely
+// when the clone it names is gone.
+func recordedCheckout() string {
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	return cfg.TemplatesCheckout
+}
+
 // rememberCheckout writes the answer so the question is asked once per machine
 // rather than once per shell.
 //
