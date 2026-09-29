@@ -78,6 +78,21 @@ and access your data.`,
 	SilenceUsage: true,
 }
 
+// menuAnnotation marks a command that the session's menu does not offer.
+//
+// A command can be worth having and not worth offering. midaz is the whole
+// ledger surface — its subcommands take ledger ids, regions and sizes the menu
+// has no way to ask for — so picking it from a list lands the operator on a help
+// page rather than on something they chose to do. It stays a command: `lerian
+// midaz ledger list` is unaffected.
+//
+// Marked on the command rather than filtered by name here, so the decision lives
+// next to the thing it describes and there is only one place to change.
+const (
+	menuAnnotation = "menu"
+	menuSkip       = "skip"
+)
+
 // menuChoices is the command list the menu offers: what cobra knows, minus the
 // two it generates for itself and anything hidden. Reading it off cobra rather
 // than writing it out means a command added later appears without anyone having
@@ -89,6 +104,9 @@ func menuChoices(root *cobra.Command) []infracli.Choice {
 			continue
 		}
 		if child.Name() == "help" || child.Name() == "completion" {
+			continue
+		}
+		if child.Annotations[menuAnnotation] == menuSkip {
 			continue
 		}
 		choices = append(choices, infracli.Choice{
@@ -127,6 +145,8 @@ func init() {
 
 	// Add subcommands
 	rootCmd.AddCommand(auth.AuthCmd)
+	// A command, but not one the menu offers — see menuAnnotation.
+	midaz.MidazCmd.Annotations = map[string]string{menuAnnotation: menuSkip}
 	rootCmd.AddCommand(midaz.MidazCmd)
 	rootCmd.AddCommand(infra.InfraCmd)
 }

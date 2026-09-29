@@ -98,3 +98,56 @@ func TestAnUnknownCommandIsStillRejected(t *testing.T) {
 		t.Errorf("the error does not name the command: %v", err)
 	}
 }
+
+// The menu is a shorter list than the command set. A command can be worth having
+// and not worth offering — midaz is the whole ledger surface, reached with
+// arguments the menu cannot ask for, so offering it lands the operator in a help
+// page rather than in anything they chose to do.
+//
+// Marked on the command rather than filtered by name here, so the two places do
+// not have to be kept in agreement.
+func TestACommandCanBeKeptOutOfTheMenu(t *testing.T) {
+	root := fakeRoot(t)
+	root.AddCommand(&cobra.Command{
+		Use:         "midaz",
+		Short:       "Midaz ledger management commands",
+		Annotations: map[string]string{menuAnnotation: menuSkip},
+		Run:         func(*cobra.Command, []string) {},
+	})
+
+	for _, choice := range menuChoices(root) {
+		if choice.Value == "midaz" {
+			t.Error("a command marked as not offered was offered")
+		}
+	}
+
+	// Still a command. Kept out of the menu is not removed from the CLI, and
+	// `lerian midaz ledger list` has to keep working.
+	found := false
+	for _, child := range root.Commands() {
+		if child.Name() == "midaz" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the command was removed from the CLI, not just from the menu")
+	}
+}
+
+// And the menu still offers what it should.
+func TestTheMenuOffersAuthInfraAndVersion(t *testing.T) {
+	var offered []string
+	for _, choice := range menuChoices(rootCmd) {
+		offered = append(offered, choice.Value)
+	}
+
+	want := []string{"auth", "infra", "version"}
+	if len(offered) != len(want) {
+		t.Fatalf("the menu offers %v, want exactly %v", offered, want)
+	}
+	for index, name := range want {
+		if offered[index] != name {
+			t.Errorf("offered[%d] = %q, want %q (%v)", index, offered[index], name, offered)
+		}
+	}
+}

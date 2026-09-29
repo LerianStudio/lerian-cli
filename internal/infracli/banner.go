@@ -8,14 +8,15 @@ import (
 	"time"
 )
 
-// wordmark is the block form, 46 columns wide and 6 lines tall.
+// wordmark is the block form of the tool's name. Six lines, 71 columns, which
+// fits a standard 80-column terminal with room to spare and gives way below that.
 var wordmark = []string{
-	`██╗     ███████╗██████╗ ██╗ █████╗ ███╗   ██╗`,
-	`██║     ██╔════╝██╔══██╗██║██╔══██╗████╗  ██║`,
-	`██║     █████╗  ██████╔╝██║███████║██╔██╗ ██║`,
-	`██║     ██╔══╝  ██╔══██╗██║██╔══██║██║╚██╗██║`,
-	`███████╗███████╗██║  ██║██║██║  ██║██║ ╚████║`,
-	`╚══════╝╚══════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝`,
+	`██╗     ███████╗██████╗ ██╗ █████╗ ███╗   ██╗        ██████╗██╗     ██╗`,
+	`██║     ██╔════╝██╔══██╗██║██╔══██╗████╗  ██║       ██╔════╝██║     ██║`,
+	`██║     █████╗  ██████╔╝██║███████║██╔██╗ ██║ █████╗██║     ██║     ██║`,
+	`██║     ██╔══╝  ██╔══██╗██║██╔══██║██║╚██╗██║ ╚════╝██║     ██║     ██║`,
+	`███████╗███████╗██║  ██║██║██║  ██║██║ ╚████║       ╚██████╗███████╗██║`,
+	`╚══════╝╚══════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝        ╚═════╝╚══════╝╚═╝`,
 }
 
 // wordmarkIndent is the left margin every line of the banner shares.
@@ -34,10 +35,11 @@ func wordmarkWidth() int {
 	return widest + wordmarkIndent
 }
 
-// revealStep is how long each line of the wordmark waits before the next one is
-// drawn. Six lines at this rate is under a fifth of a second: long enough to read
-// as an entrance, short enough that nobody waits for it twice.
-const revealStep = 30 * time.Millisecond
+// revealStep is how long each line of the wordmark holds before the next one
+// arrives. Six lines at this rate, plus the rule drawing itself, is a fifth of a
+// second: long enough to read as an entrance, short enough that nobody waits for
+// it twice.
+const revealStep = 25 * time.Millisecond
 
 // Banner paints the wordmark, once, at the top of an interactive session.
 //
@@ -69,11 +71,12 @@ func Banner(out io.Writer, release string) {
 // decides where it wraps — so the narrow form is not a degraded banner, it is the
 // correct one at that width.
 func renderBanner(release string, width int) string {
-	subtitle := "  lerian-cli · " + describeRelease(release)
-
+	// The wordmark says the name, so the line under it only has the release left
+	// to say. The narrow form has no wordmark, so it says both.
 	if width > 0 && width < wordmarkWidth() {
-		return "\n  ◤ " + strings.TrimSpace(subtitle) + "\n\n"
+		return "\n  ◤ lerian-cli · " + describeRelease(release) + "\n\n"
 	}
+	subtitle := ruleWithRelease(describeRelease(release))
 
 	margin := strings.Repeat(" ", wordmarkIndent)
 
@@ -84,6 +87,20 @@ func renderBanner(release string, width int) string {
 	}
 	banner.WriteString("\n" + subtitle + "\n\n")
 	return banner.String()
+}
+
+// ruleWithRelease is the line under the wordmark: a rule the width of the art,
+// with the release sitting at the end of it.
+//
+// Part of the banner rather than part of the animation. A flourish that only
+// exists while it is being drawn is one nobody can screenshot, and one the static
+// path — dumb terminals, NO_COLOR — never gets.
+func ruleWithRelease(release string) string {
+	rule := wordmarkWidth() - wordmarkIndent - displayWidth(release) - 2
+	if rule < 1 {
+		return "  " + release
+	}
+	return "  " + strings.Repeat("─", rule) + "  " + release
 }
 
 // describeRelease names the build. "dev" is what the version variable holds until
@@ -98,23 +115,64 @@ func describeRelease(release string) string {
 	}
 }
 
-// revealBanner draws the banner a line at a time.
+// revealBanner draws the banner a line at a time, lighting each one as it
+// arrives.
 //
-// Every line is flushed as it is written, because the pause between them is the
-// whole effect: buffered, the six lines arrive together after 180ms of nothing,
+// Every write is flushed as it happens, because the pauses are the whole effect:
+// buffered, the six lines arrive together after a fifth of a second of nothing,
 // which is not an entrance but a delay.
+//
+// Where it ends is exactly the static banner — the animation is a way of arriving
+// at it, not a second version of it. A test paints this onto a small terminal and
+// compares the screen.
 func revealBanner(out io.Writer, banner string, step time.Duration) {
 	lines := strings.Split(banner, "\n")
+
 	for index, line := range lines {
+		// The split leaves a final empty element for the trailing newline. Writing
+		// it as a line would add one the static banner does not have.
 		if index == len(lines)-1 {
 			fmt.Fprint(out, line)
 			break
 		}
-		fmt.Fprintln(out, line)
-		if strings.TrimSpace(line) != "" {
-			time.Sleep(step)
+
+		switch {
+		case strings.Contains(line, "─"):
+			drawAcross(out, line, step)
+		case strings.TrimSpace(line) == "":
+			fmt.Fprintln(out, line)
+		default:
+			glow(out, line, step)
 		}
 	}
+}
+
+// glow writes a line bright, holds it, and lets it settle as the next one
+// arrives. Six lines of it reads as a wave running down the wordmark.
+//
+// The settled line is rewritten over the bright one from the start of the row,
+// so what remains is the plain text — no escape sequence outlives the animation.
+func glow(out io.Writer, line string, step time.Duration) {
+	fmt.Fprint(out, "\x1b[1m"+line+"\x1b[0m")
+	time.Sleep(step)
+	fmt.Fprint(out, "\r"+line+"\n")
+}
+
+// drawAcross writes a line a few characters at a time, left to right, which draws
+// the rule and types the release at the end of it.
+func drawAcross(out io.Writer, line string, step time.Duration) {
+	const chunk = 6
+
+	runes := []rune(line)
+	for start := 0; start < len(runes); start += chunk {
+		end := start + chunk
+		if end > len(runes) {
+			end = len(runes)
+		}
+		fmt.Fprint(out, string(runes[start:end]))
+		time.Sleep(step / chunk)
+	}
+	fmt.Fprint(out, "\n")
 }
 
 // animates reports whether this terminal should get the reveal.
