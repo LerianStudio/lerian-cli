@@ -25,6 +25,11 @@ type prompter struct {
 	interactive bool
 	in          *bufio.Reader
 	out         io.Writer
+
+	// editor is the line editor, built on first use and kept for the rest of the
+	// run: it buffers whatever arrived past the current answer, and a new one per
+	// question would discard it.
+	editor *term.Terminal
 }
 
 // newPrompter returns a prompter that asks only when stdin is a terminal.
@@ -88,13 +93,21 @@ func (p *prompter) ask(question, purpose, fallback, flagName string) (string, er
 		hint = "enter takes " + fallback + " · q cancel"
 	}
 	fmt.Fprintf(p.out, "  %s\n", theme.dim(hint))
-	fmt.Fprint(p.out, "  > ")
 
-	line, err := p.in.ReadString('\n')
-	if err != nil && strings.TrimSpace(line) == "" {
+	answer, edited, err := p.editableLine(p.out, "  > ")
+	if err != nil {
 		return "", fmt.Errorf("cannot read the answer to %q: %w", question, err)
 	}
-	answer := strings.TrimSpace(line)
+	if !edited {
+		// No terminal to edit on: read the line the plain way. The prompt is
+		// printed here rather than above, because editableLine prints its own.
+		fmt.Fprint(p.out, "  > ")
+		line, readErr := p.in.ReadString('\n')
+		if readErr != nil && strings.TrimSpace(line) == "" {
+			return "", fmt.Errorf("cannot read the answer to %q: %w", question, readErr)
+		}
+		answer = strings.TrimSpace(line)
+	}
 	// Consistent with the selector, where q is how an operator backs out. A path
 	// of exactly "q" becomes unreachable, which is a trade worth making: no
 	// checkout is called that, and an inconsistent escape is worse than an

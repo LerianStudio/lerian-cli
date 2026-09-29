@@ -367,26 +367,42 @@ func runeWidth(r rune) int {
 	}
 }
 
-// terminalWidth asks the terminal how wide it is, falling back to the 80 columns
-// every terminal has had since the punched card.
-func terminalWidth(out io.Writer) int {
+// screenWidth is what the terminal says it is, uncapped, and 0 when there is no
+// terminal to ask. Sizing anything to a screen that does not exist is worse than
+// not sizing it.
+func screenWidth(out io.Writer) int {
 	file, ok := out.(*os.File)
 	if !ok {
-		return 80
+		return 0
 	}
 	width, _, err := term.GetSize(int(file.Fd()))
-	if err != nil {
-		return 80
+	if err != nil || width < 1 {
+		return 0
 	}
+	return width
+}
 
-	// A measured width is reported as measured, however small. Substituting 80
-	// for a narrow terminal tells the caller it has columns it does not have, and
-	// then every row it draws wraps — which is the one thing the redraw cannot
-	// survive. Too narrow to be usable is a different problem from too narrow to
-	// be correct, and narrowTerminal decides that one.
-	if width < 1 {
+// terminalWidth is the width the selector draws in: measured, or the 80 columns
+// every terminal has had since the punched card, capped for layout.
+//
+// A measured width is reported as measured, however small. Substituting 80 for a
+// narrow terminal tells the caller it has columns it does not have, and then
+// every row it draws wraps — which is the one thing the redraw cannot survive.
+// Too narrow to be usable is a different problem from too narrow to be correct,
+// and narrowTerminal decides that one.
+func terminalWidth(out io.Writer) int {
+	width := screenWidth(out)
+	if width == 0 {
 		return 80
 	}
+	return capForLayout(width)
+}
+
+// capForLayout is the selector's ceiling, and only the selector's. A row wider
+// than this is one it cannot redraw, so it stops drawing wider. The line editor
+// has no rows to redraw — it needs the edge where the terminal actually wraps,
+// which is screenWidth.
+func capForLayout(width int) int {
 	if width > 120 {
 		return 120
 	}

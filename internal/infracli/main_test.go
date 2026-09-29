@@ -240,9 +240,9 @@ func TestRepoFlagBeatsTheEnvironmentVariable(t *testing.T) {
 
 func TestOutsideACheckoutTheErrorNamesEveryWayOfPointingAtOne(t *testing.T) {
 	t.Setenv("LERIAN_TF_REPO", "")
-	// And no remembered one: the config is a source like the other four, so
+	// And no remembered one either. A config is a source like the other four, so
 	// without this the test asserts "nothing points anywhere" on a machine where
-	// something does.
+	// something does — and passes or fails according to whose machine runs it.
 	isolatedHome(t)
 	t.Chdir(t.TempDir())
 
