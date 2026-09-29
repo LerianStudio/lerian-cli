@@ -459,21 +459,36 @@ func resolveLayout(flagRepo, envRepo, templatesDir string) (infra.Layout, checko
 // mismatch gets noticed by someone who never runs init — and it stays a note on the
 // line, not a block, because a plan or a destroy is not the moment to lecture.
 func templatesLine(ctx context.Context, layout infra.Layout, source checkoutSource) string {
+	line, _ := inspectTemplates(ctx, layout, source)
+	return line
+}
+
+// inspectTemplates returns the line describing the checkout and the ref it found,
+// in one pass. The ref is returned rather than recovered by a second call because
+// reading it shells out to git, and the caller that judges the checkout needs the
+// same answer the line was built from.
+func inspectTemplates(ctx context.Context, layout infra.Layout, source checkoutSource) (string, string) {
 	line := layout.Root
-	if git, err := infra.NewGitCLI(); err == nil {
-		state := infra.InspectCheckout(ctx, git, layout.Root, source == sourceManaged)
-		ref := state.Ref
-		if ref == "" {
-			ref = "untagged"
-		}
-		line += " @ " + ref
-		if infra.RefBelowMin(state.Ref) {
-			line += fmt.Sprintf("  (%s)  — older than %s, the oldest this binary reads",
-				source, infra.TemplatesMinRef)
-			return line
-		}
+
+	git, err := infra.NewGitCLI()
+	if err != nil {
+		// No git means no ref to read. The path is still worth reporting, and the
+		// checkout is still verifiable by its directories.
+		return fmt.Sprintf("%s  (%s)", line, source), ""
 	}
-	return fmt.Sprintf("%s  (%s)", line, source)
+
+	state := infra.InspectCheckout(ctx, git, layout.Root, source == sourceManaged)
+	ref := state.Ref
+	if ref == "" {
+		ref = "untagged"
+	}
+	line += " @ " + ref
+	if infra.RefBelowMin(state.Ref) {
+		line += fmt.Sprintf("  (%s)  — older than %s, the oldest this binary reads",
+			source, infra.TemplatesMinRef)
+		return line, state.Ref
+	}
+	return fmt.Sprintf("%s  (%s)", line, source), state.Ref
 }
 
 // notACheckout is the failure for a path the operator NAMED that turns out not to

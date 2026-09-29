@@ -325,24 +325,7 @@ func reportChecks(out io.Writer, results []checkResult, note string) error {
 		}
 	}
 
-	// The verdict leads the row. Scanning for what failed is then running an eye
-	// down the left edge rather than down a ragged right one: the summaries are
-	// paths and versions of wildly different lengths, and a verdict at the end of
-	// them is the first thing to wrap off a narrow terminal.
-	const verdictWidth = 7 // "missing"
-
-	failed := 0
-	for _, r := range results {
-		// Padded before it is coloured. Padding a string that already carries escape
-		// sequences counts the escapes as characters, and the coloured column lands
-		// one word to the right of the plain ones.
-		mark := fmt.Sprintf("%-*s", verdictWidth, "ok")
-		if !r.ok {
-			mark = theme.alert(fmt.Sprintf("%-*s", verdictWidth, "missing"))
-			failed++
-		}
-		fmt.Fprintf(out, "  %s  %-*s  %s\n", mark, width, r.name, r.summary)
-	}
+	failed := writeRows(out, theme, results, width)
 
 	// The remediations come after the table rather than inline, so the table stays
 	// scannable when several things are wrong — which is the case this command
@@ -362,6 +345,30 @@ func reportChecks(out io.Writer, results []checkResult, note string) error {
 	}
 	fmt.Fprintf(out, "\n  %d of %d checks failed.\n", failed, len(results))
 	return fmt.Errorf("check: %s", strings.Join(failedNames(results), ", "))
+}
+
+// writeRows paints the table and returns how many rows failed.
+//
+// The verdict leads the row. Scanning for what failed is then running an eye down
+// the left edge rather than down a ragged right one: the summaries are paths and
+// versions of wildly different lengths, and a verdict at the end of them is the
+// first thing to wrap off a narrow terminal.
+func writeRows(out io.Writer, theme style, results []checkResult, width int) int {
+	const verdictWidth = 7 // "missing"
+
+	failed := 0
+	for _, r := range results {
+		// Padded before it is coloured. Padding a string that already carries escape
+		// sequences counts the escapes as characters, and the coloured column lands
+		// one word to the right of the plain ones.
+		mark := theme.pass(fmt.Sprintf("%-*s", verdictWidth, "ok"))
+		if !r.ok {
+			mark = theme.alert(fmt.Sprintf("%-*s", verdictWidth, "missing"))
+			failed++
+		}
+		fmt.Fprintf(out, "  %s  %-*s  %s\n", mark, width, r.name, r.summary)
+	}
+	return failed
 }
 
 func failedNames(results []checkResult) []string {
@@ -465,10 +472,48 @@ func preflight(
 	return terraform, nil
 }
 
-// templatesResult reports the checkout a run has already resolved — which repo,
-// from which source, at which version. It takes the resolved layout rather than
-// resolving its own, so the row cannot name a checkout other than the one about
-// to be used.
+// templatesResult verifies the lerian-terraform-foundation checkout a run has
+// already resolved: which repo, from which source, at which version — and
+// whether that version is one this binary can read.
+//
+// It takes the resolved layout rather than resolving its own, so the row cannot
+// name a checkout other than the one about to be used.
 func templatesResult(ctx context.Context, layout infra.Layout, source checkoutSource) checkResult {
-	return checkResult{name: "templates", summary: templatesLine(ctx, layout, source), ok: true}
+	summary, ref := inspectTemplates(ctx, layout, source)
+	return templatesVerdict(layout.Root, ref, summary)
+}
+
+// templatesVerdict decides whether that checkout can be used.
+//
+// A label was not enough. A directory that is not a checkout, or one older than
+// the templates this binary reads, fails later with a missing file or an unknown
+// variable — several questions and one terraform init after the row that was
+// supposed to warn about it printed "ok".
+func templatesVerdict(root, ref, summary string) checkResult {
+	result := checkResult{name: "templates", summary: summary, ok: true}
+
+	if !infra.IsCheckout(root) {
+		result.ok = false
+		result.summary = "not a checkout"
+		result.detail = fmt.Sprintf("%s does not hold lerian-terraform-foundation.\n"+
+			"A checkout is recognized by the directories examples/aws/_modules and\n"+
+			"examples/aws/backend; at least one of them is missing there.\n\n"+
+			"%s", root, pointingOptions())
+		return result
+	}
+
+	if infra.RefBelowMin(ref) {
+		result.ok = false
+		result.summary = "older than " + infra.TemplatesMinRef
+		result.detail = fmt.Sprintf("The checkout at %s is %s, and this binary reads %s and later.\n"+
+			"An older layout is missing roots and variables this expects, so the failure\n"+
+			"would come later, as a missing file.\n\n"+
+			"  git -C %s fetch --tags && git -C %s checkout %s\n\n"+
+			"Or let the CLI move it:\n\n"+
+			"  lerian infra init --sync --templates-ref %s",
+			root, ref, infra.TemplatesMinRef, root, root, infra.TemplatesMinRef, infra.TemplatesMinRef)
+		return result
+	}
+
+	return result
 }

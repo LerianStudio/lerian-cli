@@ -634,3 +634,90 @@ func TestTheSessionRowStaysOneLine(t *testing.T) {
 		t.Errorf("the summary does not say how many resolve: %q", result.summary)
 	}
 }
+
+// The templates row is a verification, not a label. A directory that is not a
+// checkout, or one older than this binary can read, is a run that fails later
+// with a missing file or an unknown variable — and the row that was supposed to
+// warn about it said "ok".
+func TestTheTemplatesRowFailsWhenTheCheckoutCannotBeUsed(t *testing.T) {
+	tests := []struct {
+		name    string
+		root    string
+		ref     string
+		wantOK  bool
+		wantSay string
+	}{
+		{
+			name:    "a directory that is not a checkout",
+			root:    t.TempDir(),
+			ref:     "v9.9.9",
+			wantOK:  false,
+			wantSay: "examples/aws/_modules",
+		},
+		{
+			name:    "a checkout older than this binary reads",
+			root:    fakeCheckout(t, "", ""),
+			ref:     "v0.0.1",
+			wantOK:  false,
+			wantSay: infra.TemplatesMinRef,
+		},
+		{
+			name:   "a checkout this binary can read",
+			root:   fakeCheckout(t, "", ""),
+			ref:    infra.TemplatesMinRef,
+			wantOK: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := templatesVerdict(test.root, test.ref, test.root+" @ "+test.ref)
+
+			if result.ok != test.wantOK {
+				t.Fatalf("ok = %v, want %v (%s)", result.ok, test.wantOK, result.detail)
+			}
+			if test.wantSay != "" && !strings.Contains(result.detail, test.wantSay) {
+				t.Errorf("the failure does not mention %q:\n%s", test.wantSay, result.detail)
+			}
+		})
+	}
+}
+
+// Colour on both verdicts, and the word under it either way. The colour is
+// redundant by design — a reader without it, or reading a saved log, loses
+// nothing — so it can afford to be there.
+func TestBothVerdictsAreColouredAndStillReadable(t *testing.T) {
+	results := []checkResult{
+		{name: "terraform", summary: "/usr/bin/terraform", ok: true},
+		{name: "templates", summary: "not found", detail: "clone it", ok: false},
+	}
+
+	var painted bytes.Buffer
+	theme := style{enabled: true}
+	writeRows(&painted, theme, results, len("terraform"))
+
+	if !strings.Contains(painted.String(), theme.pass("ok     ")) {
+		t.Errorf("the passing verdict is not coloured:\n%q", painted.String())
+	}
+	if !strings.Contains(painted.String(), theme.alert("missing")) {
+		t.Errorf("the failing verdict is not coloured:\n%q", painted.String())
+	}
+
+	plain := stripANSI(painted.String())
+	for _, word := range []string{"ok", "missing"} {
+		if !strings.Contains(plain, word) {
+			t.Errorf("%q survives only as colour:\n%s", word, plain)
+		}
+	}
+}
+
+// And with styling off there is no colour at all, because the same report is
+// routinely redirected into a file or a CI log.
+func TestNoColourWhereThereIsNoTerminal(t *testing.T) {
+	var out bytes.Buffer
+	_ = reportChecks(&out, []checkResult{{name: "terraform", summary: "/usr/bin/terraform", ok: true}}, "")
+
+	if strings.Contains(out.String(), "\x1b") {
+		t.Errorf("an escape sequence reached a report nobody is watching:\n%q", out.String())
+	}
+}
