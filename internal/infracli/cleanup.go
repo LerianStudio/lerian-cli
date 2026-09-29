@@ -204,8 +204,10 @@ func newRunDir() (string, error) {
 	}
 	runDirCreated(staging)
 
-	//nolint:gosec // G302 is written for files; a directory without the execute bit
-	// cannot be traversed, so 0700 is already the tightest usable mode here.
+	// #nosec G302 -- the rule is written for files, where 0600 is the ceiling. This
+	// is a directory, and a directory without the execute bit cannot be traversed:
+	// 0700 is already the tightest mode that works, and it is stricter than the
+	// 0750 the rule asks for.
 	if err := os.Chmod(staging, 0o700); err != nil {
 		return "", fmt.Errorf("cannot restrict the run directory: %w", err)
 	}
