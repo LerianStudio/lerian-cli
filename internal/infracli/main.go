@@ -1657,7 +1657,8 @@ func prepareChoices(
 			return nil, err
 		}
 	}
-	if err := guidedRun(ctx, catalog, opts, ask, layout, profiles, credentialCheck(ctx, layout, opts.dryRun)); err != nil {
+	checkCredential := credentialCheck(ctx, layout, opts.dryRun)
+	if err := guidedRun(ctx, catalog, opts, ask, layout, profiles, checkCredential); err != nil {
 		return nil, err
 	}
 	return terraform, nil
