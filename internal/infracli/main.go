@@ -1053,19 +1053,19 @@ func guidedRun(
 		return nil
 	}
 
-	environment, profile, err := askForAccount(ctx, ask, ask.out, layout, resolved)
+	choice, err := askForAccount(ctx, ask, ask.out, layout, resolved)
 	if err != nil {
 		return err
 	}
-	opts.environment = environment
-	opts.profile = profile
-	opts.profileChosen = true
+	opts.environment = choice.environment
+	opts.profile = choice.profile
+	opts.profileChosen = choice.chosen
 
 	// Before the next question rather than after the last one: this is the point
 	// at which the profile is known, and asking two more questions to then report
 	// a login failure throws both answers away.
 	if afterEnvironment != nil {
-		if err := afterEnvironment(environment, profile, true); err != nil {
+		if err := afterEnvironment(choice.environment, choice.profile, choice.chosen); err != nil {
 			return err
 		}
 	}
@@ -1098,80 +1098,92 @@ func guidedRun(
 // The environment is derived rather than asked for: it names the state backend
 // and the variables file, so the run needs it, but it is our vocabulary and not
 // the operator's. What they are deciding is the account.
+// accountChoice is what the account question produced.
+//
+// chosen is not "profile is non-empty": an empty profile is an answer when the
+// ambient-credentials row was picked, and it is the absence of one when the dry-run
+// path asked from the file instead. Only the code that asked can tell those apart,
+// so it says which.
+type accountChoice struct {
+	environment string
+	profile     string
+	chosen      bool
+}
+
 func askForAccount(
 	ctx context.Context,
 	ask *prompter,
 	out io.Writer,
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
-) (environment, profile string, err error) {
+) (accountChoice, error) {
 	// No resolved profiles means nobody asked AWS who anybody is — a dry run, which
 	// makes no AWS call by definition. What it can still know is what the file says,
 	// so the question is built from the sections instead of from identities.
 	if len(resolved) == 0 {
 		// Nothing was resolved, so no profile was chosen either: the file decides.
-		environment, err = askFromConfig(ask, layout)
-		return environment, "", err
+		environment, err := askFromConfig(ask, layout)
+		return accountChoice{environment: environment}, err
 	}
 
 	choices := accountOptions(layout, resolved)
 
-	profile, err = ask.pick(
+	profile, err := ask.pick(
 		"Which AWS account?",
 		"Everything is created there. The state backend and the sizing follow from it.",
 		"", choices, "")
 	if err != nil {
-		return "", "", err
+		return accountChoice{}, err
 	}
 
 	if profile == signOutChoice {
 		return signOutAndBackIn(ctx, ask, out, layout, resolved)
 	}
 
-	chosen := findProfile(resolved, profile)
-	if chosen == nil {
-		return "", "", fmt.Errorf("profile %q is not one of the profiles offered", profile)
+	picked := findProfile(resolved, profile)
+	if picked == nil {
+		return accountChoice{}, fmt.Errorf("profile %q is not one of the profiles offered", profile)
 	}
 
 	// A profile with no session yet is chosen precisely to log into it. The login
 	// is for that profile's session, not for whichever one came first in the list.
-	if !chosen.Usable() {
+	if !picked.Usable() {
 		// Unless there is no session to revive. A profile that lives only in
 		// ~/.aws/credentials is an access key, and `aws sso login --profile x` is a
 		// command that cannot work for it — what it needs is the key replaced, and
 		// what is useful is whatever AWS just said about it.
-		if chosen.Profile.SSOSession == "" && chosen.Profile.Source == "credentials" {
-			return "", "", fmt.Errorf("profile %q does not work: %w\n"+
+		if picked.Profile.SSOSession == "" && picked.Profile.Source == "credentials" {
+			return accountChoice{}, fmt.Errorf("profile %q does not work: %w\n"+
 				"It is an access key in ~/.aws/credentials, with no SSO session to renew.\n"+
 				"Replace it:\n\n  aws configure --profile %s",
-				chosen.Profile.Name, chosen.Err, chosen.Profile.Name)
+				picked.Profile.Name, picked.Err, picked.Profile.Name)
 		}
 
-		target := infra.SSOTarget{Session: chosen.Profile.SSOSession, Profile: chosen.Profile.Name}
+		target := infra.SSOTarget{Session: picked.Profile.SSOSession, Profile: picked.Profile.Name}
 		if _, loginErr := offerLogin(ctx, ask, out, []infra.SSOTarget{target}); loginErr != nil {
-			return "", "", loginErr
+			return accountChoice{}, loginErr
 		}
 
 		// Ask again who it is now. The account is what maps to an environment, and
 		// before the login there was none to read.
-		refreshed, identityErr := checkIdentity.CallerIdentity(ctx, chosen.Profile.Name, chosen.Profile.Region)
+		refreshed, identityErr := checkIdentity.CallerIdentity(ctx, picked.Profile.Name, picked.Profile.Region)
 		if identityErr != nil {
-			return "", "", fmt.Errorf("profile %q still does not resolve: %w\n  aws sso login --profile %s",
+			return accountChoice{}, fmt.Errorf("profile %q still does not resolve: %w\n  aws sso login --profile %s",
 				profile, identityErr, profile)
 		}
-		chosen.Caller = refreshed
+		picked.Caller = refreshed
 	}
 
-	environment, ok := environmentForProfile(layout, chosen.Profile.Name, chosen.Caller.Account)
+	environment, ok := environmentForProfile(layout, picked.Profile.Name, picked.Caller.Account)
 	if ok {
-		return environment, chosen.Profile.Name, nil
+		return accountChoice{environment: environment, profile: picked.Profile.Name, chosen: true}, nil
 	}
 
 	// Chosen but not set up. Telling somebody to leave and run a second command —
 	// and to know which of three names to give it — is asking them to do the part
 	// this already knows how to do.
-	environment, err = configureAccount(ctx, out, layout, *chosen)
-	return environment, chosen.Profile.Name, err
+	environment, err = configureAccount(ctx, out, layout, *picked)
+	return accountChoice{environment: environment, profile: picked.Profile.Name, chosen: true}, err
 }
 
 // runInitCommand is a variable so the chaining can be exercised without writing
@@ -1338,18 +1350,18 @@ func signOutAndBackIn(
 	out io.Writer,
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
-) (string, string, error) {
+) (accountChoice, error) {
 	if err := ssoLogout(ctx, os.Stdin, out, out); err != nil {
-		return "", "", err
+		return accountChoice{}, err
 	}
 	fmt.Fprintf(out, "\n  %s\n", newStyle(out).dim("signed out"))
 
 	targets := sessionsOf(resolved)
 	if len(targets) == 0 {
-		return "", "", fmt.Errorf("no SSO session in ~/.aws to sign in to\n  aws configure sso")
+		return accountChoice{}, fmt.Errorf("no SSO session in ~/.aws to sign in to\n  aws configure sso")
 	}
 	if _, err := offerLogin(ctx, ask, out, targets); err != nil {
-		return "", "", err
+		return accountChoice{}, err
 	}
 
 	// Who everything resolves as has just changed, so nothing read before this is

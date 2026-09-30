@@ -612,7 +612,7 @@ func TestSigningOutLogsBackIn(t *testing.T) {
 	// asked afresh — which accounts are reachable has just changed.
 	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 
-	environment, _, err := askForAccount(context.Background(), ask, &out, layout, resolved)
+	choice, err := askForAccount(context.Background(), ask, &out, layout, resolved)
 	if err != nil {
 		t.Fatalf("askForAccount = %v\n%s", err, out.String())
 	}
@@ -620,8 +620,8 @@ func TestSigningOutLogsBackIn(t *testing.T) {
 	if len(order) != 2 || order[0] != "logout" || order[1] != "login:acme" {
 		t.Errorf("did %v, want a logout followed by a login", order)
 	}
-	if environment != "dev" {
-		t.Errorf("environment = %q after signing back in", environment)
+	if choice.environment != "dev" {
+		t.Errorf("environment = %q after signing back in", choice.environment)
 	}
 }
 
@@ -692,7 +692,7 @@ func TestChoosingAnUnsetAccountConfiguresIt(t *testing.T) {
 	var out bytes.Buffer
 	ask, _ := selectorFor(t, keyEnterSeq)
 
-	environment, _, err := askForAccount(context.Background(), ask, &out, layout, resolved)
+	choice, err := askForAccount(context.Background(), ask, &out, layout, resolved)
 	if err != nil {
 		t.Fatalf("askForAccount = %v\n%s", err, out.String())
 	}
@@ -703,8 +703,8 @@ func TestChoosingAnUnsetAccountConfiguresIt(t *testing.T) {
 			t.Errorf("init was run as %q, missing %q", joined, want)
 		}
 	}
-	if environment != "stg" {
-		t.Errorf("environment = %q, want the slot it was configured into", environment)
+	if choice.environment != "stg" {
+		t.Errorf("environment = %q, want the slot it was configured into", choice.environment)
 	}
 }
 
@@ -853,7 +853,7 @@ func TestAnAccessKeyProfileIsNotOfferedAnSSOLogin(t *testing.T) {
 	ask, _ := selectorFor(t, keyEnterSeq)
 	var out bytes.Buffer
 
-	_, _, err = askForAccount(context.Background(), ask, &out, layout, resolved)
+	_, err = askForAccount(context.Background(), ask, &out, layout, resolved)
 
 	if called {
 		t.Error("an SSO login was offered for a profile that has no SSO session")
@@ -1037,5 +1037,52 @@ func TestChoosingAmbientCredentialsIsNotTheSameAsChoosingNothing(t *testing.T) {
 	named := applyChosenProfile(config, "a-named-one", true)
 	if named.Profile != "a-named-one" {
 		t.Errorf("profile = %q", named.Profile)
+	}
+}
+
+// A dry run chooses no profile, and that is not the same as choosing the ambient
+// credentials.
+//
+// The dry-run path asks from environments.conf and returns an empty profile
+// because none was picked — but guidedRun was marking every interactive answer as
+// a choice, so applyChosenProfile then cleared the profile the section declares.
+// The run would print <ambient credentials> and hand terraform no profile at all.
+//
+// The third turn of one mistake: an empty profile means two different things, and
+// only the code that asked knows which.
+func TestADryRunChoosesNoProfile(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = from-the-file",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var handed []bool
+	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{dryRun: true}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	err = guidedRun(context.Background(), catalog, &opts, ask, layout, nil,
+		func(_, _ string, chosen bool) error {
+			handed = append(handed, chosen)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("guidedRun = %v", err)
+	}
+
+	if opts.profileChosen {
+		t.Error("a dry run was recorded as having chosen a profile, which clears the section's")
+	}
+	if len(handed) != 1 || handed[0] {
+		t.Errorf("the early check was told a profile was chosen: %v", handed)
+	}
+	// And the configuration keeps what the file says.
+	config := infra.EnvConfig{Profile: "from-the-file"}
+	if applyChosenProfile(config, opts.profile, opts.profileChosen).Profile != "from-the-file" {
+		t.Error("the profile the section declares was replaced")
 	}
 }
