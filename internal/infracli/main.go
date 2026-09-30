@@ -1286,13 +1286,34 @@ func destinationLine(config infra.EnvConfig) string {
 	return line
 }
 
-// deploysAs says which environment an account deploys as, and where.
-func deploysAs(layout infra.Layout, environment string) string {
-	line := "deploys as " + environment
-	if config, err := infra.LoadEnvConfig(layout, environment); err == nil && config.Region != "" {
-		line += " in " + config.Region
+// destinationRegion is the region half of where a row lands, ready to append.
+func destinationRegion(layout infra.Layout, environment string) string {
+	config, err := infra.LoadEnvConfig(layout, environment)
+	if err != nil || config.Region == "" {
+		return ""
 	}
-	return line
+	return "  ·  " + config.Region
+}
+
+// nameTheAmbiguous adds the environment to rows that would otherwise read the
+// same.
+//
+// Two environments in one account and one region is a real configuration — a dev
+// and a staging sharing a sandbox — and there the name is the only thing telling
+// the rows apart, so it earns its place. Everywhere else it is bookkeeping, and
+// bookkeeping in a menu is noise the reader has to learn to ignore.
+func nameTheAmbiguous(options []option) {
+	seen := map[string]int{}
+	for _, opt := range options {
+		if opt.environment != "" {
+			seen[opt.note]++
+		}
+	}
+	for index, opt := range options {
+		if opt.environment != "" && seen[opt.note] > 1 {
+			options[index].note = opt.note + "  ·  " + opt.environment
+		}
+	}
 }
 
 // environmentForProfile finds the environment whose section names this account,
@@ -1332,14 +1353,19 @@ func askFromConfig(ask *prompter, layout infra.Layout) (string, error) {
 		if err != nil {
 			continue
 		}
+		// The section key is dev, stg or prd, and that is bookkeeping: the row reads
+		// as the destination it is. The value stays the environment, because that is
+		// what the rest of the run needs.
+		label := config.Profile
+		if label == "" {
+			label = "credentials in this environment"
+		}
+
 		note := "account " + config.AccountID
 		if config.Region != "" {
-			note += " in " + config.Region
+			note += "  ·  " + config.Region
 		}
-		if config.Profile != "" {
-			note += " via " + config.Profile
-		}
-		choices = append(choices, option{value: name, label: name, note: note})
+		choices = append(choices, option{value: name, label: label, note: note, environment: name})
 	}
 
 	if len(choices) == 0 {
@@ -1482,10 +1508,16 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 			opt.note = "session expired — choose to log in"
 		default:
 			if environment, ok := environmentForProfile(layout, entry.Profile.Name, entry.Caller.Account); ok {
-				// The region belongs in the same breath as the account: an account is a
-				// place and so is a region, and naming one without the other describes
-				// half of where the resources are about to land.
-				opt.note = "account " + entry.Caller.Account + "  ·  " + deploysAs(layout, environment)
+				// The account and the region, which is the whole of what is being
+				// decided: an account is a place and so is a region, and naming one
+				// without the other describes half of where the resources land.
+				//
+				// Not the environment. dev, stg and prd pick backend/<env>.hcl and
+				// envs/<env>.tfvars, which matters to this tool and to nobody choosing
+				// where to deploy. It is added below, and only where two rows would
+				// otherwise read identically.
+				opt.note = "account " + entry.Caller.Account + destinationRegion(layout, environment)
+				opt.environment = environment
 			} else {
 				rank = unconfigured
 				opt.note = "account " + entry.Caller.Account + "  ·  not set up here yet — choosing it sets it up"
@@ -1500,6 +1532,7 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 	for _, r := range rows {
 		options = append(options, r.option)
 	}
+	nameTheAmbiguous(options)
 
 	// Last, because it is the answer to a different question — not "which of these"
 	// but "none of these". Offered only where there is a session to end.

@@ -28,6 +28,10 @@ type option struct {
 	label    string
 	note     string
 	disabled bool
+	// environment is the name this row deploys as, when it has one. It is not
+	// shown unless two rows would otherwise read identically — see
+	// nameTheAmbiguous.
+	environment string
 }
 
 // rawMode switches the terminal to raw and returns the restore func. It is a

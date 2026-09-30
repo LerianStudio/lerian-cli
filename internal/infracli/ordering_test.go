@@ -1199,3 +1199,105 @@ func TestTheConfirmationNamesWhereItLands(t *testing.T) {
 		}
 	}
 }
+
+// "deploys as dev" is our bookkeeping showing through. The name picks
+// backend/<env>.hcl and envs/<env>.tfvars, which matters to this tool and to
+// nobody choosing where to deploy — they picked an account, in a region, and that
+// is the whole of what they decided.
+func TestTheRowDoesNotNameOurEnvironment(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	for _, opt := range accountOptions(layout, resolved) {
+		if opt.value != "sandbox" {
+			continue
+		}
+		if strings.Contains(opt.note, "dev") {
+			t.Errorf("the row shows our environment name: %q", opt.note)
+		}
+		// What it does say is where the resources land.
+		for _, want := range []string{"111122223333", "sa-east-1"} {
+			if !strings.Contains(opt.note, want) {
+				t.Errorf("the row does not name %q: %q", want, opt.note)
+			}
+		}
+		return
+	}
+	t.Error("the configured account is not in the list")
+}
+
+// Unless it is the only thing telling two rows apart. Two environments in one
+// account is a real configuration — a dev and a staging sharing a sandbox — and
+// then "account X in region Y" describes both, so the name earns its place.
+func TestTheEnvironmentAppearsOnlyWhenItDisambiguates(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = one",
+		"stg": "account_id = 111122223333\nregion = sa-east-1\nprofile = two",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "one"}, Caller: infra.Caller{Account: "111122223333"}},
+		{Profile: infra.AWSProfile{Name: "two"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	options := accountOptions(layout, resolved)
+
+	var named int
+	for _, opt := range options {
+		if strings.Contains(opt.note, "dev") || strings.Contains(opt.note, "stg") {
+			named++
+		}
+	}
+	if named != 2 {
+		t.Errorf("two rows reach the same account and %d name which is which:\n%+v", named, options)
+	}
+}
+
+// The dry-run list is built from the file, where the sections are named dev, stg
+// and prd — but that is the key of the section, not the name of the destination.
+// The row reads as the account it is.
+func TestTheDryRunRowsAreNotLabelledWithOurNames(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq)
+	chosen, err := askFromConfig(ask, layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The answer is still the environment, because that is what the rest of the run
+	// needs — it is the label that changed.
+	if chosen != "dev" {
+		t.Errorf("askFromConfig returned %q, want the environment the run needs", chosen)
+	}
+	for _, line := range strings.Split(painted.String(), "\n") {
+		if strings.Contains(line, "sandbox") && strings.Contains(line, "dev") {
+			t.Errorf("the row is labelled with our environment name: %q", strings.TrimSpace(line))
+		}
+	}
+	if !strings.Contains(painted.String(), "sandbox") {
+		t.Errorf("the row does not name the profile it would use:\n%s", painted.String())
+	}
+}
