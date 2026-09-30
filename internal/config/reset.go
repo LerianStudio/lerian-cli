@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -68,21 +69,30 @@ func Describe() (string, error) {
 	}
 	fmt.Fprintf(&out, "  templates %s\n", checkout)
 
+	// Said out loud, because "profile" means two different things in this CLI and
+	// both have a flag: this one is a Lerian platform credential, and the infra
+	// commands mean an AWS profile from ~/.aws. Somebody reading "profile default"
+	// has no way to tell which they are looking at.
 	profile := cfg.CurrentProfile
 	if profile == "" {
 		profile = "none"
 	}
-	fmt.Fprintf(&out, "  profile   %s\n", profile)
+	fmt.Fprintf(&out, "  profile   %s   (Lerian platform, not AWS)\n", profile)
 
 	// Named, never printed: a profile holds an API key.
 	if len(cfg.Profiles) == 0 {
-		fmt.Fprintf(&out, "  accounts  none — lerian auth login creates one\n")
-		return out.String(), nil
+		fmt.Fprintf(&out, "  logins    none — lerian auth login creates one\n")
+	} else {
+		names := make([]string, 0, len(cfg.Profiles))
+		for name := range cfg.Profiles {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		fmt.Fprintf(&out, "  logins    %s\n", strings.Join(names, ", "))
 	}
-	names := make([]string, 0, len(cfg.Profiles))
-	for name := range cfg.Profiles {
-		names = append(names, name)
-	}
-	fmt.Fprintf(&out, "  accounts  %s\n", strings.Join(names, ", "))
+
+	// The next question somebody asks, answered before they have to go looking.
+	fmt.Fprintf(&out, "\n  AWS credentials are not here: they live in ~/.aws, which the AWS CLI owns\n")
+	fmt.Fprintf(&out, "  and every AWS tool on this machine reads. lerian infra reads them from there.\n")
 	return out.String(), nil
 }

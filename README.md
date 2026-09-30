@@ -636,6 +636,22 @@ There is one file — `~/.lerian/config.yaml` — and it holds two things: where
 templates checkout is, and the profiles `lerian auth login` creates. `reset`
 removes that file, so the next run asks what it asked the first time.
 
+```
+  file      ~/.lerian/config.yaml
+  templates ~/lerian/lerian-terraform-foundation
+  profile   default   (Lerian platform, not AWS)
+  logins    none — lerian auth login creates one
+
+  AWS credentials are not here: they live in ~/.aws, which the AWS CLI owns
+  and every AWS tool on this machine reads. lerian infra reads them from there.
+```
+
+**"profile" means two different things in this CLI**, and both have a flag:
+`lerian --profile` is a Lerian platform login kept in the file above, while
+`lerian infra --profile` is an AWS profile from `~/.aws`. Two flags with one name
+is a surface inherited from the `lerian-infra` binary; every place the word
+appears now says which one it means.
+
 It takes that file and **nothing else**. `~/.aws` belongs to the AWS CLI and every
 tool on this machine reads it; a templates checkout is a git clone you made,
 possibly with work in it. Neither is this command's to delete, and a "reset" that
@@ -669,6 +685,22 @@ lerian config reset    # forget it, as if the CLI had never run here
 There is one file — `~/.lerian/config.yaml` — and it holds two things: where the
 templates checkout is, and the profiles `lerian auth login` creates. `reset`
 removes that file, so the next run asks what it asked the first time.
+
+```
+  file      ~/.lerian/config.yaml
+  templates ~/lerian/lerian-terraform-foundation
+  profile   default   (Lerian platform, not AWS)
+  logins    none — lerian auth login creates one
+
+  AWS credentials are not here: they live in ~/.aws, which the AWS CLI owns
+  and every AWS tool on this machine reads. lerian infra reads them from there.
+```
+
+**"profile" means two different things in this CLI**, and both have a flag:
+`lerian --profile` is a Lerian platform login kept in the file above, while
+`lerian infra --profile` is an AWS profile from `~/.aws`. Two flags with one name
+is a surface inherited from the `lerian-infra` binary; every place the word
+appears now says which one it means.
 
 It takes that file and **nothing else**. `~/.aws` belongs to the AWS CLI and every
 tool on this machine reads it; a templates checkout is a git clone you made,
