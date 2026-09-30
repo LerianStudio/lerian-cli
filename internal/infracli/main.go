@@ -673,7 +673,7 @@ func execute(
 		theme := newStyle(out)
 		fmt.Fprintf(out, "  %s %s\n", theme.bold(verb), theme.bold(stage.Name))
 		fmt.Fprintf(out, "    %s\n", changeSummary(create, update, destroy))
-		fmt.Fprintf(out, "    %s · account %s\n\n", config.Environment, config.AccountID)
+		fmt.Fprintf(out, "    %s\n\n", destinationLine(config))
 
 		return confirmOnStdin(out, "  type yes to continue: ")
 	}
@@ -1220,14 +1220,14 @@ func configureAccount(
 	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Setting up account "+chosen.Caller.Account))
 	fmt.Fprintf(out, "  %s\n", theme.dim("first time for this account in this checkout"))
 
-	region := chosen.Profile.Region
+	// No --region. init asks for it, always, and the profile's own region is the
+	// suggestion it offers — passing it here would answer the question on somebody's
+	// behalf, and where every resource is created is not a thing to inherit from a
+	// profile they may have configured for something else.
 	args := []string{
 		"--env", slot,
 		"--profile", chosen.Profile.Name,
 		"--account", chosen.Caller.Account,
-	}
-	if region != "" {
-		args = append(args, "--region", region)
 	}
 	if err := runInitCommand(ctx, args, out, out); err != nil {
 		return "", err
@@ -1272,6 +1272,29 @@ func applyChosenProfile(config infra.EnvConfig, profile string, chosen bool) inf
 	return config
 }
 
+// destinationLine is where a write is about to land, for the line read last
+// before typing yes.
+//
+// The region is there because an apply into the right account and the wrong
+// region does not fail — it creates a second copy of everything, somewhere nobody
+// is looking.
+func destinationLine(config infra.EnvConfig) string {
+	line := config.Environment + " · account " + config.AccountID
+	if config.Region != "" {
+		line += " · " + config.Region
+	}
+	return line
+}
+
+// deploysAs says which environment an account deploys as, and where.
+func deploysAs(layout infra.Layout, environment string) string {
+	line := "deploys as " + environment
+	if config, err := infra.LoadEnvConfig(layout, environment); err == nil && config.Region != "" {
+		line += " in " + config.Region
+	}
+	return line
+}
+
 // environmentForProfile finds the environment whose section names this account,
 // preferring one that also names this profile.
 //
@@ -1310,6 +1333,9 @@ func askFromConfig(ask *prompter, layout infra.Layout) (string, error) {
 			continue
 		}
 		note := "account " + config.AccountID
+		if config.Region != "" {
+			note += " in " + config.Region
+		}
 		if config.Profile != "" {
 			note += " via " + config.Profile
 		}
@@ -1456,7 +1482,10 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 			opt.note = "session expired — choose to log in"
 		default:
 			if environment, ok := environmentForProfile(layout, entry.Profile.Name, entry.Caller.Account); ok {
-				opt.note = "account " + entry.Caller.Account + "  ·  deploys as " + environment
+				// The region belongs in the same breath as the account: an account is a
+				// place and so is a region, and naming one without the other describes
+				// half of where the resources are about to land.
+				opt.note = "account " + entry.Caller.Account + "  ·  " + deploysAs(layout, environment)
 			} else {
 				rank = unconfigured
 				opt.note = "account " + entry.Caller.Account + "  ·  not set up here yet — choosing it sets it up"

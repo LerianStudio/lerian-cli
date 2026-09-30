@@ -292,11 +292,22 @@ It then asks which account, every run:
 ```
   Which AWS account?
   Everything is created there. The state backend and the sizing follow from it.
-  ❯ lerian-sandbox           account 524121347244  ·  deploys as dev
+  ❯ lerian-sandbox           account 524121347244  ·  deploys as dev in us-east-2
     default                  session expired — choose to log in
     other-profile            account 239025757440  ·  not set up here yet — choosing it sets it up
     sign in as someone else  ends the session for every AWS tool on this machine
 ```
+
+The region is named beside the account, because an account is a place and so is a
+region: naming one without the other describes half of where the resources land.
+It is on the confirmation before an apply for the same reason — an apply into the
+right account and the wrong region does not fail, it creates a second copy of
+everything somewhere nobody is looking.
+
+Setting up a new account asks for the region rather than taking it from the
+profile. The profile's own region is offered as the suggestion; where every
+resource is created is not something to inherit from a profile configured for
+something else.
 
 Three kinds of row, and every one of them is choosable:
 

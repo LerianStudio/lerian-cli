@@ -697,11 +697,17 @@ func TestChoosingAnUnsetAccountConfiguresIt(t *testing.T) {
 		t.Fatalf("askForAccount = %v\n%s", err, out.String())
 	}
 
+	// Everything already known is filled in — but not the region: init asks for
+	// that one, because where every resource is created is a decision rather than
+	// something to inherit from a profile configured for something else.
 	joined := strings.Join(got, " ")
-	for _, want := range []string{"--profile other", "--account 999988887777", "--region sa-east-1", "--env stg"} {
+	for _, want := range []string{"--profile other", "--account 999988887777", "--env stg"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("init was run as %q, missing %q", joined, want)
 		}
+	}
+	if strings.Contains(joined, "--region") {
+		t.Errorf("init was given a region instead of asking for one: %q", joined)
 	}
 	if choice.environment != "stg" {
 		t.Errorf("environment = %q, want the slot it was configured into", choice.environment)
@@ -1084,5 +1090,112 @@ func TestADryRunChoosesNoProfile(t *testing.T) {
 	config := infra.EnvConfig{Profile: "from-the-file"}
 	if applyChosenProfile(config, opts.profile, opts.profileChosen).Profile != "from-the-file" {
 		t.Error("the profile the section declares was replaced")
+	}
+}
+
+// Where the infrastructure lands is part of choosing where to deploy, so the row
+// says it. An account is a place, and so is a region; naming one without the
+// other describes half the destination.
+func TestTheAccountRowNamesTheRegion(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	for _, opt := range accountOptions(layout, resolved) {
+		if opt.value != "sandbox" {
+			continue
+		}
+		if !strings.Contains(opt.note, "sa-east-1") {
+			t.Errorf("the row does not say where the resources land: %q", opt.note)
+		}
+		return
+	}
+	t.Error("the configured account is not in the list")
+}
+
+// And the dry-run list, built from the file rather than from identities, says it
+// too.
+func TestTheDryRunListNamesTheRegion(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq)
+	if _, err := askFromConfig(ask, layout); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(painted.String(), "sa-east-1") {
+		t.Errorf("the dry-run list does not name the region:\n%s", painted.String())
+	}
+}
+
+// Setting up a new account does not inherit the region from the profile in
+// silence. Where everything is created is a decision, and the profile's region is
+// a suggestion about what to type — not an answer given on somebody's behalf.
+func TestSettingUpAnAccountAsksForTheRegion(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = taken",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var args []string
+	previous := runInitCommand
+	runInitCommand = func(_ context.Context, given []string, _, _ io.Writer) error {
+		args = given
+		writeEnvConfig(t, checkout, map[string]string{
+			"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = taken",
+			"stg": "account_id = 999988887777\nregion = eu-west-1\nprofile = fresh",
+		})
+		return nil
+	}
+	t.Cleanup(func() { runInitCommand = previous })
+
+	// The profile declares a region, which used to be passed straight through.
+	chosen := infra.ResolvedProfile{
+		Profile: infra.AWSProfile{Name: "fresh", Region: "ap-northeast-1"},
+		Caller:  infra.Caller{Account: "999988887777"},
+	}
+
+	if _, err := configureAccount(context.Background(), &bytes.Buffer{}, layout, chosen); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(strings.Join(args, " "), "--region") {
+		t.Errorf("the region was decided from the profile instead of asked: %v", args)
+	}
+}
+
+// The confirmation before a write names the region too. It is the last line read
+// before typing yes, and "which account" without "where in it" is half the
+// destination — an apply into the right account and the wrong region creates a
+// second copy of everything, in a place nobody is looking at.
+func TestTheConfirmationNamesWhereItLands(t *testing.T) {
+	config := infra.EnvConfig{Environment: "dev", AccountID: "111122223333", Region: "sa-east-1"}
+
+	line := destinationLine(config)
+
+	for _, want := range []string{"dev", "111122223333", "sa-east-1"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the confirmation does not name %q: %q", want, line)
+		}
 	}
 }
