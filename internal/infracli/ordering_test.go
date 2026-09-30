@@ -961,29 +961,20 @@ func TestTheEarlyCheckUsesTheChosenProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chosen, err := credentialProfile(layout, "dev", "the-working-one", true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	chosen := credentialProfile(layout, "dev", "the-working-one", true)
 	if chosen != "the-working-one" {
 		t.Errorf("the early check would resolve %q, want the profile that was chosen", chosen)
 	}
 
 	// And a scripted run, which chose nothing, still checks the section's own.
-	scripted, err := credentialProfile(layout, "dev", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scripted := credentialProfile(layout, "dev", "", false)
 	if scripted != "the-expired-one" {
 		t.Errorf("a scripted run would resolve %q, want the file's", scripted)
 	}
 
 	// Ambient credentials have nothing to resolve; the account guard answers for
 	// them a moment later.
-	ambient, err := credentialProfile(layout, "dev", "", true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ambient := credentialProfile(layout, "dev", "", true)
 	if ambient != "" {
 		t.Errorf("ambient credentials would resolve %q", ambient)
 	}

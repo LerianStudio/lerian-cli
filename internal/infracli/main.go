@@ -1853,11 +1853,11 @@ func credentialCheck(
 		return nil
 	}
 	return func(environment, profile string, chosen bool) error {
-		resolve, err := credentialProfile(layout, environment, profile, chosen)
-		if err != nil || resolve == "" {
-			return err
+		resolve := credentialProfile(layout, environment, profile, chosen)
+		if resolve == "" {
+			return nil
 		}
-		_, err = infra.ResolveCredentials(ctx, resolve)
+		_, err := infra.ResolveCredentials(ctx, resolve)
 		return err
 	}
 }
@@ -1866,15 +1866,17 @@ func credentialCheck(
 // chosen, or the section's own when nothing was.
 //
 // Split out because the decision is the part worth testing — resolving it runs
-// the AWS CLI. An empty result means there is nothing to resolve: either the
-// configuration could not be read, or the credentials are ambient and the account
-// guard answers for them a moment later.
-func credentialProfile(layout infra.Layout, environment, profile string, chosen bool) (string, error) {
+// the AWS CLI.
+//
+// Empty means there is nothing for this check to resolve, which happens two ways
+// and neither is its failure to report: the configuration could not be read, and
+// that error has its own message further down written for the case where it is
+// the only problem; or the credentials are ambient, and whether they work is
+// answered by the account guard a moment later.
+func credentialProfile(layout infra.Layout, environment, profile string, chosen bool) string {
 	config, err := infra.LoadEnvConfig(layout, environment)
 	if err != nil {
-		// Not this check's failure to report: the configuration error has its own
-		// message further down, written for the case where it is the only problem.
-		return "", nil
+		return ""
 	}
-	return applyChosenProfile(config, profile, chosen).Profile, nil
+	return applyChosenProfile(config, profile, chosen).Profile
 }
