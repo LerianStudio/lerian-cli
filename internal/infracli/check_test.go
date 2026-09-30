@@ -200,7 +200,7 @@ func TestPreflightReportsBothToolsAtOnce(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // neither binary resolvable
 
 	var out bytes.Buffer
-	_, err := preflight(context.Background(), nil, &out, layout, sourceFlag, false)
+	_, _, err := preflight(context.Background(), nil, &out, layout, sourceFlag, false)
 
 	if err == nil {
 		t.Fatal("preflight passed with no terraform and no aws in PATH")
@@ -218,7 +218,7 @@ func TestPreflightExemptsTheAWSCLIOnADryRun(t *testing.T) {
 	layout := layoutFor(t)
 
 	var out bytes.Buffer
-	_, err := preflight(context.Background(), nil, &out, layout, sourceFlag, true)
+	_, _, err := preflight(context.Background(), nil, &out, layout, sourceFlag, true)
 
 	if err != nil && strings.Contains(out.String(), "aws") {
 		t.Errorf("a dry run was gated on the AWS CLI:\n%s", out.String())
@@ -231,7 +231,7 @@ func TestPreflightDoesNotGateOnGit(t *testing.T) {
 	layout := layoutFor(t)
 
 	var out bytes.Buffer
-	_, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, true)
+	preflight(context.Background(), nil, &out, layout, sourceFlag, true)
 
 	if strings.Contains(out.String(), "git") {
 		t.Errorf("a run was gated on git, which only init uses:\n%s", out.String())
@@ -335,7 +335,7 @@ func TestThePreflightAsksWhetherTheOperatorIsLoggedIn(t *testing.T) {
 	t.Cleanup(func() { checkIdentity = previous })
 
 	var out bytes.Buffer
-	_, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, false)
+	preflight(context.Background(), nil, &out, layout, sourceFlag, false)
 
 	if !strings.Contains(out.String(), "aws session") {
 		t.Errorf("the preflight never asked whether there is a session:\n%s", out.String())
@@ -469,7 +469,7 @@ func TestAnExpiredSessionCanBeRevivedWithoutLeaving(t *testing.T) {
 	ask, _ := selectorFor(t, keyEnterSeq)
 
 	var out bytes.Buffer
-	_, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+	_, _, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
 
 	if len(attempted) != 1 {
 		t.Fatalf("logged in %d times, want once: %v", len(attempted), attempted)
@@ -505,7 +505,7 @@ func TestDecliningTheLoginLeavesTheInstruction(t *testing.T) {
 	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq)
 
 	var out bytes.Buffer
-	_, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+	_, _, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false)
 
 	if called {
 		t.Error("the login ran without being accepted")
@@ -577,7 +577,7 @@ func TestTheReportAppearsEvenWhenEverythingPasses(t *testing.T) {
 	ask, _ := selectorFor(t, "")
 
 	var out bytes.Buffer
-	if _, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false); err != nil {
+	if _, _, err := preflight(context.Background(), ask, &out, layout, sourceFlag, false); err != nil {
 		t.Fatalf("preflight on a working machine = %v\n%s", err, out.String())
 	}
 
@@ -605,7 +605,7 @@ func TestAScriptedRunIsNotGivenTheReport(t *testing.T) {
 	t.Cleanup(func() { checkIdentity = previous })
 
 	var out bytes.Buffer
-	if _, err := preflight(context.Background(), nil, &out, layout, sourceFlag, false); err != nil {
+	if _, _, err := preflight(context.Background(), nil, &out, layout, sourceFlag, false); err != nil {
 		t.Fatalf("preflight = %v", err)
 	}
 
@@ -629,7 +629,7 @@ func TestTheNoAWSCallClaimIsOnlyMadeWhereItHolds(t *testing.T) {
 	ask, _ := selectorFor(t, "")
 
 	var out bytes.Buffer
-	_, _ = preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+	preflight(context.Background(), ask, &out, layout, sourceFlag, false)
 
 	if strings.Contains(out.String(), "No AWS call") {
 		t.Errorf("the preflight claimed it made no AWS call, having just made several:\n%s", out.String())
@@ -779,4 +779,91 @@ esac
 	write("aws", `echo "aws-cli/2.19.1 Python/3.12.6 Linux/6.8 exe/x86_64"`)
 
 	t.Setenv("PATH", dir)
+}
+
+// A machine with no ~/.aws at all is the normal state of a machine that has just
+// been handed to somebody. Reporting "create a profile, then run this again" is a
+// round trip through another program for a thing this can do here.
+func TestNoAWSConfigIsOfferedASetup(t *testing.T) {
+	layout := layoutFor(t)
+	machineWithTools(t)
+	t.Setenv("HOME", t.TempDir()) // no ~/.aws of any kind
+
+	var attempted []string
+	previous := awsConfigure
+	awsConfigure = func(_ context.Context, mode string, _ io.Reader, _, _ io.Writer) error {
+		attempted = append(attempted, mode)
+		return nil
+	}
+	t.Cleanup(func() { awsConfigure = previous })
+
+	previousIdentity := checkIdentity
+	checkIdentity = stubIdentity{}
+	t.Cleanup(func() { checkIdentity = previousIdentity })
+
+	// Enter takes the first row of the setup menu.
+	ask, _ := selectorFor(t, keyEnterSeq)
+
+	var out bytes.Buffer
+	preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+
+	if len(attempted) != 1 {
+		t.Fatalf("ran %v, want one setup", attempted)
+	}
+	if attempted[0] != "sso" {
+		t.Errorf("ran %q first; SSO is what an organization hands out", attempted[0])
+	}
+}
+
+// An access key is the other way in, for somebody who was given one rather than
+// an SSO portal.
+func TestAnAccessKeyIsTheOtherWayIn(t *testing.T) {
+	layout := layoutFor(t)
+	machineWithTools(t)
+	t.Setenv("HOME", t.TempDir())
+
+	var attempted []string
+	previous := awsConfigure
+	awsConfigure = func(_ context.Context, mode string, _ io.Reader, _, _ io.Writer) error {
+		attempted = append(attempted, mode)
+		return nil
+	}
+	t.Cleanup(func() { awsConfigure = previous })
+
+	previousIdentity := checkIdentity
+	checkIdentity = stubIdentity{}
+	t.Cleanup(func() { checkIdentity = previousIdentity })
+
+	// Down once, onto the access-key row.
+	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq)
+
+	var out bytes.Buffer
+	preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+
+	if len(attempted) != 1 || attempted[0] != "keys" {
+		t.Errorf("ran %v, want the access-key setup", attempted)
+	}
+}
+
+// Credentials already in the environment are a session. CI sets them, and so does
+// anyone who exports a key rather than writing a profile — and neither of them
+// has a ~/.aws to read.
+func TestCredentialsInTheEnvironmentCount(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	previous := checkIdentity
+	checkIdentity = stubIdentity{usable: map[string]bool{"": true}}
+	t.Cleanup(func() { checkIdentity = previous })
+
+	result, resolved := checkAWSSession(context.Background(), checkIdentity)
+
+	if !result.ok {
+		t.Fatalf("ambient credentials were not recognized as a session: %s", result.detail)
+	}
+	if len(resolved) != 1 || resolved[0].Profile.Name != "" {
+		t.Errorf("resolved = %+v, want the one ambient entry", resolved)
+	}
+	if !strings.Contains(result.summary, "environment") {
+		t.Errorf("the row does not say where the credentials came from: %q", result.summary)
+	}
 }

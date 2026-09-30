@@ -36,10 +36,13 @@ func wordmarkWidth() int {
 }
 
 // revealStep is how long each line of the wordmark holds before the next one
-// arrives. Six lines at this rate, plus the rule drawing itself, is a fifth of a
-// second: long enough to read as an entrance, short enough that nobody waits for
-// it twice.
-const revealStep = 25 * time.Millisecond
+// arrives. Six lines at this rate, plus the rule drawing itself, is a little over
+// half a second: slow enough to read as an entrance rather than as a flicker, and
+// still short enough that nobody sits waiting for it.
+//
+// It is paid once per session, not once per command — the session was the point
+// of the change this arrived with.
+const revealStep = 70 * time.Millisecond
 
 // Banner paints the wordmark, once, at the top of an interactive session.
 //

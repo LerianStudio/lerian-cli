@@ -47,11 +47,20 @@ type options struct {
 	repo string
 	// templatesDir relocates the managed checkout. A read-only home, a network
 	// home, or an operator who keeps tooling under XDG all need it somewhere else.
-	templatesDir          string
-	environment           string
-	target                string
-	action                string
-	format                string
+	templatesDir string
+	environment  string
+	target       string
+	action       string
+	format       string
+	// profile is the AWS profile chosen interactively, and profileChosen records
+	// that a choice was made at all.
+	//
+	// Two fields, for the same reason initOptions carries profileSet: the empty
+	// string is an answer — the credentials already in this environment, which have
+	// no profile name — and it is indistinguishable from the absence of one. A
+	// scripted run leaves both zero and the file decides, exactly as before.
+	profile               string
+	profileChosen         bool
 	jobs                  int
 	minCredentialLifetime time.Duration
 	autoApprove           bool
@@ -223,6 +232,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	config = applyChosenProfile(config, opts.profile, opts.profileChosen)
 
 	// The shared tier is opt-in per engine. Dropping the ones this environment never
 	// configured is what lets "apply the shared tier" run as one parallel stage
@@ -271,7 +281,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// way it happens once, because the probe shells out to the binary.
 	if terraform == nil {
 		var err error
-		if terraform, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun); err != nil {
+		if terraform, _, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun); err != nil {
 			return err
 		}
 	}
@@ -1022,43 +1032,40 @@ func printDryRun(
 //
 // The questions go to stderr: the action is one of the things being chosen, and
 // helm-values needs stdout to carry nothing but the document.
-// afterEnvironment is called with the environment as soon as it is chosen, and
-// its error stops the remaining questions. It exists for one check: the
-// environment names the AWS account, the account names the profile, and an
-// expired session for that profile makes every later answer worthless.
+// afterEnvironment is called as soon as the account is chosen, with the
+// environment it maps to and the profile that was picked. Its error stops the
+// remaining questions.
+//
+// It exists for one check: an expired credential makes every later answer
+// worthless. The profile is passed because the check has to use the one that was
+// chosen — the section may name a different profile reaching the same account,
+// and checking that one would fail on credentials nobody selected.
 func guidedRun(
+	ctx context.Context,
 	catalog infra.Catalog,
 	opts *options,
 	ask *prompter,
 	layout infra.Layout,
-	afterEnvironment func(string) error,
+	resolved []infra.ResolvedProfile,
+	afterEnvironment func(environment, profile string, chosen bool) error,
 ) error {
 	if !ask.interactive {
 		return nil
 	}
 
-	choices := runEnvironmentOptions(layout)
-	if !anyEnabled(choices) {
-		return fmt.Errorf("no environment is configured in this checkout\n"+
-			"examples/aws/environments.conf declares the account, profile and region of\n"+
-			"each environment, and it has no section this tool can use.\n\n"+
-			"  lerian infra init --env %s", infra.Environments[0])
-	}
-
-	environment, err := ask.pick(
-		"Which environment?",
-		"Picks the AWS account, the state backend and the variables file of every stack.",
-		"--env", choices, "")
+	choice, err := askForAccount(ctx, ask, ask.out, layout, resolved)
 	if err != nil {
 		return err
 	}
-	opts.environment = environment
+	opts.environment = choice.environment
+	opts.profile = choice.profile
+	opts.profileChosen = choice.chosen
 
 	// Before the next question rather than after the last one: this is the point
 	// at which the profile is known, and asking two more questions to then report
 	// a login failure throws both answers away.
 	if afterEnvironment != nil {
-		if err := afterEnvironment(environment); err != nil {
+		if err := afterEnvironment(choice.environment, choice.profile, choice.chosen); err != nil {
 			return err
 		}
 	}
@@ -1085,33 +1092,396 @@ func guidedRun(
 	return nil
 }
 
-// runEnvironmentOptions is environmentOptions for a run rather than for init.
+// askForAccount asks which account to deploy into and returns the environment it
+// maps to.
 //
-// An environment with no section in environments.conf has no account to verify
-// against and no profile to verify with, so a run against it fails at the step
-// after this one. It is shown and disabled rather than hidden: "stg is not set up
-// in this checkout" is the useful fact, and leaving it out reads as stg not
-// existing at all.
+// The environment is derived rather than asked for: it names the state backend
+// and the variables file, so the run needs it, but it is our vocabulary and not
+// the operator's. What they are deciding is the account.
+// accountChoice is what the account question produced.
 //
-// init offers all three, because it is the command that creates the section.
-func runEnvironmentOptions(layout infra.Layout) []option {
-	options := environmentOptions(layout)
-	for index, opt := range options {
-		if _, err := infra.LoadEnvConfig(layout, opt.value); err != nil {
-			options[index].disabled = true
-			options[index].note = "no [" + opt.value + "] section in environments.conf"
-		}
-	}
-	return options
+// chosen is not "profile is non-empty": an empty profile is an answer when the
+// ambient-credentials row was picked, and it is the absence of one when the dry-run
+// path asked from the file instead. Only the code that asked can tell those apart,
+// so it says which.
+type accountChoice struct {
+	environment string
+	profile     string
+	chosen      bool
 }
 
-func anyEnabled(options []option) bool {
-	for _, opt := range options {
-		if !opt.disabled {
-			return true
+func askForAccount(
+	ctx context.Context,
+	ask *prompter,
+	out io.Writer,
+	layout infra.Layout,
+	resolved []infra.ResolvedProfile,
+) (accountChoice, error) {
+	// No resolved profiles means nobody asked AWS who anybody is — a dry run, which
+	// makes no AWS call by definition. What it can still know is what the file says,
+	// so the question is built from the sections instead of from identities.
+	if len(resolved) == 0 {
+		// Nothing was resolved, so no profile was chosen either: the file decides.
+		environment, err := askFromConfig(ask, layout)
+		return accountChoice{environment: environment}, err
+	}
+
+	choices := accountOptions(layout, resolved)
+
+	profile, err := ask.pick(
+		"Which AWS account?",
+		"Everything is created there. The state backend and the sizing follow from it.",
+		"", choices, "")
+	if err != nil {
+		return accountChoice{}, err
+	}
+
+	if profile == signOutChoice {
+		return signOutAndBackIn(ctx, ask, out, layout, resolved)
+	}
+
+	picked := findProfile(resolved, profile)
+	if picked == nil {
+		return accountChoice{}, fmt.Errorf("profile %q is not one of the profiles offered", profile)
+	}
+
+	// A profile with no session yet is chosen precisely to log into it. The login
+	// is for that profile's session, not for whichever one came first in the list.
+	if !picked.Usable() {
+		// Unless there is no session to revive. A profile that lives only in
+		// ~/.aws/credentials is an access key, and `aws sso login --profile x` is a
+		// command that cannot work for it — what it needs is the key replaced, and
+		// what is useful is whatever AWS just said about it.
+		if picked.Profile.SSOSession == "" && picked.Profile.Source == "credentials" {
+			return accountChoice{}, fmt.Errorf("profile %q does not work: %w\n"+
+				"It is an access key in ~/.aws/credentials, with no SSO session to renew.\n"+
+				"Replace it:\n\n  aws configure --profile %s",
+				picked.Profile.Name, picked.Err, picked.Profile.Name)
+		}
+
+		target := infra.SSOTarget{Session: picked.Profile.SSOSession, Profile: picked.Profile.Name}
+		if _, loginErr := offerLogin(ctx, ask, out, []infra.SSOTarget{target}); loginErr != nil {
+			return accountChoice{}, loginErr
+		}
+
+		// Ask again who it is now. The account is what maps to an environment, and
+		// before the login there was none to read.
+		refreshed, identityErr := checkIdentity.CallerIdentity(ctx, picked.Profile.Name, picked.Profile.Region)
+		if identityErr != nil {
+			return accountChoice{}, fmt.Errorf("profile %q still does not resolve: %w\n  aws sso login --profile %s",
+				profile, identityErr, profile)
+		}
+		picked.Caller = refreshed
+	}
+
+	environment, ok := environmentForProfile(layout, picked.Profile.Name, picked.Caller.Account)
+	if ok {
+		return accountChoice{environment: environment, profile: picked.Profile.Name, chosen: true}, nil
+	}
+
+	// Chosen but not set up. Telling somebody to leave and run a second command —
+	// and to know which of three names to give it — is asking them to do the part
+	// this already knows how to do.
+	environment, err = configureAccount(ctx, out, layout, *picked)
+	return accountChoice{environment: environment, profile: picked.Profile.Name, chosen: true}, err
+}
+
+// runInitCommand is a variable so the chaining can be exercised without writing
+// into a checkout.
+var runInitCommand = runInit
+
+// configureAccount sets up the chosen account and returns the slot it went into.
+//
+// The environment name is bookkeeping, not a decision: backend/<env>.hcl and
+// envs/<env>.tfvars are files in the templates repo, one set per name, so an
+// account has to occupy one of them. Which one does not matter to whoever is
+// deploying, so it is not asked — the first free slot is used.
+//
+// There are three names, and that is a real ceiling: a checkout already holding
+// three accounts cannot take a fourth. Better said here than discovered later as
+// a missing file.
+func configureAccount(
+	ctx context.Context,
+	out io.Writer,
+	layout infra.Layout,
+	chosen infra.ResolvedProfile,
+) (string, error) {
+	slot, ok := freeEnvironment(layout)
+	if !ok {
+		return "", fmt.Errorf("this checkout already holds three accounts, which is all it can hold\n"+
+			"Each account occupies one of backend/<env>.hcl and envs/<env>.tfvars, and the\n"+
+			"templates provide three sets: %s.\n\n"+
+			"Use a separate checkout for account %s, or free one of the three in\n"+
+			"examples/aws/environments.conf.",
+			strings.Join(infra.Environments, ", "), chosen.Caller.Account)
+	}
+
+	theme := newStyle(out)
+	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Setting up account "+chosen.Caller.Account))
+	fmt.Fprintf(out, "  %s\n", theme.dim("first time for this account in this checkout"))
+
+	region := chosen.Profile.Region
+	args := []string{
+		"--env", slot,
+		"--profile", chosen.Profile.Name,
+		"--account", chosen.Caller.Account,
+	}
+	if region != "" {
+		args = append(args, "--region", region)
+	}
+	if err := runInitCommand(ctx, args, out, out); err != nil {
+		return "", err
+	}
+
+	// Read back rather than assumed: init is what decides what was written, and a
+	// run against a section that is not there fails later with a missing file.
+	if _, err := infra.LoadEnvConfig(layout, slot); err != nil {
+		return "", fmt.Errorf("account %s was not set up: %w", chosen.Caller.Account, err)
+	}
+	return slot, nil
+}
+
+// freeEnvironment is the first slot no account has taken.
+func freeEnvironment(layout infra.Layout) (string, bool) {
+	for _, name := range infra.Environments {
+		if _, err := infra.LoadEnvConfig(layout, name); err != nil {
+			return name, true
 		}
 	}
-	return false
+	return "", false
+}
+
+// applyChosenProfile puts the interactively chosen profile into the configuration
+// the run uses.
+//
+// The environment is found by account, and a section may name a different profile
+// reaching the same one — so without this, choosing the profile that works could
+// still run as the profile the file names, which may be the expired one. The
+// account is untouched: it is what the guard checks, and it is why the two
+// profiles were interchangeable in the first place.
+//
+// chosen false means nothing was picked — a scripted run — and the file stands.
+// An empty profile with chosen true is an answer in its own right: the credentials
+// already in this environment, which is what CI has and what somebody with an
+// exported key has, and neither of them has a profile name.
+func applyChosenProfile(config infra.EnvConfig, profile string, chosen bool) infra.EnvConfig {
+	if !chosen {
+		return config
+	}
+	config.Profile = profile
+	return config
+}
+
+// environmentForProfile finds the environment whose section names this account,
+// preferring one that also names this profile.
+//
+// The account is what decides it, because the account is what the guard checks.
+// The profile breaks a tie: two environments in one account is a real
+// configuration — a dev and a staging sharing a sandbox — and then the profile is
+// what tells them apart.
+func environmentForProfile(layout infra.Layout, profile, account string) (string, bool) {
+	var byAccount string
+
+	for _, name := range infra.Environments {
+		config, err := infra.LoadEnvConfig(layout, name)
+		if err != nil || config.AccountID != account {
+			continue
+		}
+		if config.Profile == profile {
+			return name, true
+		}
+		if byAccount == "" {
+			byAccount = name
+		}
+	}
+	return byAccount, byAccount != ""
+}
+
+// askFromConfig asks which account using only what environments.conf declares.
+//
+// It is the dry-run path: no credentials were resolved, so no row can say whether
+// a profile still works — but the accounts are written down, and choosing between
+// them needs nothing from AWS.
+func askFromConfig(ask *prompter, layout infra.Layout) (string, error) {
+	choices := make([]option, 0, len(infra.Environments))
+	for _, name := range infra.Environments {
+		config, err := infra.LoadEnvConfig(layout, name)
+		if err != nil {
+			continue
+		}
+		note := "account " + config.AccountID
+		if config.Profile != "" {
+			note += " via " + config.Profile
+		}
+		choices = append(choices, option{value: name, label: name, note: note})
+	}
+
+	if len(choices) == 0 {
+		return "", fmt.Errorf("no account is configured in this checkout\n" +
+			"examples/aws/environments.conf declares the account, profile and region to\n" +
+			"deploy into, and it has no section this tool can use.\n\n" +
+			"  lerian infra init")
+	}
+
+	return ask.pick(
+		"Which AWS account?",
+		"Read from environments.conf; a dry run makes no AWS call to check them.",
+		"--env", choices, "")
+}
+
+// signOutChoice is the row that ends the SSO session and starts a new one.
+const signOutChoice = "\x00sign-out"
+
+// ssoLogout is a variable for the same reason ssoLogin is: so the choice can be
+// exercised without ending anybody's real session.
+var ssoLogout = infra.SSOLogout
+
+// signOutAndBackIn ends the session, logs in again, and re-reads who the profiles
+// resolve as.
+//
+// This is the only way to arrive as a different identity: the profiles in ~/.aws
+// are fixed, and which accounts they reach is decided by whoever is signed in. It
+// is a row rather than something the command does on its own, because the token
+// it clears lives in ~/.aws/sso/cache and every AWS client on the machine reads
+// it — another terminal, Terraform, anything on the shared config.
+func signOutAndBackIn(
+	ctx context.Context,
+	ask *prompter,
+	out io.Writer,
+	layout infra.Layout,
+	resolved []infra.ResolvedProfile,
+) (accountChoice, error) {
+	if err := ssoLogout(ctx, os.Stdin, out, out); err != nil {
+		return accountChoice{}, err
+	}
+	fmt.Fprintf(out, "\n  %s\n", newStyle(out).dim("signed out"))
+
+	targets := sessionsOf(resolved)
+	if len(targets) == 0 {
+		return accountChoice{}, fmt.Errorf("no SSO session in ~/.aws to sign in to\n  aws configure sso")
+	}
+	if _, err := offerLogin(ctx, ask, out, targets); err != nil {
+		return accountChoice{}, err
+	}
+
+	// Who everything resolves as has just changed, so nothing read before this is
+	// still true.
+	refreshed := infra.ResolveProfiles(ctx, checkIdentity, profilesOf(resolved), "")
+	return askForAccount(ctx, ask, out, layout, refreshed)
+}
+
+// sessionsOf is every SSO session the known profiles sit behind, first seen
+// first.
+func sessionsOf(resolved []infra.ResolvedProfile) []infra.SSOTarget {
+	seen := map[string]bool{}
+	targets := make([]infra.SSOTarget, 0, len(resolved))
+
+	for _, entry := range resolved {
+		session := entry.Profile.SSOSession
+		if session == "" || seen[session] {
+			continue
+		}
+		seen[session] = true
+		targets = append(targets, infra.SSOTarget{Session: session})
+	}
+	return targets
+}
+
+func profilesOf(resolved []infra.ResolvedProfile) []infra.AWSProfile {
+	profiles := make([]infra.AWSProfile, 0, len(resolved))
+	for _, entry := range resolved {
+		profiles = append(profiles, entry.Profile)
+	}
+	return profiles
+}
+
+func findProfile(resolved []infra.ResolvedProfile, name string) *infra.ResolvedProfile {
+	for index := range resolved {
+		if resolved[index].Profile.Name == name {
+			return &resolved[index]
+		}
+	}
+	return nil
+}
+
+// accountOptions is the question a run actually asks: which AWS account.
+//
+// dev, stg and prd are names of files in the templates repo — backend/<env>.hcl
+// holds the state, envs/<env>.tfvars holds the sizing — so they cannot be removed
+// from the model. They can stop being the question. The account is what is being
+// decided, it is what the guard checks before anything runs, and it is the thing
+// that belongs to the operator rather than to us.
+//
+// Every profile in ~/.aws gets a row:
+//
+//   - one reaching a configured account is choosable, and the environment it maps
+//     to is shown as a consequence rather than asked for;
+//   - one reaching an account with no section cannot be deployed into — there is
+//     no state backend and no variables file for it — so the row says how to
+//     create one instead of offering a choice that fails two questions later;
+//   - one whose session has expired is choosable, because choosing it is how an
+//     operator says "log me into that one".
+func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []option {
+	// Ordered by what can be done with the row, because the cursor starts on the
+	// first one: a list that opens on something unusable makes the most likely
+	// keypress a mistake. Ready first, then the ones a login would revive, then the
+	// ones nothing can be done about from here.
+	const (
+		ready = iota
+		needsLogin
+		unconfigured
+	)
+
+	type row struct {
+		option option
+		rank   int
+	}
+
+	rows := make([]row, 0, len(resolved))
+	for _, entry := range resolved {
+		// Credentials in the environment have no profile name. A row labeled with
+		// an empty string is a row nobody can read, so they are named for what they
+		// are — and CI, or anyone who exported a key, has nothing else to be called.
+		label := entry.Profile.Name
+		if label == "" {
+			label = "credentials in this environment"
+		}
+
+		opt := option{value: entry.Profile.Name, label: label}
+		rank := ready
+
+		switch {
+		case !entry.Usable():
+			rank = needsLogin
+			opt.note = "session expired — choose to log in"
+		default:
+			if environment, ok := environmentForProfile(layout, entry.Profile.Name, entry.Caller.Account); ok {
+				opt.note = "account " + entry.Caller.Account + "  ·  deploys as " + environment
+			} else {
+				rank = unconfigured
+				opt.note = "account " + entry.Caller.Account + "  ·  not set up here yet — choosing it sets it up"
+			}
+		}
+		rows = append(rows, row{option: opt, rank: rank})
+	}
+
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].rank < rows[j].rank })
+
+	options := make([]option, 0, len(rows)+1)
+	for _, r := range rows {
+		options = append(options, r.option)
+	}
+
+	// Last, because it is the answer to a different question — not "which of these"
+	// but "none of these". Offered only where there is a session to end.
+	if len(sessionsOf(resolved)) > 0 {
+		options = append(options, option{
+			value: signOutChoice,
+			label: "sign in as someone else",
+			note:  "ends the session for every AWS tool on this machine, then logs in again",
+		})
+	}
+	return options
 }
 
 // runTargetOptions is the catalog --list prints, plus the two targets that are
@@ -1465,14 +1835,19 @@ func prepareChoices(
 		return nil, nil
 	}
 
-	var terraform *infra.CLI
+	var (
+		terraform *infra.CLI
+		profiles  []infra.ResolvedProfile
+	)
 	if ask.interactive {
 		var err error
-		if terraform, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun); err != nil {
+		terraform, profiles, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun)
+		if err != nil {
 			return nil, err
 		}
 	}
-	if err := guidedRun(catalog, opts, ask, layout, credentialCheck(ctx, layout, opts.dryRun)); err != nil {
+	checkCredential := credentialCheck(ctx, layout, opts.dryRun)
+	if err := guidedRun(ctx, catalog, opts, ask, layout, profiles, checkCredential); err != nil {
 		return nil, err
 	}
 	return terraform, nil
@@ -1481,23 +1856,39 @@ func prepareChoices(
 // credentialCheck resolves the profile the chosen environment maps to and asks
 // whether it still answers. A nil result means there is nothing to check — a dry
 // run makes no AWS call by definition.
-func credentialCheck(ctx context.Context, layout infra.Layout, dryRun bool) func(string) error {
+func credentialCheck(
+	ctx context.Context,
+	layout infra.Layout,
+	dryRun bool,
+) func(environment, profile string, chosen bool) error {
 	if dryRun {
 		return nil
 	}
-	return func(environment string) error {
-		config, err := infra.LoadEnvConfig(layout, environment)
-		//nolint:nilerr // Not this check's failure to report. A configuration that
-		// cannot be read has its own error further down, written for the case where
-		// it is the only problem; surfacing it here would report a missing section as
-		// a credential failure.
-		if err != nil {
+	return func(environment, profile string, chosen bool) error {
+		resolve := credentialProfile(layout, environment, profile, chosen)
+		if resolve == "" {
 			return nil
 		}
-		if config.Profile == "" {
-			return nil
-		}
-		_, err = infra.ResolveCredentials(ctx, config.Profile)
+		_, err := infra.ResolveCredentials(ctx, resolve)
 		return err
 	}
+}
+
+// credentialProfile is the profile the early check resolves: the one that was
+// chosen, or the section's own when nothing was.
+//
+// Split out because the decision is the part worth testing — resolving it runs
+// the AWS CLI.
+//
+// Empty means there is nothing for this check to resolve, which happens two ways
+// and neither is its failure to report: the configuration could not be read, and
+// that error has its own message further down written for the case where it is
+// the only problem; or the credentials are ambient, and whether they work is
+// answered by the account guard a moment later.
+func credentialProfile(layout infra.Layout, environment, profile string, chosen bool) string {
+	config, err := infra.LoadEnvConfig(layout, environment)
+	if err != nil {
+		return ""
+	}
+	return applyChosenProfile(config, profile, chosen).Profile
 }

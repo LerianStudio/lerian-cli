@@ -246,6 +246,10 @@ func claimAndPublish(staging string) (string, error) {
 // cleanup is free to delete while it is still writing them.
 func claimRunDir(dir string) error {
 	pid := strconv.Itoa(os.Getpid())
+
+	// #nosec G703 -- dir is the directory this process just created under
+	// os.TempDir(), joined to a constant of this package. Neither half comes from
+	// outside, so there is no path to traverse.
 	if err := os.WriteFile(filepath.Join(dir, runOwnerFile), []byte(pid), 0o600); err != nil {
 		return fmt.Errorf("cannot claim the run directory: %w", err)
 	}
