@@ -134,15 +134,17 @@ func TestACommandCanBeKeptOutOfTheMenu(t *testing.T) {
 	}
 }
 
-// And the menu still offers what it should.
-func TestTheMenuOffersAuthInfraAndVersion(t *testing.T) {
+// And the menu still offers what it should — read off cobra, so a command added
+// later appears here without anyone registering it twice. config arrived that
+// way, and this list is the only place it had to be written down again.
+func TestTheMenuOffersAuthConfigInfraAndVersion(t *testing.T) {
 	choices := menuChoices(rootCmd)
 	offered := make([]string, 0, len(choices))
 	for _, choice := range choices {
 		offered = append(offered, choice.Value)
 	}
 
-	want := []string{"auth", "infra", "version"}
+	want := []string{"auth", "config", "infra", "version"}
 	if len(offered) != len(want) {
 		t.Fatalf("the menu offers %v, want exactly %v", offered, want)
 	}

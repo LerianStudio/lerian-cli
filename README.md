@@ -544,9 +544,49 @@ lerian midaz ledger events <ledger-id>
 lerian midaz ledger versions
 ```
 
+## What the CLI remembers, and how to forget it
+
+```bash
+lerian config          # what it has written down, and where
+lerian config reset    # forget it, as if the CLI had never run here
+```
+
+There is one file — `~/.lerian/config.yaml` — and it holds two things: where the
+templates checkout is, and the profiles `lerian auth login` creates. `reset`
+removes that file, so the next run asks what it asked the first time.
+
+It takes that file and **nothing else**. `~/.aws` belongs to the AWS CLI and every
+tool on this machine reads it; a templates checkout is a git clone you made,
+possibly with work in it. Neither is this command's to delete, and a "reset" that
+took them would be an expensive surprise. `lerian infra cleanup` is the one that
+removes caches and run logs, and it says the same thing about AWS.
+
+It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
+refuses rather than guessing.
+
 ## Configuration
 
-### Configuration File
+### What the CLI remembers, and how to forget it
+
+```bash
+lerian config          # what it has written down, and where
+lerian config reset    # forget it, as if the CLI had never run here
+```
+
+There is one file — `~/.lerian/config.yaml` — and it holds two things: where the
+templates checkout is, and the profiles `lerian auth login` creates. `reset`
+removes that file, so the next run asks what it asked the first time.
+
+It takes that file and **nothing else**. `~/.aws` belongs to the AWS CLI and every
+tool on this machine reads it; a templates checkout is a git clone you made,
+possibly with work in it. Neither is this command's to delete, and a "reset" that
+took them would be an expensive surprise. `lerian infra cleanup` is the one that
+removes caches and run logs, and it says the same thing about AWS.
+
+It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
+refuses rather than guessing.
+
+## Configuration File
 
 Configuration is stored at `~/.lerian/config.yaml`:
 
