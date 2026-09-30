@@ -109,11 +109,10 @@ func RequireAWSCLI(ctx context.Context) error {
 	path, err := exec.LookPath("aws")
 	if err != nil {
 		return fmt.Errorf("%w\n"+
-			"Install the AWS CLI v2, then configure a profile for each account you\n"+
-			"deploy into — one per environment, since dev, stg and prd are separate\n"+
-			"accounts:\n"+
-			"  aws configure sso --profile lerian-dev      # IAM Identity Center\n"+
-			"  aws configure --profile lerian-dev          # access key and secret\n"+
+			"Install the AWS CLI v2, then configure one profile per AWS account you\n"+
+			"deploy into:\n"+
+			"  aws configure sso --profile <name>      # IAM Identity Center\n"+
+			"  aws configure --profile <name>          # access key and secret\n"+
 			"Either works. Ambient credentials in the environment work too: pass\n"+
 			"--profile '' with --account to say which account they reach.\n"+
 			"  https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html",

@@ -31,11 +31,15 @@ func TestRequireAWSCLIExplainsBothWaysToConfigureAProfile(t *testing.T) {
 	// SSO is common here and not universal. A profile holding an access key and
 	// secret is just as valid, and telling that operator to run `aws configure sso`
 	// points them at something that is not broken.
+	//
+	// It used to require "one per environment", which asserted that dev, stg and
+	// prd are separate AWS accounts. That is our arrangement, not a fact about
+	// whoever is reading the message — plenty of organizations run two, or one.
 	for _, want := range []string{
 		"aws configure sso",
 		"aws configure --profile",
 		"access key and secret",
-		"one per environment",
+		"one profile per AWS account",
 		"--profile '' with --account",
 	} {
 		if !strings.Contains(message, want) {

@@ -74,11 +74,11 @@ THE AWS CLI
   it into credentials, so a machine without it is refused by name rather than
   through a credential error.
 
-  Configure one profile per account you deploy into. dev, stg and prd are separate
-  AWS accounts, so that is normally three:
+  Configure one profile per AWS account you deploy into. How many that is, and
+  whether the environments share an account, is your organization's decision:
 
-    aws configure sso --profile lerian-dev    # IAM Identity Center
-    aws configure --profile lerian-dev        # access key and secret
+    aws configure sso --profile <name>    # IAM Identity Center
+    aws configure --profile <name>        # access key and secret
 
   Either works — nothing here assumes SSO; the AWS CLI reads whatever the profile
   declares. In a terminal with no --profile, the profiles found in ~/.aws are listed
@@ -131,7 +131,7 @@ Examples:
   lerian infra init --env dev
   lerian infra init --env dev --clone --templates-ref v1.6.0
   lerian infra init --env dev --sync --templates-ref v1.7.0
-  lerian infra init --env dev --profile lerian-dev --region us-east-2 \
+  lerian infra init --env dev --profile <name> --region <region> \
       --targets infra-base,midaz --api-cidr auto
 `
 
@@ -672,7 +672,7 @@ func resolveCredentials(
 		return "", "", caller, errors.New("no --profile given\n" +
 			"Name the profile for this environment, or state that the credentials\n" +
 			"already in the environment are the ones to use:\n" +
-			"  --profile lerian-dev\n" +
+			"  --profile <name>\n" +
 			"  --profile ''            ambient credentials (CI, IRSA)\n" +
 			"Outside a terminal there is nobody to ask, and picking an identity to\n" +
 			"create infrastructure with is not a guess this tool makes.")
@@ -685,10 +685,11 @@ func resolveCredentials(
 			// Always asked, even when the profile declares one. Which region the
 			// infrastructure is born in is a decision; inheriting it silently from
 			// ~/.aws/config is how somebody discovers it after the bill.
+			// No suggestion of our own. Where the infrastructure lands is the
+			// operator's decision, and offering the region we happen to use makes the
+			// most likely keypress create everything in Ohio. The profile's own region
+			// is a suggestion worth making; ours is not.
 			suggestion := region
-			if suggestion == "" {
-				suggestion = "us-east-2"
-			}
 			region, err = ask.ask(
 				"Which AWS region will the infrastructure be created in?",
 				"Every resource lands here. Moving later means recreating them.",
@@ -779,7 +780,7 @@ func resolveCredentials(
 			effective = entry.Profile.Region
 		}
 		if effective == "" {
-			effective, err = ask.text("AWS region", "us-east-2", "--region")
+			effective, err = ask.text("AWS region", "", "--region")
 			if err != nil {
 				return "", "", caller, err
 			}
