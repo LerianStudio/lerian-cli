@@ -109,7 +109,7 @@ func TestTheCredentialIsCheckedAsSoonAsTheEnvironmentIsKnown(t *testing.T) {
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	expired := errors.New("the SSO session for profile \"lerian-sandbox\" has expired")
-	err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), func(string) error { return expired })
+	err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), func(string, string, bool) error { return expired })
 
 	if !errors.Is(err, expired) {
 		t.Fatalf("guidedRun = %v, want the credential failure", err)
@@ -133,7 +133,7 @@ func TestAWorkingCredentialAsksTheRestOfTheQuestions(t *testing.T) {
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	var checked string
-	if err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), func(env string) error { checked = env; return nil }); err != nil {
+	if err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), func(env string, _ string, _ bool) error { checked = env; return nil }); err != nil {
 		t.Fatalf("guidedRun = %v", err)
 	}
 
@@ -924,7 +924,7 @@ func TestAScriptedRunKeepsTheProfileFromTheFile(t *testing.T) {
 func TestTheChosenProfileOverridesTheFile(t *testing.T) {
 	config := infra.EnvConfig{Environment: "dev", AccountID: "111122223333", Profile: "written-in-the-file"}
 
-	withChoice := applyChosenProfile(config, "the-one-chosen")
+	withChoice := applyChosenProfile(config, "the-one-chosen", true)
 	if withChoice.Profile != "the-one-chosen" {
 		t.Errorf("profile = %q, want the chosen one", withChoice.Profile)
 	}
@@ -934,8 +934,117 @@ func TestTheChosenProfileOverridesTheFile(t *testing.T) {
 	}
 
 	// A scripted run chooses nothing and the file stands.
-	untouched := applyChosenProfile(config, "")
+	untouched := applyChosenProfile(config, "", false)
 	if untouched.Profile != "written-in-the-file" {
 		t.Errorf("a scripted run had its profile replaced with %q", untouched.Profile)
+	}
+}
+
+// The early credential check has to use the profile that was chosen.
+//
+// It runs the moment the account is picked, which is the whole point of it — but
+// it loaded the section and resolved that section's profile. Choosing the working
+// profile A where the section names the expired profile B failed on B, before the
+// run ever reached the place the choice is applied.
+//
+// Asserted on which profile would be resolved rather than on the callback being
+// handed one: the first version of this test passed its own callback, so it only
+// proved that guidedRun passes the value along — the half that was already
+// working — and stayed green with the fix removed.
+func TestTheEarlyCheckUsesTheChosenProfile(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = the-expired-one",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chosen, err := credentialProfile(layout, "dev", "the-working-one", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chosen != "the-working-one" {
+		t.Errorf("the early check would resolve %q, want the profile that was chosen", chosen)
+	}
+
+	// And a scripted run, which chose nothing, still checks the section's own.
+	scripted, err := credentialProfile(layout, "dev", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scripted != "the-expired-one" {
+		t.Errorf("a scripted run would resolve %q, want the file's", scripted)
+	}
+
+	// Ambient credentials have nothing to resolve; the account guard answers for
+	// them a moment later.
+	ambient, err := credentialProfile(layout, "dev", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ambient != "" {
+		t.Errorf("ambient credentials would resolve %q", ambient)
+	}
+}
+
+// And the choice reaches that check at all: guidedRun hands it over.
+func TestTheChoiceReachesTheEarlyCheck(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = the-expired-one",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "the-working-one"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	var handed []string
+	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	err = guidedRun(context.Background(), catalog, &opts, ask, layout, resolved,
+		func(_ string, profile string, _ bool) error {
+			handed = append(handed, profile)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("guidedRun = %v", err)
+	}
+
+	if len(handed) != 1 || handed[0] != "the-working-one" {
+		t.Errorf("the check was handed %v, want the profile that was chosen", handed)
+	}
+}
+
+// Ambient credentials are chosen by name — and their name is the empty string,
+// which is also what "nothing was chosen" looks like. The two mean opposite
+// things: one says use the credentials in this environment, the other says leave
+// the file alone.
+//
+// The same distinction initOptions already draws for --profile ” versus an
+// absent --profile.
+func TestChoosingAmbientCredentialsIsNotTheSameAsChoosingNothing(t *testing.T) {
+	config := infra.EnvConfig{Environment: "dev", AccountID: "111122223333", Profile: "from-the-file"}
+
+	chosenAmbient := applyChosenProfile(config, "", true)
+	if chosenAmbient.Profile != "" {
+		t.Errorf("profile = %q, want the ambient credentials that were chosen", chosenAmbient.Profile)
+	}
+
+	nothingChosen := applyChosenProfile(config, "", false)
+	if nothingChosen.Profile != "from-the-file" {
+		t.Errorf("profile = %q, want the file's own", nothingChosen.Profile)
+	}
+
+	named := applyChosenProfile(config, "a-named-one", true)
+	if named.Profile != "a-named-one" {
+		t.Errorf("profile = %q", named.Profile)
 	}
 }

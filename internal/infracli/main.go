@@ -52,13 +52,15 @@ type options struct {
 	target       string
 	action       string
 	format       string
-	// profile is the AWS profile chosen interactively, empty otherwise.
+	// profile is the AWS profile chosen interactively, and profileChosen records
+	// that a choice was made at all.
 	//
-	// The environment is found by account, and a section may name a different
-	// profile that reaches the same one — so the environment alone does not say
-	// which credentials were picked. A scripted run leaves this empty and the file
-	// decides, exactly as before.
+	// Two fields, for the same reason initOptions carries profileSet: the empty
+	// string is an answer — the credentials already in this environment, which have
+	// no profile name — and it is indistinguishable from the absence of one. A
+	// scripted run leaves both zero and the file decides, exactly as before.
 	profile               string
+	profileChosen         bool
 	jobs                  int
 	minCredentialLifetime time.Duration
 	autoApprove           bool
@@ -230,7 +232,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	config = applyChosenProfile(config, opts.profile)
+	config = applyChosenProfile(config, opts.profile, opts.profileChosen)
 
 	// The shared tier is opt-in per engine. Dropping the ones this environment never
 	// configured is what lets "apply the shared tier" run as one parallel stage
@@ -1030,10 +1032,14 @@ func printDryRun(
 //
 // The questions go to stderr: the action is one of the things being chosen, and
 // helm-values needs stdout to carry nothing but the document.
-// afterEnvironment is called with the environment as soon as it is chosen, and
-// its error stops the remaining questions. It exists for one check: the
-// environment names the AWS account, the account names the profile, and an
-// expired session for that profile makes every later answer worthless.
+// afterEnvironment is called as soon as the account is chosen, with the
+// environment it maps to and the profile that was picked. Its error stops the
+// remaining questions.
+//
+// It exists for one check: an expired credential makes every later answer
+// worthless. The profile is passed because the check has to use the one that was
+// chosen — the section may name a different profile reaching the same account,
+// and checking that one would fail on credentials nobody selected.
 func guidedRun(
 	ctx context.Context,
 	catalog infra.Catalog,
@@ -1041,7 +1047,7 @@ func guidedRun(
 	ask *prompter,
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
-	afterEnvironment func(string) error,
+	afterEnvironment func(environment, profile string, chosen bool) error,
 ) error {
 	if !ask.interactive {
 		return nil
@@ -1053,12 +1059,13 @@ func guidedRun(
 	}
 	opts.environment = environment
 	opts.profile = profile
+	opts.profileChosen = true
 
 	// Before the next question rather than after the last one: this is the point
 	// at which the profile is known, and asking two more questions to then report
 	// a login failure throws both answers away.
 	if afterEnvironment != nil {
-		if err := afterEnvironment(environment); err != nil {
+		if err := afterEnvironment(environment, profile, true); err != nil {
 			return err
 		}
 	}
@@ -1241,12 +1248,15 @@ func freeEnvironment(layout infra.Layout) (string, bool) {
 // account is untouched: it is what the guard checks, and it is why the two
 // profiles were interchangeable in the first place.
 //
-// Empty means nothing was chosen — a scripted run — and the file stands.
-func applyChosenProfile(config infra.EnvConfig, chosen string) infra.EnvConfig {
-	if chosen == "" {
+// chosen false means nothing was picked — a scripted run — and the file stands.
+// An empty profile with chosen true is an answer in its own right: the credentials
+// already in this environment, which is what CI has and what somebody with an
+// exported key has, and neither of them has a profile name.
+func applyChosenProfile(config infra.EnvConfig, profile string, chosen bool) infra.EnvConfig {
+	if !chosen {
 		return config
 	}
-	config.Profile = chosen
+	config.Profile = profile
 	return config
 }
 
@@ -1834,23 +1844,37 @@ func prepareChoices(
 // credentialCheck resolves the profile the chosen environment maps to and asks
 // whether it still answers. A nil result means there is nothing to check — a dry
 // run makes no AWS call by definition.
-func credentialCheck(ctx context.Context, layout infra.Layout, dryRun bool) func(string) error {
+func credentialCheck(
+	ctx context.Context,
+	layout infra.Layout,
+	dryRun bool,
+) func(environment, profile string, chosen bool) error {
 	if dryRun {
 		return nil
 	}
-	return func(environment string) error {
-		config, err := infra.LoadEnvConfig(layout, environment)
-		//nolint:nilerr // Not this check's failure to report. A configuration that
-		// cannot be read has its own error further down, written for the case where
-		// it is the only problem; surfacing it here would report a missing section as
-		// a credential failure.
-		if err != nil {
-			return nil
+	return func(environment, profile string, chosen bool) error {
+		resolve, err := credentialProfile(layout, environment, profile, chosen)
+		if err != nil || resolve == "" {
+			return err
 		}
-		if config.Profile == "" {
-			return nil
-		}
-		_, err = infra.ResolveCredentials(ctx, config.Profile)
+		_, err = infra.ResolveCredentials(ctx, resolve)
 		return err
 	}
+}
+
+// credentialProfile is the profile the early check resolves: the one that was
+// chosen, or the section's own when nothing was.
+//
+// Split out because the decision is the part worth testing — resolving it runs
+// the AWS CLI. An empty result means there is nothing to resolve: either the
+// configuration could not be read, or the credentials are ambient and the account
+// guard answers for them a moment later.
+func credentialProfile(layout infra.Layout, environment, profile string, chosen bool) (string, error) {
+	config, err := infra.LoadEnvConfig(layout, environment)
+	if err != nil {
+		// Not this check's failure to report: the configuration error has its own
+		// message further down, written for the case where it is the only problem.
+		return "", nil
+	}
+	return applyChosenProfile(config, profile, chosen).Profile, nil
 }
