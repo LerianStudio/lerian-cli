@@ -891,7 +891,7 @@ func TestAPICIDRTakesATypedBareAddressWhenDetectionFails(t *testing.T) {
 // remembering whether it is eu-west-1 or eu-west-01, and a typo here is caught at
 // the first API call rather than at the prompt.
 func TestTheRegionsAreAListToChooseFrom(t *testing.T) {
-	options := regionOptions("")
+	options := regionOptions("", "")
 
 	if len(options) < 15 {
 		t.Errorf("only %d regions offered", len(options))
@@ -915,7 +915,7 @@ func TestTheRegionsAreAListToChooseFrom(t *testing.T) {
 // The list is a convenience, not a gate. AWS adds regions, and this list is a
 // copy that will age — so there is always a way past it.
 func TestARegionNotInTheListCanStillBeGiven(t *testing.T) {
-	options := regionOptions("")
+	options := regionOptions("", "")
 
 	var escape *option
 	for index, opt := range options {
@@ -934,7 +934,7 @@ func TestARegionNotInTheListCanStillBeGiven(t *testing.T) {
 // A region already known — from --region, or from the profile — is what the
 // cursor opens on, and it is in the list even if this copy has never heard of it.
 func TestAKnownRegionIsWhereTheCursorOpens(t *testing.T) {
-	options := regionOptions("me-central-1")
+	options := regionOptions("me-central-1", "")
 
 	if options[0].value != "me-central-1" {
 		t.Errorf("the list opens on %q, not on the region already known", options[0].value)
@@ -945,7 +945,7 @@ func TestAKnownRegionIsWhereTheCursorOpens(t *testing.T) {
 func TestAskForRegionPicksOrFallsThroughToTyping(t *testing.T) {
 	// Enter on the first row, which is the region already known.
 	ask, _ := selectorFor(t, keyEnterSeq)
-	chosen, err := askForRegion(ask, "eu-west-2")
+	chosen, err := askForRegion(ask, "eu-west-2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1050,12 +1050,14 @@ func TestInitIsQuietWhenBootstrapHasRun(t *testing.T) {
 // because it never read the profile. Both end with infrastructure in a region
 // nobody chose out loud.
 func TestTheProfileRegionIsASuggestionNotAnAnswer(t *testing.T) {
-	// The list opens on the profile's region when that is all we know.
-	options := regionOptions("ap-northeast-1")
+	// The list opens on the profile's region when that is all we know, and says so
+	// — it used to claim "already chosen", which was not true of a value read off
+	// ~/.aws.
+	options := regionOptions("ap-northeast-1", "from the sandbox profile")
 	if options[0].value != "ap-northeast-1" {
 		t.Errorf("the list opens on %q, not on the profile's region", options[0].value)
 	}
-	if !strings.Contains(options[0].note, "already chosen") {
+	if !strings.Contains(options[0].note, "sandbox profile") {
 		t.Errorf("the row does not say why it is first: %q", options[0].note)
 	}
 }
@@ -1065,7 +1067,7 @@ func TestTheProfileRegionIsASuggestionNotAnAnswer(t *testing.T) {
 func TestARegionIsAskedForEvenWhenTheProfileHasOne(t *testing.T) {
 	ask, painted := selectorFor(t, keyEnterSeq)
 
-	chosen, err := askForRegion(ask, "sa-east-1")
+	chosen, err := askForRegion(ask, "sa-east-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1086,7 +1088,7 @@ func TestARegionIsAskedForEvenWhenTheProfileHasOne(t *testing.T) {
 func TestTheRegionOfAChosenProfileIsAskedAbout(t *testing.T) {
 	ask, painted := selectorFor(t, keyEnterSeq)
 
-	chosen, err := regionFor(ask, "", "ap-northeast-1")
+	chosen, err := regionFor(ask, "some-profile", "", "ap-northeast-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1103,7 +1105,7 @@ func TestTheRegionOfAChosenProfileIsAskedAbout(t *testing.T) {
 func TestAStatedRegionIsNotAskedAboutAgain(t *testing.T) {
 	ask, painted := selectorFor(t, "")
 
-	chosen, err := regionFor(ask, "eu-west-3", "ap-northeast-1")
+	chosen, err := regionFor(ask, "some-profile", "eu-west-3", "ap-northeast-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1113,5 +1115,38 @@ func TestAStatedRegionIsNotAskedAboutAgain(t *testing.T) {
 	}
 	if strings.Contains(painted.String(), "Which AWS region") {
 		t.Errorf("a stated region was asked about anyway:\n%s", painted.String())
+	}
+}
+
+// "already chosen" was not true: nobody had chosen it. The region came off the
+// profile in ~/.aws, and calling that a choice invites somebody to press enter
+// believing they are confirming their own earlier decision.
+func TestTheSuggestedRegionSaysWhereItCameFrom(t *testing.T) {
+	fromProfile := regionOptions("us-east-2", "from the lerian-sandbox profile")
+	if fromProfile[0].value != "us-east-2" {
+		t.Fatalf("the list does not open on the suggestion: %+v", fromProfile[0])
+	}
+	if strings.Contains(fromProfile[0].note, "already chosen") {
+		t.Errorf("the row claims a choice nobody made: %q", fromProfile[0].note)
+	}
+	if !strings.Contains(fromProfile[0].note, "lerian-sandbox profile") {
+		t.Errorf("the row does not say where it came from: %q", fromProfile[0].note)
+	}
+	// The place is still named, because that is the part a code does not say.
+	if !strings.Contains(fromProfile[0].note, "Ohio") {
+		t.Errorf("the row does not name the place: %q", fromProfile[0].note)
+	}
+}
+
+// The purpose line is one line, truncated to the terminal's width — so a long one
+// loses its end, which is where I had put the part nobody knows yet.
+func TestTheConfigurePurposeFitsOnOneLine(t *testing.T) {
+	purpose := configurePurpose()
+
+	if len(purpose) > 100 {
+		t.Errorf("the purpose is %d characters and the selector shows one line:\n%s", len(purpose), purpose)
+	}
+	if !strings.Contains(purpose, "bootstrap") {
+		t.Errorf("the part that is not obvious was cut: %q", purpose)
 	}
 }
