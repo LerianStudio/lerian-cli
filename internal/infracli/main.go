@@ -1073,7 +1073,7 @@ func guidedRun(
 	targets, err := ask.pickMany(
 		"What do you want to operate on?",
 		"Several can be combined; they are reordered into dependency order either way.",
-		"--target", runTargetOptions(catalog), splitList(opts.target))
+		"--target", runTargetOptions(catalog, layout, opts.environment), splitList(opts.target))
 	if err != nil {
 		return err
 	}
@@ -1548,7 +1548,7 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 
 // runTargetOptions is the catalog --list prints, plus the two targets that are
 // not products: bootstrap, which creates the state backend, and all.
-func runTargetOptions(catalog infra.Catalog) []option {
+func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment string) []option {
 	options := make([]option, 0, 3+len(catalog.Names))
 	options = append(options,
 		option{value: "bootstrap", label: "bootstrap", note: "state bucket and lock table"},
@@ -1561,7 +1561,33 @@ func runTargetOptions(catalog infra.Catalog) []option {
 			note:  strings.Join(catalog.Products[name], " "),
 		})
 	}
-	return append(options, option{value: "all", label: "all", note: "everything, in dependency order"})
+	options = append(options, option{value: "all", label: "all", note: "everything, in dependency order"})
+
+	// Everything except bootstrap needs somewhere to keep its state, and bootstrap
+	// is what creates it — so on an account nobody has bootstrapped yet, it is the
+	// only thing that can run. Offering the rest lets somebody spend two answers on
+	// a stack that fails at terraform init, reporting a bucket that does not exist.
+	if backendExists(layout, environment) {
+		return options
+	}
+	for index, opt := range options {
+		if opt.value == "bootstrap" {
+			continue
+		}
+		options[index].disabled = true
+		options[index].note = "needs the state backend — run bootstrap first"
+	}
+	return options
+}
+
+// backendExists reports whether this environment has a state backend to write to.
+//
+// The file is written by bootstrap, not by init: bootstrap creates the bucket and
+// the lock table and then records where they are. Its absence is what "nobody has
+// bootstrapped this account yet" looks like from here.
+func backendExists(layout infra.Layout, environment string) bool {
+	_, err := infra.LoadBackend(layout, environment)
+	return err == nil
 }
 
 // actionOptions spells out the consequence of each action, which is the part an

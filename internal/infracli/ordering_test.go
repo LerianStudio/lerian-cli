@@ -228,6 +228,11 @@ func configuredLayout(t *testing.T) infra.Layout {
 		"stg": "account_id = 444455556666\nregion = us-east-1\nprofile = stg-profile",
 		"prd": "account_id = 999988887777\nregion = us-east-1\nprofile = prd-profile",
 	})
+	// Bootstrapped, which is the state these tests are about: with no state
+	// backend the target list offers bootstrap and nothing else, by design.
+	for _, environment := range infra.Environments {
+		writeBackendFile(t, checkout, environment)
+	}
 	layout, err := infra.NewLayout(checkout)
 	if err != nil {
 		t.Fatal(err)
@@ -1299,5 +1304,69 @@ func TestTheDryRunRowsAreNotLabelledWithOurNames(t *testing.T) {
 	}
 	if !strings.Contains(painted.String(), "sandbox") {
 		t.Errorf("the row does not name the profile it would use:\n%s", painted.String())
+	}
+}
+
+// Until the state backend exists, bootstrap is the only thing that can run:
+// everything else needs a bucket to keep its state in, and bootstrap is what
+// creates it. The list says so instead of letting somebody pick a stack that
+// fails at terraform init.
+func TestBeforeBootstrapOnlyBootstrapIsOffered(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	// No backend/dev.hcl in this checkout.
+	options := runTargetOptions(catalog, layout, "dev")
+
+	byValue := map[string]option{}
+	for _, opt := range options {
+		byValue[opt.value] = opt
+	}
+
+	if byValue["bootstrap"].disabled {
+		t.Error("bootstrap cannot be chosen, and it is the only thing that can run")
+	}
+	for _, name := range []string{"infra-base", "midaz", "all"} {
+		if !byValue[name].disabled {
+			t.Errorf("%s was offered with no state backend to write to", name)
+		}
+		if !strings.Contains(byValue[name].note, "bootstrap") {
+			t.Errorf("%s does not say what is missing: %q", name, byValue[name].note)
+		}
+	}
+}
+
+// Once it exists, everything is on the table.
+func TestAfterBootstrapEverythingIsOffered(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeBackendFile(t, checkout, "dev")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	for _, opt := range runTargetOptions(catalog, layout, "dev") {
+		if opt.disabled {
+			t.Errorf("%s is not offered although the backend exists: %q", opt.value, opt.note)
+		}
+	}
+}
+
+func writeBackendFile(t *testing.T, checkout, environment string) {
+	t.Helper()
+
+	path := filepath.Join(checkout, "examples", "aws", "backend", environment+".hcl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "bucket         = \"tfstate-" + environment + "-111122223333\"\n" +
+		"region         = \"us-east-1\"\ndynamodb_table = \"tfstate-lock-" + environment + "\"\nencrypt = true\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

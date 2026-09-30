@@ -326,6 +326,31 @@ start-up, because `aws sso logout` clears a token in `~/.aws/sso/cache` that
 **every** AWS client on the machine reads — another terminal, Terraform, anything
 on the shared config.
 
+### The first run on an account, and every one after
+
+There are two shapes to a run, and what separates them is whether the state
+backend exists — `backend/<env>.hcl`, which records the S3 bucket and lock table
+the state lives in. It is written by `bootstrap`, not by `init`.
+
+**First time on an account.** Nothing exists: no section in `environments.conf`,
+no backend, no bucket. Choosing the account sets up the first, and then
+`bootstrap` is the only target offered — everything else needs somewhere to keep
+its state, and `bootstrap` is what creates it:
+
+```
+  What do you want to operate on?
+  ❯ [x] bootstrap    state bucket and lock table
+    [ ] infra-base   needs the state backend — run bootstrap first
+    [ ] midaz        needs the state backend — run bootstrap first
+```
+
+**Every run after.** The backend is there, and the whole catalogue is on the
+table: `infra-base`, the products, `all`.
+
+The list used to offer everything either way, so a first run could spend two
+answers on a stack that fails at `terraform init` reporting a bucket that does not
+exist.
+
 ### A machine with nothing configured
 
 This CLI is not only run on machines that already have our profiles. On one with
