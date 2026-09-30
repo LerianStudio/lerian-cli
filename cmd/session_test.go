@@ -217,8 +217,9 @@ func TestARunnableParentStillOffersItsChildren(t *testing.T) {
 		t.Fatal("a command with subcommands did not offer them")
 	}
 
-	var offered []string
-	for _, choice := range childChoices(root, "config") {
+	children := childChoices(root, "config")
+	offered := make([]string, 0, len(children))
+	for _, choice := range children {
 		offered = append(offered, choice.Value)
 	}
 
