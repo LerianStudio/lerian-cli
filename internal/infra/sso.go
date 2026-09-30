@@ -136,6 +136,9 @@ func ConfigureAWS(ctx context.Context, mode string, in io.Reader, out, errOut io
 		return fmt.Errorf("infra: unknown AWS setup %q", mode)
 	}
 
+	// #nosec G204 -- args is one of the two literal slices above. mode selects
+	// between them and anything else is refused, so nothing from outside reaches
+	// the command line.
 	command := exec.CommandContext(ctx, "aws", args...)
 	command.Stdin = in
 	command.Stdout = out

@@ -735,7 +735,7 @@ func TestAFourthAccountSaysWhatIsInTheWay(t *testing.T) {
 	}
 }
 
-// Credentials in the environment have no profile name, and a row labelled with an
+// Credentials in the environment have no profile name, and a row labeled with an
 // empty string is a row nobody can read. They are named for what they are.
 func TestAmbientCredentialsAreNamedInTheList(t *testing.T) {
 	checkout := fakeCheckout(t, "", "")

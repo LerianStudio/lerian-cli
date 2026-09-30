@@ -1319,7 +1319,7 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 
 	rows := make([]row, 0, len(resolved))
 	for _, entry := range resolved {
-		// Credentials in the environment have no profile name. A row labelled with
+		// Credentials in the environment have no profile name. A row labeled with
 		// an empty string is a row nobody can read, so they are named for what they
 		// are — and CI, or anyone who exported a key, has nothing else to be called.
 		label := entry.Profile.Name

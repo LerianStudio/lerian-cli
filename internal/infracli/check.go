@@ -237,9 +237,9 @@ var awsConfigure = infra.ConfigureAWS
 // just been handed, and this CLI is not only run by people who already have our
 // profiles configured. Reporting "create a profile, then run this again" makes
 // the first experience of the tool a round trip through a second program.
-func offerSetup(ctx context.Context, ask *prompter, out io.Writer) (bool, error) {
+func offerSetup(ctx context.Context, ask *prompter, out io.Writer) bool {
 	if ask == nil || !ask.interactive {
-		return false, nil
+		return false
 	}
 
 	answer, err := ask.pick("This machine has no AWS credentials. Set them up now?",
@@ -251,19 +251,20 @@ func offerSetup(ctx context.Context, ask *prompter, out io.Writer) (bool, error)
 				note: "aws configure — an access key id and secret"},
 			{value: "no", label: "not now", note: "leaves the instructions below"},
 		}, "")
+	// Declining is not a failure of its own, and neither is a selector that could
+	// not draw: the check has already written what to run by hand, and replacing
+	// that with "the prompt failed" helps nobody. Nothing here produces an error
+	// the caller could act on, so none is returned.
 	if err != nil || answer == "no" {
-		//nolint:nilerr // Declining is not a failure: the check below has already
-		// written what to run by hand, and a selector that could not draw is not a
-		// reason to replace that with "the prompt failed".
-		return false, nil
+		return false
 	}
 
 	fmt.Fprintln(out)
 	if err := awsConfigure(ctx, answer, os.Stdin, out, out); err != nil {
 		fmt.Fprintf(out, "\n  %v\n", err)
-		return false, nil
+		return false
 	}
-	return true, nil
+	return true
 }
 
 // loginTargets is what can be logged into, one per SSO session, in the order the
@@ -500,9 +501,7 @@ func preflight(
 			// Two different failures with two different answers: nothing configured
 			// at all is a setup, an expired session is a login.
 			if session.summary == "no credentials" {
-				if configured, err := offerSetup(ctx, ask, out); err != nil {
-					return nil, nil, err
-				} else if configured {
+				if offerSetup(ctx, ask, out) {
 					session, profiles = checkAWSSession(ctx, checkIdentity)
 				}
 			} else if loggedIn, err := offerLogin(ctx, ask, out, loginTargets(resolved)); err != nil {

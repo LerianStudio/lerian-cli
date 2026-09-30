@@ -231,7 +231,7 @@ func TestPreflightDoesNotGateOnGit(t *testing.T) {
 	layout := layoutFor(t)
 
 	var out bytes.Buffer
-	_, _, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, true)
+	preflight(context.Background(), nil, &out, layout, sourceFlag, true)
 
 	if strings.Contains(out.String(), "git") {
 		t.Errorf("a run was gated on git, which only init uses:\n%s", out.String())
@@ -335,7 +335,7 @@ func TestThePreflightAsksWhetherTheOperatorIsLoggedIn(t *testing.T) {
 	t.Cleanup(func() { checkIdentity = previous })
 
 	var out bytes.Buffer
-	_, _, _ = preflight(context.Background(), nil, &out, layout, sourceFlag, false)
+	preflight(context.Background(), nil, &out, layout, sourceFlag, false)
 
 	if !strings.Contains(out.String(), "aws session") {
 		t.Errorf("the preflight never asked whether there is a session:\n%s", out.String())
@@ -629,7 +629,7 @@ func TestTheNoAWSCallClaimIsOnlyMadeWhereItHolds(t *testing.T) {
 	ask, _ := selectorFor(t, "")
 
 	var out bytes.Buffer
-	_, _, _ = preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+	preflight(context.Background(), ask, &out, layout, sourceFlag, false)
 
 	if strings.Contains(out.String(), "No AWS call") {
 		t.Errorf("the preflight claimed it made no AWS call, having just made several:\n%s", out.String())
@@ -805,7 +805,7 @@ func TestNoAWSConfigIsOfferedASetup(t *testing.T) {
 	ask, _ := selectorFor(t, keyEnterSeq)
 
 	var out bytes.Buffer
-	_, _, _ = preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+	preflight(context.Background(), ask, &out, layout, sourceFlag, false)
 
 	if len(attempted) != 1 {
 		t.Fatalf("ran %v, want one setup", attempted)
@@ -838,7 +838,7 @@ func TestAnAccessKeyIsTheOtherWayIn(t *testing.T) {
 	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq)
 
 	var out bytes.Buffer
-	_, _, _ = preflight(context.Background(), ask, &out, layout, sourceFlag, false)
+	preflight(context.Background(), ask, &out, layout, sourceFlag, false)
 
 	if len(attempted) != 1 || attempted[0] != "keys" {
 		t.Errorf("ran %v, want the access-key setup", attempted)
