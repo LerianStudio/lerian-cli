@@ -359,14 +359,14 @@ func TestNoConfiguredAccountSendsTheOperatorToInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolved := []infra.ResolvedProfile{
-		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
-	}
-
 	ask, painted := selectorFor(t, keyEnterSeq)
 	opts := options{}
 
-	err = guidedRun(context.Background(), infra.Catalog{}, &opts, ask, layout, resolved, nil)
+	// No profiles and no sections: nothing to offer from either side. A usable
+	// profile here would have been offered as an account to set up, and the run
+	// would have called the real init — which is what this test used to do while
+	// claiming to cover the empty case.
+	err = guidedRun(context.Background(), infra.Catalog{}, &opts, ask, layout, nil, nil)
 
 	if err == nil {
 		t.Fatal("a run was offered an account it cannot deploy into")
@@ -374,7 +374,7 @@ func TestNoConfiguredAccountSendsTheOperatorToInit(t *testing.T) {
 	if !strings.Contains(err.Error(), "lerian infra init") {
 		t.Errorf("the error does not say how to configure one: %v", err)
 	}
-	if strings.Contains(painted.String(), "Which account") {
+	if strings.Contains(painted.String(), "Which AWS account") {
 		t.Errorf("a question was asked that had no answer:\n%s", painted.String())
 	}
 }
@@ -612,7 +612,7 @@ func TestSigningOutLogsBackIn(t *testing.T) {
 	// asked afresh — which accounts are reachable has just changed.
 	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 
-	environment, err := askForAccount(context.Background(), ask, &out, layout, resolved)
+	environment, _, err := askForAccount(context.Background(), ask, &out, layout, resolved)
 	if err != nil {
 		t.Fatalf("askForAccount = %v\n%s", err, out.String())
 	}
@@ -692,7 +692,7 @@ func TestChoosingAnUnsetAccountConfiguresIt(t *testing.T) {
 	var out bytes.Buffer
 	ask, _ := selectorFor(t, keyEnterSeq)
 
-	environment, err := askForAccount(context.Background(), ask, &out, layout, resolved)
+	environment, _, err := askForAccount(context.Background(), ask, &out, layout, resolved)
 	if err != nil {
 		t.Fatalf("askForAccount = %v\n%s", err, out.String())
 	}
@@ -765,5 +765,177 @@ func TestAmbientCredentialsAreNamedInTheList(t *testing.T) {
 	// And they map to the environment whose section says "no profile".
 	if got, ok := environmentForProfile(layout, "", "111122223333"); !ok || got != "dev" {
 		t.Errorf("environmentForProfile = %q,%v — want dev", got, ok)
+	}
+}
+
+// A dry run makes no AWS call, so it has no resolved profiles — and the account
+// list was built entirely from those. The question became an error saying no
+// section names a reachable account, which is false: the sections are right
+// there, and nothing went looking.
+//
+// What a dry run can know is what the file says, so that is what it offers.
+func TestADryRunOffersTheConfiguredAccounts(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+		"prd": "account_id = 999988887777\nregion = us-east-1\nprofile = production",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{dryRun: true}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	// No resolved profiles, which is what a dry run has.
+	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, nil, nil); err != nil {
+		t.Fatalf("a dry run could not choose anything: %v\n%s", err, painted.String())
+	}
+
+	if !strings.Contains(painted.String(), "111122223333") {
+		t.Errorf("the configured accounts were not offered:\n%s", painted.String())
+	}
+	if opts.environment == "" {
+		t.Errorf("nothing was chosen:\n%s", painted.String())
+	}
+}
+
+// With no profiles and no sections either, there is genuinely nothing — and the
+// error says which of the two it is.
+func TestNothingConfiguredAndNothingResolvedSaysSo(t *testing.T) {
+	layout, err := infra.NewLayout(fakeCheckout(t, "", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ask, _ := selectorFor(t, keyEnterSeq)
+	opts := options{}
+
+	err = guidedRun(context.Background(), infra.Catalog{}, &opts, ask, layout, nil, nil)
+
+	if err == nil {
+		t.Fatal("an empty checkout with no credentials offered something")
+	}
+	if !strings.Contains(err.Error(), "lerian infra init") {
+		t.Errorf("the error does not say how to start: %v", err)
+	}
+}
+
+// A profile backed by an access key has no SSO session to revive, so offering
+// `aws sso login --profile x` sends somebody to run a command that cannot work
+// for them. Its own failure is the useful thing to show.
+func TestAnAccessKeyProfileIsNotOfferedAnSSOLogin(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = keys",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	called := false
+	previous := ssoLogin
+	ssoLogin = func(context.Context, infra.SSOTarget, io.Reader, io.Writer, io.Writer) error {
+		called = true
+		return nil
+	}
+	t.Cleanup(func() { ssoLogin = previous })
+
+	resolved := []infra.ResolvedProfile{{
+		// In ~/.aws/credentials and nowhere else: an access key, no SSO.
+		Profile: infra.AWSProfile{Name: "keys", Source: "credentials"},
+		Err:     errors.New("the security token included in the request is expired"),
+	}}
+
+	ask, _ := selectorFor(t, keyEnterSeq)
+	var out bytes.Buffer
+
+	_, _, err = askForAccount(context.Background(), ask, &out, layout, resolved)
+
+	if called {
+		t.Error("an SSO login was offered for a profile that has no SSO session")
+	}
+	if err == nil {
+		t.Fatal("a profile that cannot be used was accepted")
+	}
+	if !strings.Contains(err.Error(), "token") {
+		t.Errorf("the error does not carry what AWS said: %v", err)
+	}
+	if !strings.Contains(err.Error(), "aws configure") {
+		t.Errorf("the error does not say how to fix an access key: %v", err)
+	}
+}
+
+// The profile that was chosen is the profile the run uses.
+//
+// The environment is found by account, and a section may name a different
+// profile that reaches the same one. Returning only the environment meant the
+// run then read that section's profile — so picking the working profile A could
+// still run as the expired profile B, with nothing on screen to say so.
+func TestTheChosenProfileIsTheOneTheRunUses(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = written-in-the-file",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A different profile, reaching the same account.
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "the-one-chosen"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, resolved, nil); err != nil {
+		t.Fatalf("guidedRun = %v", err)
+	}
+
+	if opts.environment != "dev" {
+		t.Errorf("environment = %q", opts.environment)
+	}
+	if opts.profile != "the-one-chosen" {
+		t.Errorf("the run would use %q, but %q was chosen", opts.profile, "the-one-chosen")
+	}
+}
+
+// Without the interactive flow there is nothing chosen, and the file decides —
+// which is what a scripted run has always done.
+func TestAScriptedRunKeepsTheProfileFromTheFile(t *testing.T) {
+	opts := options{environment: "dev"}
+
+	if opts.profile != "" {
+		t.Errorf("a scripted run carries a chosen profile: %q", opts.profile)
+	}
+}
+
+// And the chosen profile reaches the configuration the run uses.
+//
+// Storing it on the options is only half the job: the account guard, the
+// credential resolution and every terraform process read EnvConfig.Profile, so
+// the choice has to land there or it changes nothing.
+func TestTheChosenProfileOverridesTheFile(t *testing.T) {
+	config := infra.EnvConfig{Environment: "dev", AccountID: "111122223333", Profile: "written-in-the-file"}
+
+	withChoice := applyChosenProfile(config, "the-one-chosen")
+	if withChoice.Profile != "the-one-chosen" {
+		t.Errorf("profile = %q, want the chosen one", withChoice.Profile)
+	}
+	// Everything else is the file's.
+	if withChoice.AccountID != "111122223333" {
+		t.Errorf("the account came from somewhere else: %q", withChoice.AccountID)
+	}
+
+	// A scripted run chooses nothing and the file stands.
+	untouched := applyChosenProfile(config, "")
+	if untouched.Profile != "written-in-the-file" {
+		t.Errorf("a scripted run had its profile replaced with %q", untouched.Profile)
 	}
 }
