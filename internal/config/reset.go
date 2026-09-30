@@ -50,13 +50,17 @@ func Describe() (string, error) {
 		return fmt.Sprintf("  file     %s\n  state    nothing configured yet\n", path), nil
 	}
 
-	cfg, err := Load()
-	if err != nil {
-		return "", err
-	}
-
 	var out strings.Builder
 	fmt.Fprintf(&out, "  file      %s\n", path)
+
+	// A file too damaged to parse is the one somebody most needs to reset, so this
+	// describes it rather than failing on it: the path is the part that matters,
+	// and "cannot be read" is a truthful description of what is there.
+	cfg, err := Load()
+	if err != nil {
+		fmt.Fprintf(&out, "  state     cannot be read: %v\n", err)
+		return out.String(), nil
+	}
 
 	checkout := cfg.TemplatesCheckout
 	if checkout == "" {

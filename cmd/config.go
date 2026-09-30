@@ -31,8 +31,12 @@ else, and nothing belonging to another tool.`,
 }
 
 var configShowCmd = &cobra.Command{
-	Use:          "show",
-	Short:        "Print the configuration and where it lives",
+	Use:   "show",
+	Short: "Print the configuration and where it lives",
+	// Nothing here takes an argument, and without this cobra accepts and ignores
+	// them — so `lerian config reset production`, which reads like "reset the
+	// production profile", would quietly remove everything instead.
+	Args:         cobra.NoArgs,
 	RunE:         func(cmd *cobra.Command, _ []string) error { return showConfig(cmd.OutOrStdout()) },
 	SilenceUsage: true,
 }
@@ -46,6 +50,7 @@ time: where the templates are, which account to deploy into.
 It takes that file and nothing else. ~/.aws belongs to the AWS CLI and every
 tool on this machine reads it; a templates checkout is a git clone you made,
 possibly with work in it. Neither is this command's to delete.`,
+	Args:         cobra.NoArgs,
 	RunE:         func(cmd *cobra.Command, _ []string) error { return resetConfig(cmd.OutOrStdout()) },
 	SilenceUsage: true,
 }

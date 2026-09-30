@@ -154,3 +154,57 @@ func TestDescribeOnAFreshMachineSaysItIsFresh(t *testing.T) {
 		t.Errorf("a machine with no configuration is described as:\n%s", described)
 	}
 }
+
+// A configuration too damaged to parse is the one somebody most needs to reset,
+// and describing it must not be what stops them.
+//
+// Describe used to load the file, so invalid YAML came back as an error — and the
+// reset command printed the description before removing anything, so the command
+// that exists to recover from a broken config refused to run because the config
+// was broken.
+func TestDescribeReadsPastAFileItCannotParse(t *testing.T) {
+	atHome(t)
+
+	path, _ := GetConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("this: is: not: yaml: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	described, err := Describe()
+	if err != nil {
+		t.Fatalf("Describe on a damaged file = %v", err)
+	}
+	if !strings.Contains(described, path) {
+		t.Errorf("the description does not name the file:\n%s", described)
+	}
+	if !strings.Contains(described, "cannot be read") {
+		t.Errorf("the description does not say the file is damaged:\n%s", described)
+	}
+}
+
+// And Reset removes it, because removing is exactly what it is for.
+func TestResetRemovesAFileItCannotParse(t *testing.T) {
+	atHome(t)
+
+	path, _ := GetConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{{{\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := Reset()
+	if err != nil {
+		t.Fatalf("Reset on a damaged file = %v", err)
+	}
+	if len(removed) != 1 {
+		t.Errorf("Reset removed %v", removed)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("the damaged file survived: %v", err)
+	}
+}
