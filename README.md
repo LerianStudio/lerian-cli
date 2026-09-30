@@ -326,6 +326,34 @@ start-up, because `aws sso logout` clears a token in `~/.aws/sso/cache` that
 **every** AWS client on the machine reads — another terminal, Terraform, anything
 on the shared config.
 
+### Typing only where there is nothing to choose from
+
+Anything with a known set of answers is a list. The region is one:
+
+```
+  Which AWS region will the infrastructure be created in?
+  Every resource lands here. Moving later means recreating them.
+  ❯ us-east-1       N. Virginia
+    us-east-2       Ohio
+    sa-east-1       São Paulo
+    …
+    another region  type a code this list does not have — AWS adds regions, this copy ages
+```
+
+The place is named beside the code, because `sa-east-1` is not where most people
+know São Paulo to be. The last row is the way past the list, and it exists because
+the list is a copy that ages — AWS adds regions and this file does not hear about
+it. What is typed there is checked for shape, not for membership, so a region
+newer than this copy is accepted and a typo is not.
+
+The same applies to the Kubernetes API address once it has been detected: use what
+was found, or give another. Typing it back character by character is the work the
+detection just did.
+
+What stays typed is what has no set to offer: the path to the templates checkout —
+which is editable, with Tab completing directories — and the egress address when
+detection fails outright.
+
 ### The first run on an account, and every one after
 
 There are two shapes to a run, and what separates them is whether the state

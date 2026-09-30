@@ -689,11 +689,7 @@ func resolveCredentials(
 			// operator's decision, and offering the region we happen to use makes the
 			// most likely keypress create everything in Ohio. The profile's own region
 			// is a suggestion worth making; ours is not.
-			suggestion := region
-			region, err = ask.ask(
-				"Which AWS region will the infrastructure be created in?",
-				"Every resource lands here. Moving later means recreating them.",
-				suggestion, "--region")
+			region, err = askForRegion(ask, region)
 			if err != nil {
 				return "", "", caller, err
 			}
@@ -780,7 +776,7 @@ func resolveCredentials(
 			effective = entry.Profile.Region
 		}
 		if effective == "" {
-			effective, err = ask.text("AWS region", "", "--region")
+			effective, err = askForRegion(ask, "")
 			if err != nil {
 				return "", "", caller, err
 			}
@@ -831,15 +827,24 @@ func resolveAPICIDR(ctx context.Context, opts initOptions, ask *prompter) (strin
 			// template would write "2001:db8::1/32".
 			return validateBareAddress(detected)
 		}
-		answer, err := ask.ask(
+		answer, err := ask.pick(
 			"Which address may reach the Kubernetes API?",
-			"Only this address can talk to the cluster's control plane. "+
-				"The default is what this machine appears to come from.",
-			detected, "--api-cidr")
+			"Only this address can talk to the cluster's control plane.",
+			"--api-cidr", egressOptions(detected), detected)
 		if err != nil {
 			return "", err
 		}
-		return validateBareAddress(answer)
+		if answer != typedAddressChoice {
+			return validateBareAddress(answer)
+		}
+
+		typed, err := ask.ask(
+			"Which address may reach the Kubernetes API?",
+			"A public address, no mask.", "", "--api-cidr")
+		if err != nil {
+			return "", err
+		}
+		return validateBareAddress(typed)
 	}
 	return validateBareAddress(value)
 }
