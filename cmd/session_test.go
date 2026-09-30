@@ -190,3 +190,88 @@ func TestTheChosenChildIsDispatchedAsAPath(t *testing.T) {
 		t.Errorf("dispatched %v, want the full path", ran)
 	}
 }
+
+// A command that does something of its own AND groups others still offers the
+// group.
+//
+// config prints the configuration and owns reset. The rule as written only
+// drilled into commands with no handler, so picking config from the menu printed
+// the configuration and came back — and reset, the only other thing it can do,
+// was unreachable from the menu entirely.
+//
+// The parent is not listed beside its children: `lerian config` and
+// `lerian config show` are the same action, and two rows for one action is a
+// choice that decides nothing.
+func TestARunnableParentStillOffersItsChildren(t *testing.T) {
+	root := &cobra.Command{Use: "lerian"}
+	config := &cobra.Command{
+		Use:   "config",
+		Short: "Show or reset what this tool remembers",
+		Run:   func(*cobra.Command, []string) {},
+	}
+	config.AddCommand(&cobra.Command{Use: "show", Short: "Print it", Run: func(*cobra.Command, []string) {}})
+	config.AddCommand(&cobra.Command{Use: "reset", Short: "Forget everything", Run: func(*cobra.Command, []string) {}})
+	root.AddCommand(config)
+
+	if !needsChild(root, "config") {
+		t.Fatal("a command with subcommands did not offer them")
+	}
+
+	var offered []string
+	for _, choice := range childChoices(root, "config") {
+		offered = append(offered, choice.Value)
+	}
+
+	if len(offered) != 2 {
+		t.Errorf("offered %v, want one row per subcommand and no duplicate of the parent", offered)
+	}
+	for _, want := range []string{"show", "reset"} {
+		found := false
+		for _, value := range offered {
+			if value == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("offered %v, want %q among them", offered, want)
+		}
+	}
+}
+
+// A command with no children is dispatched, not turned into a menu of one.
+func TestACommandWithNoChildrenIsJustRun(t *testing.T) {
+	root := &cobra.Command{Use: "lerian"}
+	root.AddCommand(&cobra.Command{Use: "version", Short: "Print version", Run: func(*cobra.Command, []string) {}})
+
+	if needsChild(root, "version") {
+		t.Error("a command with no subcommands was turned into a menu")
+	}
+}
+
+// The cursor starts on the first row, so a submenu that opens on the destructive
+// command makes the most likely keypress the one that removes things. Cobra sorts
+// its subcommands alphabetically, and "reset" sorts before "show".
+func TestTheDestructiveChildIsNotWhereTheCursorOpens(t *testing.T) {
+	root := &cobra.Command{Use: "lerian"}
+	config := &cobra.Command{Use: "config", Short: "Show or reset", Run: func(*cobra.Command, []string) {}}
+	reset := &cobra.Command{
+		Use:         "reset",
+		Short:       "Forget everything",
+		Annotations: map[string]string{menuAnnotation: menuLast},
+		Run:         func(*cobra.Command, []string) {},
+	}
+	config.AddCommand(&cobra.Command{Use: "show", Short: "Print it", Run: func(*cobra.Command, []string) {}}, reset)
+	root.AddCommand(config)
+
+	choices := childChoices(root, "config")
+
+	if len(choices) != 2 {
+		t.Fatalf("got %d rows", len(choices))
+	}
+	if choices[0].Value == "reset" {
+		t.Error("the submenu opens on the command that removes things")
+	}
+	if choices[len(choices)-1].Value != "reset" {
+		t.Errorf("reset is not last: %+v", choices)
+	}
+}

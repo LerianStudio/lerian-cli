@@ -75,14 +75,23 @@ func menuAsk(root *cobra.Command) func() (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if child == "" {
+			// The parent's own action.
+			return chosen, nil
+		}
 		return chosen + " " + child, nil
 	}
 }
 
-// needsChild reports whether name is a command that only groups others.
+// needsChild reports whether picking this command should offer a second menu.
+//
+// Any command with subcommands does, whether or not it does something itself.
+// config does both — it prints the configuration and owns reset — and the earlier
+// rule, which drilled in only when there was no handler, left reset unreachable
+// from the menu entirely.
 func needsChild(root *cobra.Command, name string) bool {
 	command := findChild(root, name)
-	return command != nil && !command.Runnable() && command.HasAvailableSubCommands()
+	return command != nil && command.HasAvailableSubCommands()
 }
 
 // childChoices is the menu for a command's subcommands.
@@ -92,7 +101,16 @@ func childChoices(root *cobra.Command, name string) []infracli.Choice {
 		return nil
 	}
 
+	// The children only. A runnable parent is not listed beside them: `lerian
+	// config` and `lerian config show` do the same thing, and two rows for one
+	// action is a choice that decides nothing.
+	//
+	// The assumption is that a parent's own action has a child that covers it —
+	// true here, and the shape to keep: a command whose bare form does something no
+	// subcommand does would be unreachable from this menu.
 	choices := make([]infracli.Choice, 0, len(parent.Commands()))
+
+	var last []infracli.Choice
 	for _, child := range parent.Commands() {
 		if child.Hidden || !child.IsAvailableCommand() {
 			continue
@@ -100,13 +118,18 @@ func childChoices(root *cobra.Command, name string) []infracli.Choice {
 		if child.Name() == "help" || child.Name() == "completion" {
 			continue
 		}
-		choices = append(choices, infracli.Choice{
+		choice := infracli.Choice{
 			Value: child.Name(),
 			Label: child.Name(),
 			Note:  child.Short,
-		})
+		}
+		if child.Annotations[menuAnnotation] == menuLast {
+			last = append(last, choice)
+			continue
+		}
+		choices = append(choices, choice)
 	}
-	return choices
+	return append(choices, last...)
 }
 
 func findChild(root *cobra.Command, name string) *cobra.Command {

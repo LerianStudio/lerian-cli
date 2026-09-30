@@ -91,6 +91,11 @@ and access your data.`,
 const (
 	menuAnnotation = "menu"
 	menuSkip       = "skip"
+	// menuLast puts a command at the end of its submenu. The cursor starts on the
+	// first row, and a list that opens on the command that removes things makes the
+	// most likely keypress the destructive one — cobra sorts alphabetically, which
+	// is how "reset" ended up above "show".
+	menuLast = "last"
 )
 
 // menuChoices is the command list the menu offers: what cobra knows, minus the

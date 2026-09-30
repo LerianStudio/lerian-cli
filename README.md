@@ -645,6 +645,18 @@ removes caches and run logs, and it says the same thing about AWS.
 It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
 refuses rather than guessing.
 
+From the menu, picking `config` offers what it can do:
+
+```
+  Which config command?
+  ❯ show   Print the configuration and where it lives
+    reset  Forget everything, as if the CLI had never run here
+```
+
+`reset` is last on purpose: the cursor starts on the first row, and a list that
+opens on the command that removes things makes the most likely keypress the
+destructive one.
+
 ## Configuration
 
 ### What the CLI remembers, and how to forget it
@@ -666,6 +678,18 @@ removes caches and run logs, and it says the same thing about AWS.
 
 It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
 refuses rather than guessing.
+
+From the menu, picking `config` offers what it can do:
+
+```
+  Which config command?
+  ❯ show   Print the configuration and where it lives
+    reset  Forget everything, as if the CLI had never run here
+```
+
+`reset` is last on purpose: the cursor starts on the first row, and a list that
+opens on the command that removes things makes the most likely keypress the
+destructive one.
 
 ## Configuration File
 

@@ -44,6 +44,9 @@ var configShowCmd = &cobra.Command{
 var configResetCmd = &cobra.Command{
 	Use:   "reset",
 	Short: "Forget everything, as if the CLI had never run here",
+	// Last in the submenu: the cursor starts on the first row, and this is the one
+	// that removes things.
+	Annotations: map[string]string{menuAnnotation: menuLast},
 	Long: `Removes ~/.lerian/config.yaml, so the next run asks what it asked the first
 time: where the templates are, which account to deploy into.
 
