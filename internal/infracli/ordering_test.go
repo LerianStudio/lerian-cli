@@ -228,6 +228,11 @@ func configuredLayout(t *testing.T) infra.Layout {
 		"stg": "account_id = 444455556666\nregion = us-east-1\nprofile = stg-profile",
 		"prd": "account_id = 999988887777\nregion = us-east-1\nprofile = prd-profile",
 	})
+	// Bootstrapped, which is the state these tests are about: with no state
+	// backend the target list offers bootstrap and nothing else, by design.
+	for _, environment := range infra.Environments {
+		writeBackendFile(t, checkout, environment)
+	}
 	layout, err := infra.NewLayout(checkout)
 	if err != nil {
 		t.Fatal(err)
@@ -697,11 +702,17 @@ func TestChoosingAnUnsetAccountConfiguresIt(t *testing.T) {
 		t.Fatalf("askForAccount = %v\n%s", err, out.String())
 	}
 
+	// Everything already known is filled in — but not the region: init asks for
+	// that one, because where every resource is created is a decision rather than
+	// something to inherit from a profile configured for something else.
 	joined := strings.Join(got, " ")
-	for _, want := range []string{"--profile other", "--account 999988887777", "--region sa-east-1", "--env stg"} {
+	for _, want := range []string{"--profile other", "--account 999988887777", "--env stg"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("init was run as %q, missing %q", joined, want)
 		}
+	}
+	if strings.Contains(joined, "--region") {
+		t.Errorf("init was given a region instead of asking for one: %q", joined)
 	}
 	if choice.environment != "stg" {
 		t.Errorf("environment = %q, want the slot it was configured into", choice.environment)
@@ -1084,5 +1095,351 @@ func TestADryRunChoosesNoProfile(t *testing.T) {
 	config := infra.EnvConfig{Profile: "from-the-file"}
 	if applyChosenProfile(config, opts.profile, opts.profileChosen).Profile != "from-the-file" {
 		t.Error("the profile the section declares was replaced")
+	}
+}
+
+// Where the infrastructure lands is part of choosing where to deploy, so the row
+// says it. An account is a place, and so is a region; naming one without the
+// other describes half the destination.
+func TestTheAccountRowNamesTheRegion(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	for _, opt := range accountOptions(layout, resolved) {
+		if opt.value != "sandbox" {
+			continue
+		}
+		if !strings.Contains(opt.note, "sa-east-1") {
+			t.Errorf("the row does not say where the resources land: %q", opt.note)
+		}
+		return
+	}
+	t.Error("the configured account is not in the list")
+}
+
+// And the dry-run list, built from the file rather than from identities, says it
+// too.
+func TestTheDryRunListNamesTheRegion(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq)
+	if _, err := askFromConfig(ask, layout); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(painted.String(), "sa-east-1") {
+		t.Errorf("the dry-run list does not name the region:\n%s", painted.String())
+	}
+}
+
+// Setting up a new account does not inherit the region from the profile in
+// silence. Where everything is created is a decision, and the profile's region is
+// a suggestion about what to type — not an answer given on somebody's behalf.
+func TestSettingUpAnAccountAsksForTheRegion(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = taken",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var args []string
+	previous := runInitCommand
+	runInitCommand = func(_ context.Context, given []string, _, _ io.Writer) error {
+		args = given
+		writeEnvConfig(t, checkout, map[string]string{
+			"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = taken",
+			"stg": "account_id = 999988887777\nregion = eu-west-1\nprofile = fresh",
+		})
+		return nil
+	}
+	t.Cleanup(func() { runInitCommand = previous })
+
+	// The profile declares a region, which used to be passed straight through.
+	chosen := infra.ResolvedProfile{
+		Profile: infra.AWSProfile{Name: "fresh", Region: "ap-northeast-1"},
+		Caller:  infra.Caller{Account: "999988887777"},
+	}
+
+	if _, err := configureAccount(context.Background(), &bytes.Buffer{}, layout, chosen); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(strings.Join(args, " "), "--region") {
+		t.Errorf("the region was decided from the profile instead of asked: %v", args)
+	}
+}
+
+// The confirmation before a write names the region too. It is the last line read
+// before typing yes, and "which account" without "where in it" is half the
+// destination — an apply into the right account and the wrong region creates a
+// second copy of everything, in a place nobody is looking at.
+func TestTheConfirmationNamesWhereItLands(t *testing.T) {
+	config := infra.EnvConfig{Environment: "dev", AccountID: "111122223333", Region: "sa-east-1"}
+
+	line := destinationLine(config)
+
+	for _, want := range []string{"dev", "111122223333", "sa-east-1"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the confirmation does not name %q: %q", want, line)
+		}
+	}
+}
+
+// "deploys as dev" is our bookkeeping showing through. The name picks
+// backend/<env>.hcl and envs/<env>.tfvars, which matters to this tool and to
+// nobody choosing where to deploy — they picked an account, in a region, and that
+// is the whole of what they decided.
+func TestTheRowDoesNotNameOurEnvironment(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	for _, opt := range accountOptions(layout, resolved) {
+		if opt.value != "sandbox" {
+			continue
+		}
+		if strings.Contains(opt.note, "dev") {
+			t.Errorf("the row shows our environment name: %q", opt.note)
+		}
+		// What it does say is where the resources land.
+		for _, want := range []string{"111122223333", "sa-east-1"} {
+			if !strings.Contains(opt.note, want) {
+				t.Errorf("the row does not name %q: %q", want, opt.note)
+			}
+		}
+		return
+	}
+	t.Error("the configured account is not in the list")
+}
+
+// Unless it is the only thing telling two rows apart. Two environments in one
+// account is a real configuration — a dev and a staging sharing a sandbox — and
+// then "account X in region Y" describes both, so the name earns its place.
+func TestTheEnvironmentAppearsOnlyWhenItDisambiguates(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = one",
+		"stg": "account_id = 111122223333\nregion = sa-east-1\nprofile = two",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "one"}, Caller: infra.Caller{Account: "111122223333"}},
+		{Profile: infra.AWSProfile{Name: "two"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+
+	options := accountOptions(layout, resolved)
+
+	var named int
+	for _, opt := range options {
+		if strings.Contains(opt.note, "dev") || strings.Contains(opt.note, "stg") {
+			named++
+		}
+	}
+	if named != 2 {
+		t.Errorf("two rows reach the same account and %d name which is which:\n%+v", named, options)
+	}
+}
+
+// The dry-run list is built from the file, where the sections are named dev, stg
+// and prd — but that is the key of the section, not the name of the destination.
+// The row reads as the account it is.
+func TestTheDryRunRowsAreNotLabeledWithOurNames(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = sandbox",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq)
+	chosen, err := askFromConfig(ask, layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The answer is still the environment, because that is what the rest of the run
+	// needs — it is the label that changed.
+	if chosen != "dev" {
+		t.Errorf("askFromConfig returned %q, want the environment the run needs", chosen)
+	}
+	for _, line := range strings.Split(painted.String(), "\n") {
+		if strings.Contains(line, "sandbox") && strings.Contains(line, "dev") {
+			t.Errorf("the row is labeled with our environment name: %q", strings.TrimSpace(line))
+		}
+	}
+	if !strings.Contains(painted.String(), "sandbox") {
+		t.Errorf("the row does not name the profile it would use:\n%s", painted.String())
+	}
+}
+
+// Until the state backend exists, bootstrap is the only thing that can run:
+// everything else needs a bucket to keep its state in, and bootstrap is what
+// creates it. The list says so instead of letting somebody pick a stack that
+// fails at terraform init.
+func TestBeforeBootstrapOnlyBootstrapIsOffered(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	// No backend/dev.hcl in this checkout.
+	options := runTargetOptions(catalog, layout, "dev")
+
+	byValue := map[string]option{}
+	for _, opt := range options {
+		byValue[opt.value] = opt
+	}
+
+	if byValue["bootstrap"].disabled {
+		t.Error("bootstrap cannot be chosen, and it is the only thing that can run")
+	}
+	for _, name := range []string{"infra-base", "midaz", "all"} {
+		if !byValue[name].disabled {
+			t.Errorf("%s was offered with no state backend to write to", name)
+		}
+		if !strings.Contains(byValue[name].note, "bootstrap") {
+			t.Errorf("%s does not say what is missing: %q", name, byValue[name].note)
+		}
+	}
+}
+
+// Once it exists, everything is on the table.
+func TestAfterBootstrapEverythingIsOffered(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeBackendFile(t, checkout, "dev")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	for _, opt := range runTargetOptions(catalog, layout, "dev") {
+		if opt.disabled {
+			t.Errorf("%s is not offered although the backend exists: %q", opt.value, opt.note)
+		}
+	}
+}
+
+func writeBackendFile(t *testing.T, checkout, environment string) {
+	t.Helper()
+
+	path := filepath.Join(checkout, "examples", "aws", "backend", environment+".hcl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "bucket         = \"tfstate-" + environment + "-111122223333\"\n" +
+		"region         = \"us-east-1\"\ndynamodb_table = \"tfstate-lock-" + environment + "\"\nencrypt = true\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A target whose tfvars were never written cannot run, and the list said nothing.
+//
+// init writes tfvars for the targets it was given — infra-base, usually — and the
+// run menu offers the whole catalog. Choosing a product nobody configured
+// spends two more answers and then fails with "4 of 4 stacks are NOT READY", which
+// is a true message arriving three steps too late.
+func TestATargetWithNoVariablesSaysSo(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeBackendFile(t, checkout, "dev")
+	// infra-base is configured; midaz is in the catalog and was never set up.
+	writeVarFile(t, checkout, "infra-base/vpc", "dev")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	byValue := map[string]option{}
+	for _, opt := range runTargetOptions(catalog, layout, "dev") {
+		byValue[opt.value] = opt
+	}
+
+	if !strings.Contains(byValue["midaz"].note, "not configured") {
+		t.Errorf("midaz has no variables and the row does not say so: %q", byValue["midaz"].note)
+	}
+	if byValue["infra-base"].disabled {
+		t.Errorf("infra-base is configured and was not offered: %q", byValue["infra-base"].note)
+	}
+	// Not disabled: choosing it is how it gets configured, the same as an account
+	// that is not set up yet.
+	if byValue["midaz"].disabled {
+		t.Error("a target that only needs configuring was offered as unusable")
+	}
+}
+
+func writeVarFile(t *testing.T, checkout, root, environment string) {
+	t.Helper()
+
+	path := filepath.Join(checkout, "examples", "aws", filepath.FromSlash(root), "envs", environment+".tfvars")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("environment = \""+environment+"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Two sections reaching the same account, region and profile read identically in
+// the dry-run list too, and there the environment is the only thing that tells
+// them apart — the same rule the account rows follow.
+func TestTheDryRunListDisambiguatesWhenItMust(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = same",
+		"stg": "account_id = 111122223333\nregion = sa-east-1\nprofile = same",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq)
+	if _, err := askFromConfig(ask, layout); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"dev", "stg"} {
+		if !strings.Contains(painted.String(), name) {
+			t.Errorf("two identical rows and %q is not shown to tell them apart:\n%s", name, painted.String())
+		}
 	}
 }

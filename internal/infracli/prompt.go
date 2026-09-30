@@ -57,13 +57,6 @@ func (p *prompter) selecting() bool {
 	return p.interactive && !plainSelection() && !narrowTerminal(p.out)
 }
 
-// text asks for a value with no explanation. Prefer ask: a bare question assumes
-// the reader already knows why it is being asked, and the people running this are
-// often meeting this infrastructure for the first time.
-func (p *prompter) text(question, fallback, flagName string) (string, error) {
-	return p.ask(question, "", fallback, flagName)
-}
-
 // ask puts a question with its purpose.
 //
 // The shape is fixed on purpose: the question in bold on its own line, one line of

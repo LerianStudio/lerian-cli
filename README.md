@@ -292,11 +292,26 @@ It then asks which account, every run:
 ```
   Which AWS account?
   Everything is created there. The state backend and the sizing follow from it.
-  ❯ lerian-sandbox           account 524121347244  ·  deploys as dev
+  ❯ lerian-sandbox           account 524121347244  ·  us-east-2
     default                  session expired — choose to log in
     other-profile            account 239025757440  ·  not set up here yet — choosing it sets it up
     sign in as someone else  ends the session for every AWS tool on this machine
 ```
+
+The region is named beside the account, because an account is a place and so is a
+region: naming one without the other describes half of where the resources land.
+The environment is not named at all — `dev` picks `backend/dev.hcl` and
+`envs/dev.tfvars`, which matters to this tool and to nobody choosing where to
+deploy. It appears only where two rows reach the same account in the same region,
+and the name is the one thing telling them apart.
+It is on the confirmation before an apply for the same reason — an apply into the
+right account and the wrong region does not fail, it creates a second copy of
+everything somewhere nobody is looking.
+
+Setting up a new account asks for the region rather than taking it from the
+profile. The profile's own region is offered as the suggestion; where every
+resource is created is not something to inherit from a profile configured for
+something else.
 
 Three kinds of row, and every one of them is choosable:
 
@@ -310,6 +325,72 @@ different identity. It is a row rather than something the command does at
 start-up, because `aws sso logout` clears a token in `~/.aws/sso/cache` that
 **every** AWS client on the machine reads — another terminal, Terraform, anything
 on the shared config.
+
+### Typing only where there is nothing to choose from
+
+Anything with a known set of answers is a list. The region is one:
+
+```
+  Which AWS region will the infrastructure be created in?
+  Every resource lands here. Moving later means recreating them.
+  ❯ us-east-1       N. Virginia
+    us-east-2       Ohio
+    sa-east-1       São Paulo
+    …
+    another region  type a code this list does not have — AWS adds regions, this copy ages
+```
+
+The place is named beside the code, because `sa-east-1` is not where most people
+know São Paulo to be. The last row is the way past the list, and it exists because
+the list is a copy that ages — AWS adds regions and this file does not hear about
+it. What is typed there is checked for shape, not for membership, so a region
+newer than this copy is accepted and a typo is not.
+
+The same applies to the Kubernetes API address once it has been detected: use what
+was found, or give another. Typing it back character by character is the work the
+detection just did.
+
+What stays typed is what has no set to offer: the path to the templates checkout —
+which is editable, with Tab completing directories — and the egress address when
+detection fails outright.
+
+### The first run on an account, and every one after
+
+There are two shapes to a run, and what separates them is whether the state
+backend exists — `backend/<env>.hcl`, which records the S3 bucket and lock table
+the state lives in. It is written by `bootstrap`, not by `init`.
+
+**First time on an account.** Nothing exists: no section in `environments.conf`,
+no backend, no bucket. Choosing the account sets up the first, and then
+`bootstrap` is the only target offered — everything else needs somewhere to keep
+its state, and `bootstrap` is what creates it:
+
+```
+  What do you want to operate on?
+  ❯ [x] bootstrap    state bucket and lock table
+    [ ] infra-base   needs the state backend — run bootstrap first
+    [ ] midaz        needs the state backend — run bootstrap first
+```
+
+**Every run after.** The backend is there, and the whole catalog is on the
+table — with the rows saying which of them this checkout has variables for:
+
+```
+  What do you want to operate on?
+  ❯ [x] infra-base   the VPC then the cluster
+    [ ] midaz        documentdb postgres rabbitmq valkey  ·  not configured here yet
+    [ ] fetcher      documentdb rabbitmq s3 valkey        ·  not configured here yet
+```
+
+`init` writes `envs/<env>.tfvars` for the targets it is given, which is usually
+`infra-base`. The catalog lists every product, so most rows have no variables
+until somebody asks for them — and choosing one used to spend two more answers
+before failing with `4 of 4 stacks are NOT READY`, a true message arriving three
+steps late.
+
+The list used to offer everything either way, so a first run could spend two
+answers on a stack that fails at `terraform init` reporting a bucket that does not
+exist.
 
 ### A machine with nothing configured
 

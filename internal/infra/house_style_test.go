@@ -43,14 +43,19 @@ func TestNoInternalProfileNamesInAdvice(t *testing.T) {
 func walkGoFiles(t *testing.T, root string, check func(path, body string)) {
 	t.Helper()
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			// A tree this cannot read is a tree it cannot check, and failing the
+			// sweep on it would report a house-style problem that is not one.
+			return walkErr
+		}
+		if info.IsDir() {
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		body, readErr := os.ReadFile(path) //nolint:gosec // walking this repo's own source
+		body, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
@@ -67,9 +72,13 @@ func walkGoFiles(t *testing.T, root string, check func(path, body string)) {
 // and not necessarily anybody else's — and where the resources land is not
 // something to inherit from a tool's habit.
 func TestOurRegionIsNotOfferedAsTheDefault(t *testing.T) {
+	// Any spelling of "our region, pre-filled". The region list is fine — Ohio is
+	// one of AWS's, and it sits in the list where AWS puts it — what is not fine is
+	// it arriving as the answer.
 	offered := []string{
 		`suggestion = "us-east-2"`,
-		`ask.text("AWS region", "us-east-2"`,
+		`"AWS region", "us-east-2"`,
+		`region = "us-east-2"`,
 	}
 
 	walkGoFiles(t, "../infracli", func(path, body string) {

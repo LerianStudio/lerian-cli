@@ -673,7 +673,7 @@ func execute(
 		theme := newStyle(out)
 		fmt.Fprintf(out, "  %s %s\n", theme.bold(verb), theme.bold(stage.Name))
 		fmt.Fprintf(out, "    %s\n", changeSummary(create, update, destroy))
-		fmt.Fprintf(out, "    %s · account %s\n\n", config.Environment, config.AccountID)
+		fmt.Fprintf(out, "    %s\n\n", destinationLine(config))
 
 		return confirmOnStdin(out, "  type yes to continue: ")
 	}
@@ -1073,7 +1073,7 @@ func guidedRun(
 	targets, err := ask.pickMany(
 		"What do you want to operate on?",
 		"Several can be combined; they are reordered into dependency order either way.",
-		"--target", runTargetOptions(catalog), splitList(opts.target))
+		"--target", runTargetOptions(catalog, layout, opts.environment), splitList(opts.target))
 	if err != nil {
 		return err
 	}
@@ -1220,14 +1220,14 @@ func configureAccount(
 	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Setting up account "+chosen.Caller.Account))
 	fmt.Fprintf(out, "  %s\n", theme.dim("first time for this account in this checkout"))
 
-	region := chosen.Profile.Region
+	// No --region. init asks for it, always, and the profile's own region is the
+	// suggestion it offers — passing it here would answer the question on somebody's
+	// behalf, and where every resource is created is not a thing to inherit from a
+	// profile they may have configured for something else.
 	args := []string{
 		"--env", slot,
 		"--profile", chosen.Profile.Name,
 		"--account", chosen.Caller.Account,
-	}
-	if region != "" {
-		args = append(args, "--region", region)
 	}
 	if err := runInitCommand(ctx, args, out, out); err != nil {
 		return "", err
@@ -1272,6 +1272,50 @@ func applyChosenProfile(config infra.EnvConfig, profile string, chosen bool) inf
 	return config
 }
 
+// destinationLine is where a write is about to land, for the line read last
+// before typing yes.
+//
+// The region is there because an apply into the right account and the wrong
+// region does not fail — it creates a second copy of everything, somewhere nobody
+// is looking.
+func destinationLine(config infra.EnvConfig) string {
+	line := config.Environment + " · account " + config.AccountID
+	if config.Region != "" {
+		line += " · " + config.Region
+	}
+	return line
+}
+
+// destinationRegion is the region half of where a row lands, ready to append.
+func destinationRegion(layout infra.Layout, environment string) string {
+	config, err := infra.LoadEnvConfig(layout, environment)
+	if err != nil || config.Region == "" {
+		return ""
+	}
+	return "  ·  " + config.Region
+}
+
+// nameTheAmbiguous adds the environment to rows that would otherwise read the
+// same.
+//
+// Two environments in one account and one region is a real configuration — a dev
+// and a staging sharing a sandbox — and there the name is the only thing telling
+// the rows apart, so it earns its place. Everywhere else it is bookkeeping, and
+// bookkeeping in a menu is noise the reader has to learn to ignore.
+func nameTheAmbiguous(options []option) {
+	seen := map[string]int{}
+	for _, opt := range options {
+		if opt.environment != "" {
+			seen[opt.note]++
+		}
+	}
+	for index, opt := range options {
+		if opt.environment != "" && seen[opt.note] > 1 {
+			options[index].note = opt.note + "  ·  " + opt.environment
+		}
+	}
+}
+
 // environmentForProfile finds the environment whose section names this account,
 // preferring one that also names this profile.
 //
@@ -1309,12 +1353,21 @@ func askFromConfig(ask *prompter, layout infra.Layout) (string, error) {
 		if err != nil {
 			continue
 		}
-		note := "account " + config.AccountID
-		if config.Profile != "" {
-			note += " via " + config.Profile
+		// The section key is dev, stg or prd, and that is bookkeeping: the row reads
+		// as the destination it is. The value stays the environment, because that is
+		// what the rest of the run needs.
+		label := config.Profile
+		if label == "" {
+			label = "credentials in this environment"
 		}
-		choices = append(choices, option{value: name, label: name, note: note})
+
+		note := "account " + config.AccountID
+		if config.Region != "" {
+			note += "  ·  " + config.Region
+		}
+		choices = append(choices, option{value: name, label: label, note: note, environment: name})
 	}
+	nameTheAmbiguous(choices)
 
 	if len(choices) == 0 {
 		return "", fmt.Errorf("no account is configured in this checkout\n" +
@@ -1456,7 +1509,16 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 			opt.note = "session expired — choose to log in"
 		default:
 			if environment, ok := environmentForProfile(layout, entry.Profile.Name, entry.Caller.Account); ok {
-				opt.note = "account " + entry.Caller.Account + "  ·  deploys as " + environment
+				// The account and the region, which is the whole of what is being
+				// decided: an account is a place and so is a region, and naming one
+				// without the other describes half of where the resources land.
+				//
+				// Not the environment. dev, stg and prd pick backend/<env>.hcl and
+				// envs/<env>.tfvars, which matters to this tool and to nobody choosing
+				// where to deploy. It is added below, and only where two rows would
+				// otherwise read identically.
+				opt.note = "account " + entry.Caller.Account + destinationRegion(layout, environment)
+				opt.environment = environment
 			} else {
 				rank = unconfigured
 				opt.note = "account " + entry.Caller.Account + "  ·  not set up here yet — choosing it sets it up"
@@ -1471,6 +1533,7 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 	for _, r := range rows {
 		options = append(options, r.option)
 	}
+	nameTheAmbiguous(options)
 
 	// Last, because it is the answer to a different question — not "which of these"
 	// but "none of these". Offered only where there is a session to end.
@@ -1486,7 +1549,7 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 
 // runTargetOptions is the catalog --list prints, plus the two targets that are
 // not products: bootstrap, which creates the state backend, and all.
-func runTargetOptions(catalog infra.Catalog) []option {
+func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment string) []option {
 	options := make([]option, 0, 3+len(catalog.Names))
 	options = append(options,
 		option{value: "bootstrap", label: "bootstrap", note: "state bucket and lock table"},
@@ -1499,7 +1562,69 @@ func runTargetOptions(catalog infra.Catalog) []option {
 			note:  strings.Join(catalog.Products[name], " "),
 		})
 	}
-	return append(options, option{value: "all", label: "all", note: "everything, in dependency order"})
+	options = append(options, option{value: "all", label: "all", note: "everything, in dependency order"})
+
+	// A target whose tfvars were never written cannot run either, and that is a
+	// different gap with a different answer: init writes them, and it writes them
+	// for the targets it is given. The catalog lists every product; a checkout
+	// usually has variables for one or two.
+	//
+	// Said rather than disabled, because choosing it is how it gets configured —
+	// the same as an account that is not set up yet.
+	for index, opt := range options {
+		if opt.value == "bootstrap" || opt.value == "all" {
+			continue
+		}
+		if !targetIsConfigured(layout, catalog, opt.value, environment) {
+			options[index].note = opt.note + "  ·  not configured here yet"
+		}
+	}
+
+	// Everything except bootstrap needs somewhere to keep its state, and bootstrap
+	// is what creates it — so on an account nobody has bootstrapped yet, it is the
+	// only thing that can run. Offering the rest lets somebody spend two answers on
+	// a stack that fails at terraform init, reporting a bucket that does not exist.
+	if backendExists(layout, environment) {
+		return options
+	}
+	for index, opt := range options {
+		if opt.value == "bootstrap" {
+			continue
+		}
+		options[index].disabled = true
+		options[index].note = "needs the state backend — run bootstrap first"
+	}
+	return options
+}
+
+// targetIsConfigured reports whether every root behind a target has its variables
+// for this environment.
+//
+// The same check the run makes before it starts — a missing envs/<env>.tfvars is
+// what "NOT READY" means — asked early enough to put on the row rather than three
+// answers later.
+func targetIsConfigured(layout infra.Layout, catalog infra.Catalog, target, environment string) bool {
+	stages, err := infra.Resolve(layout, catalog, target)
+	if err != nil {
+		// Not resolvable is a different problem, and the run reports it properly.
+		return true
+	}
+	for _, readiness := range infra.CheckReadiness(infra.Units(stages), environment) {
+		if !readiness.Ready() {
+			return false
+		}
+	}
+	return true
+}
+
+// backendExists reports whether this environment has a state backend to write to.
+//
+// The file is written by bootstrap, not by init: bootstrap creates the bucket and
+// the lock table and then records where they are. Its absence is what "nobody has
+// bootstrapped this account yet" looks like from here.
+func backendExists(layout infra.Layout, environment string) bool {
+	_, err := infra.LoadBackend(layout, environment)
+	return err == nil
 }
 
 // actionOptions spells out the consequence of each action, which is the part an
