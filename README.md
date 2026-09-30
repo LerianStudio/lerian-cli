@@ -372,7 +372,7 @@ its state, and `bootstrap` is what creates it:
     [ ] midaz        needs the state backend — run bootstrap first
 ```
 
-**Every run after.** The backend is there, and the whole catalogue is on the
+**Every run after.** The backend is there, and the whole catalog is on the
 table — with the rows saying which of them this checkout has variables for:
 
 ```
@@ -383,7 +383,7 @@ table — with the rows saying which of them this checkout has variables for:
 ```
 
 `init` writes `envs/<env>.tfvars` for the targets it is given, which is usually
-`infra-base`. The catalogue lists every product, so most rows have no variables
+`infra-base`. The catalog lists every product, so most rows have no variables
 until somebody asks for them — and choosing one used to spend two more answers
 before failing with `4 of 4 stacks are NOT READY`, a true message arriving three
 steps late.

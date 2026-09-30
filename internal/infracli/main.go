@@ -1565,7 +1565,7 @@ func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment st
 
 	// A target whose tfvars were never written cannot run either, and that is a
 	// different gap with a different answer: init writes them, and it writes them
-	// for the targets it is given. The catalogue lists every product; a checkout
+	// for the targets it is given. The catalog lists every product; a checkout
 	// usually has variables for one or two.
 	//
 	// Said rather than disabled, because choosing it is how it gets configured —

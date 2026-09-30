@@ -1276,7 +1276,7 @@ func TestTheEnvironmentAppearsOnlyWhenItDisambiguates(t *testing.T) {
 // The dry-run list is built from the file, where the sections are named dev, stg
 // and prd — but that is the key of the section, not the name of the destination.
 // The row reads as the account it is.
-func TestTheDryRunRowsAreNotLabelledWithOurNames(t *testing.T) {
+func TestTheDryRunRowsAreNotLabeledWithOurNames(t *testing.T) {
 	checkout := fakeCheckout(t, "", "")
 	writeEnvConfig(t, checkout, map[string]string{
 		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = sandbox",
@@ -1299,7 +1299,7 @@ func TestTheDryRunRowsAreNotLabelledWithOurNames(t *testing.T) {
 	}
 	for _, line := range strings.Split(painted.String(), "\n") {
 		if strings.Contains(line, "sandbox") && strings.Contains(line, "dev") {
-			t.Errorf("the row is labelled with our environment name: %q", strings.TrimSpace(line))
+			t.Errorf("the row is labeled with our environment name: %q", strings.TrimSpace(line))
 		}
 	}
 	if !strings.Contains(painted.String(), "sandbox") {
@@ -1374,13 +1374,13 @@ func writeBackendFile(t *testing.T, checkout, environment string) {
 // A target whose tfvars were never written cannot run, and the list said nothing.
 //
 // init writes tfvars for the targets it was given — infra-base, usually — and the
-// run menu offers the whole catalogue. Choosing a product nobody configured
+// run menu offers the whole catalog. Choosing a product nobody configured
 // spends two more answers and then fails with "4 of 4 stacks are NOT READY", which
 // is a true message arriving three steps too late.
 func TestATargetWithNoVariablesSaysSo(t *testing.T) {
 	checkout := fakeCheckout(t, "", "")
 	writeBackendFile(t, checkout, "dev")
-	// infra-base is configured; midaz is in the catalogue and was never set up.
+	// infra-base is configured; midaz is in the catalog and was never set up.
 	writeVarFile(t, checkout, "infra-base/vpc", "dev")
 	layout, err := infra.NewLayout(checkout)
 	if err != nil {
