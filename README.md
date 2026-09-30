@@ -373,7 +373,20 @@ its state, and `bootstrap` is what creates it:
 ```
 
 **Every run after.** The backend is there, and the whole catalogue is on the
-table: `infra-base`, the products, `all`.
+table — with the rows saying which of them this checkout has variables for:
+
+```
+  What do you want to operate on?
+  ❯ [x] infra-base   the VPC then the cluster
+    [ ] midaz        documentdb postgres rabbitmq valkey  ·  not configured here yet
+    [ ] fetcher      documentdb rabbitmq s3 valkey        ·  not configured here yet
+```
+
+`init` writes `envs/<env>.tfvars` for the targets it is given, which is usually
+`infra-base`. The catalogue lists every product, so most rows have no variables
+until somebody asks for them — and choosing one used to spend two more answers
+before failing with `4 of 4 stacks are NOT READY`, a true message arriving three
+steps late.
 
 The list used to offer everything either way, so a first run could spend two
 answers on a stack that fails at `terraform init` reporting a bucket that does not

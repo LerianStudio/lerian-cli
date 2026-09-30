@@ -1370,3 +1370,50 @@ func writeBackendFile(t *testing.T, checkout, environment string) {
 		t.Fatal(err)
 	}
 }
+
+// A target whose tfvars were never written cannot run, and the list said nothing.
+//
+// init writes tfvars for the targets it was given — infra-base, usually — and the
+// run menu offers the whole catalogue. Choosing a product nobody configured
+// spends two more answers and then fails with "4 of 4 stacks are NOT READY", which
+// is a true message arriving three steps too late.
+func TestATargetWithNoVariablesSaysSo(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeBackendFile(t, checkout, "dev")
+	// infra-base is configured; midaz is in the catalogue and was never set up.
+	writeVarFile(t, checkout, "infra-base/vpc", "dev")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	byValue := map[string]option{}
+	for _, opt := range runTargetOptions(catalog, layout, "dev") {
+		byValue[opt.value] = opt
+	}
+
+	if !strings.Contains(byValue["midaz"].note, "not configured") {
+		t.Errorf("midaz has no variables and the row does not say so: %q", byValue["midaz"].note)
+	}
+	if byValue["infra-base"].disabled {
+		t.Errorf("infra-base is configured and was not offered: %q", byValue["infra-base"].note)
+	}
+	// Not disabled: choosing it is how it gets configured, the same as an account
+	// that is not set up yet.
+	if byValue["midaz"].disabled {
+		t.Error("a target that only needs configuring was offered as unusable")
+	}
+}
+
+func writeVarFile(t *testing.T, checkout, root, environment string) {
+	t.Helper()
+
+	path := filepath.Join(checkout, "examples", "aws", filepath.FromSlash(root), "envs", environment+".tfvars")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("environment = \""+environment+"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -1563,6 +1563,22 @@ func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment st
 	}
 	options = append(options, option{value: "all", label: "all", note: "everything, in dependency order"})
 
+	// A target whose tfvars were never written cannot run either, and that is a
+	// different gap with a different answer: init writes them, and it writes them
+	// for the targets it is given. The catalogue lists every product; a checkout
+	// usually has variables for one or two.
+	//
+	// Said rather than disabled, because choosing it is how it gets configured —
+	// the same as an account that is not set up yet.
+	for index, opt := range options {
+		if opt.value == "bootstrap" || opt.value == "all" {
+			continue
+		}
+		if !targetIsConfigured(layout, catalog, opt.value, environment) {
+			options[index].note = opt.note + "  ·  not configured here yet"
+		}
+	}
+
 	// Everything except bootstrap needs somewhere to keep its state, and bootstrap
 	// is what creates it — so on an account nobody has bootstrapped yet, it is the
 	// only thing that can run. Offering the rest lets somebody spend two answers on
@@ -1578,6 +1594,26 @@ func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment st
 		options[index].note = "needs the state backend — run bootstrap first"
 	}
 	return options
+}
+
+// targetIsConfigured reports whether every root behind a target has its variables
+// for this environment.
+//
+// The same check the run makes before it starts — a missing envs/<env>.tfvars is
+// what "NOT READY" means — asked early enough to put on the row rather than three
+// answers later.
+func targetIsConfigured(layout infra.Layout, catalog infra.Catalog, target, environment string) bool {
+	stages, err := infra.Resolve(layout, catalog, target)
+	if err != nil {
+		// Not resolvable is a different problem, and the run reports it properly.
+		return true
+	}
+	for _, readiness := range infra.CheckReadiness(infra.Units(stages), environment) {
+		if !readiness.Ready() {
+			return false
+		}
+	}
+	return true
 }
 
 // backendExists reports whether this environment has a state backend to write to.
