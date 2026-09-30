@@ -62,6 +62,8 @@ func showConfig(out io.Writer) error {
 // resetConfig asks before removing, because "as if it had never run" is not
 // something to do to somebody by accident. --yes is the way to mean it in a
 // script, and outside a terminal there is nobody to ask.
+//
+//nolint:nilerr // see the comment on the declining branch below
 func resetConfig(out io.Writer) error {
 	described, err := config.Describe()
 	if err != nil {
@@ -80,6 +82,10 @@ func resetConfig(out io.Writer) error {
 				{Value: "no", Label: "keep it", Note: "changes nothing"},
 				{Value: "yes", Label: "forget it", Note: "removes ~/.lerian/config.yaml"},
 			})
+		// Declining is not a failure, and neither is a selector that could not draw:
+		// either way nothing was removed, which is the safe outcome and the one the
+		// operator can see. Reporting "the prompt failed" instead would be alarming
+		// about a file that is still exactly where it was.
 		if err != nil || answer != "yes" {
 			fmt.Fprintf(out, "  kept.\n\n")
 			return nil

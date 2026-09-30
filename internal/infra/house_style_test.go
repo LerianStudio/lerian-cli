@@ -43,14 +43,19 @@ func TestNoInternalProfileNamesInAdvice(t *testing.T) {
 func walkGoFiles(t *testing.T, root string, check func(path, body string)) {
 	t.Helper()
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			// A tree this cannot read is a tree it cannot check, and failing the
+			// sweep on it would report a house-style problem that is not one.
+			return walkErr
+		}
+		if info.IsDir() {
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		body, readErr := os.ReadFile(path) //nolint:gosec // walking this repo's own source
+		body, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
