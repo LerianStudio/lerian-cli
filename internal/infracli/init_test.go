@@ -989,3 +989,55 @@ func TestTheDetectedAddressIsAChoice(t *testing.T) {
 		t.Errorf("there is no way to give a different address: %+v", options)
 	}
 }
+
+// bootstrap is not on the list because it is not a choice: init configures it
+// whatever else is picked, since it is the first thing that has to run and it
+// needs a tfvars like every other root. The question says so, rather than leaving
+// its absence to be read as an oversight.
+func TestTheConfigureQuestionSaysBootstrapIsIncluded(t *testing.T) {
+	purpose := configurePurpose()
+
+	if !strings.Contains(purpose, "bootstrap") {
+		t.Errorf("the question does not mention bootstrap at all: %q", purpose)
+	}
+	if !strings.Contains(strings.ToLower(purpose), "always") {
+		t.Errorf("the question does not say bootstrap is not optional: %q", purpose)
+	}
+}
+
+// And once the files are written, the next step is named: nothing else can run
+// until the state backend exists, and bootstrap is what creates it.
+func TestInitSaysWhatToRunNext(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	printNextStep(&out, layout, "dev")
+
+	if !strings.Contains(out.String(), "bootstrap") {
+		t.Errorf("the next step is not named:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "--action apply") {
+		t.Errorf("the command to run is not given:\n%s", out.String())
+	}
+}
+
+// With the backend already there, bootstrap has run and saying so would be noise.
+func TestInitIsQuietWhenBootstrapHasRun(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeBackendFile(t, checkout, "dev")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	printNextStep(&out, layout, "dev")
+
+	if strings.Contains(out.String(), "bootstrap") {
+		t.Errorf("an already-bootstrapped environment was told to bootstrap:\n%s", out.String())
+	}
+}

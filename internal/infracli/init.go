@@ -291,7 +291,12 @@ func runInit(ctx context.Context, args []string, stdout, stderr io.Writer) error
 			return err
 		}
 	}
-	return plan.commit(layout)
+	if err := plan.commit(layout); err != nil {
+		return err
+	}
+
+	printNextStep(stdout, layout, plan.env.Environment)
+	return nil
 }
 
 // initPlan is the whole decision, computed before anything is written, so the
@@ -435,8 +440,7 @@ func buildInitPlan(
 	if targets == "" {
 		answer, err := ask.pickMany(
 			"What do you want to configure?",
-			"infra-base is the VPC and the cluster. Add products to configure their "+
-				"datastores too.",
+			configurePurpose(),
 			"--targets", targetOptions(catalog), []string{"infra-base"})
 		if err != nil {
 			return plan, err
@@ -960,6 +964,35 @@ func printSharedTierNotice(out io.Writer, plan initPlan) {
 			plan.env.Environment, name)
 	}
 	fmt.Fprintln(out)
+}
+
+// configurePurpose is the line under the targets question.
+//
+// It names bootstrap because bootstrap is not on the list: it is configured
+// whatever else is chosen — it is the first thing that has to run, and it needs a
+// tfvars like every other root. Its absence from a list of everything else reads
+// as an oversight unless the question says otherwise.
+func configurePurpose() string {
+	return "infra-base is the VPC and the cluster. Add products to configure their " +
+		"datastores too. bootstrap is always configured: it creates the state backend " +
+		"everything else writes to, so it is not a choice."
+}
+
+// printNextStep names what has to run before anything else can.
+//
+// Until the state backend exists there is exactly one thing that works, and the
+// operator has just finished answering questions — the moment to say it is now,
+// not when a later run fails on a bucket that is not there.
+func printNextStep(out io.Writer, layout infra.Layout, environment string) {
+	if backendExists(layout, environment) {
+		return
+	}
+
+	theme := newStyle(out)
+	fmt.Fprintf(out, "\n  %s\n", theme.bold("Next: create the state backend."))
+	fmt.Fprintf(out, "  %s\n\n", theme.dim(
+		"Everything else keeps its state in the bucket this creates, so nothing else can run yet."))
+	fmt.Fprintf(out, "    lerian infra --env %s --target bootstrap --action apply\n\n", environment)
 }
 
 // targetsBootstrap reports whether the bootstrap root is already in the list.
