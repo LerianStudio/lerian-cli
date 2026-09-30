@@ -217,8 +217,9 @@ func TestARunnableParentStillOffersItsChildren(t *testing.T) {
 		t.Fatal("a command with subcommands did not offer them")
 	}
 
-	var offered []string
-	for _, choice := range childChoices(root, "config") {
+	children := childChoices(root, "config")
+	offered := make([]string, 0, len(children))
+	for _, choice := range children {
 		offered = append(offered, choice.Value)
 	}
 
@@ -273,5 +274,23 @@ func TestTheDestructiveChildIsNotWhereTheCursorOpens(t *testing.T) {
 	}
 	if choices[len(choices)-1].Value != "reset" {
 		t.Errorf("reset is not last: %+v", choices)
+	}
+}
+
+// A command whose only subcommands are the ones cobra generates has nothing to
+// offer, and opening a menu with no rows in it fails with "has no options to
+// choose from" — an error about the menu rather than about the command.
+//
+// HasAvailableSubCommands is cobra's answer and childChoices is this file's, and
+// they filter different things: cobra keeps completion, this drops it. Where they
+// disagree, the command is simply run.
+func TestACommandWhoseChildrenAreAllFilteredIsJustRun(t *testing.T) {
+	root := &cobra.Command{Use: "lerian"}
+	lonely := &cobra.Command{Use: "lonely", Short: "Does something", Run: func(*cobra.Command, []string) {}}
+	lonely.AddCommand(&cobra.Command{Use: "completion", Short: "Generated", Run: func(*cobra.Command, []string) {}})
+	root.AddCommand(lonely)
+
+	if needsChild(root, "lonely") {
+		t.Errorf("a command with nothing to offer opens a menu: %+v", childChoices(root, "lonely"))
 	}
 }

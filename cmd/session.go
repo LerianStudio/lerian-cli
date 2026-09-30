@@ -75,10 +75,6 @@ func menuAsk(root *cobra.Command) func() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if child == "" {
-			// The parent's own action.
-			return chosen, nil
-		}
 		return chosen + " " + child, nil
 	}
 }
@@ -90,8 +86,11 @@ func menuAsk(root *cobra.Command) func() (string, error) {
 // rule, which drilled in only when there was no handler, left reset unreachable
 // from the menu entirely.
 func needsChild(root *cobra.Command, name string) bool {
-	command := findChild(root, name)
-	return command != nil && command.HasAvailableSubCommands()
+	// Asked of childChoices rather than of cobra: the two filter different things
+	// — cobra keeps completion, this does not — and a menu built from a list this
+	// function disagreed with would open with no rows in it, failing with an error
+	// about the menu instead of running the command.
+	return len(childChoices(root, name)) > 0
 }
 
 // childChoices is the menu for a command's subcommands.
