@@ -1041,3 +1041,77 @@ func TestInitIsQuietWhenBootstrapHasRun(t *testing.T) {
 		t.Errorf("an already-bootstrapped environment was told to bootstrap:\n%s", out.String())
 	}
 }
+
+// The profile's region is a suggestion, which means the cursor opens on it — not
+// an answer given on somebody's behalf.
+//
+// Two paths got this wrong in opposite ways: one used the profile's region
+// without asking at all, the other asked but opened the list on us-east-1
+// because it never read the profile. Both end with infrastructure in a region
+// nobody chose out loud.
+func TestTheProfileRegionIsASuggestionNotAnAnswer(t *testing.T) {
+	// The list opens on the profile's region when that is all we know.
+	options := regionOptions("ap-northeast-1")
+	if options[0].value != "ap-northeast-1" {
+		t.Errorf("the list opens on %q, not on the profile's region", options[0].value)
+	}
+	if !strings.Contains(options[0].note, "already chosen") {
+		t.Errorf("the row does not say why it is first: %q", options[0].note)
+	}
+}
+
+// And asking happens even when the profile declares one: interactive means there
+// is somebody to confirm it with.
+func TestARegionIsAskedForEvenWhenTheProfileHasOne(t *testing.T) {
+	ask, painted := selectorFor(t, keyEnterSeq)
+
+	chosen, err := askForRegion(ask, "sa-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if chosen != "sa-east-1" {
+		t.Errorf("chose %q", chosen)
+	}
+	if !strings.Contains(painted.String(), "Which AWS region") {
+		t.Errorf("the region was taken without asking:\n%s", painted.String())
+	}
+}
+
+// The region of a chosen profile is asked about, not inherited.
+//
+// This is the path that matters — the one resolveCredentials takes after the
+// profile list — and the earlier test for it exercised askForRegion directly,
+// which is the half that was never broken. It stayed green with the fix removed.
+func TestTheRegionOfAChosenProfileIsAskedAbout(t *testing.T) {
+	ask, painted := selectorFor(t, keyEnterSeq)
+
+	chosen, err := regionFor(ask, "", "ap-northeast-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(painted.String(), "Which AWS region") {
+		t.Errorf("the profile's region was taken without asking:\n%s", painted.String())
+	}
+	if chosen != "ap-northeast-1" {
+		t.Errorf("chose %q; the profile's region is what the list opens on", chosen)
+	}
+}
+
+// A region that was stated is not asked about again.
+func TestAStatedRegionIsNotAskedAboutAgain(t *testing.T) {
+	ask, painted := selectorFor(t, "")
+
+	chosen, err := regionFor(ask, "eu-west-3", "ap-northeast-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if chosen != "eu-west-3" {
+		t.Errorf("chose %q, want the one that was passed", chosen)
+	}
+	if strings.Contains(painted.String(), "Which AWS region") {
+		t.Errorf("a stated region was asked about anyway:\n%s", painted.String())
+	}
+}

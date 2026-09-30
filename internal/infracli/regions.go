@@ -3,6 +3,8 @@ package infracli
 import (
 	"fmt"
 	"regexp"
+
+	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
 // typedRegionChoice is the row that takes a region this list has never heard of.
@@ -146,4 +148,40 @@ func egressOptions(detected string) []option {
 		{value: detected, label: detected, note: "what this machine appears to come from"},
 		{value: typedAddressChoice, label: "another address", note: "type the address that should reach the API"},
 	}
+}
+
+// profileRegion is the region a named profile declares in ~/.aws, or "" when it
+// declares none or cannot be read.
+//
+// Only ever a suggestion: it is where the region list opens, so the operator sees
+// the thing they most likely want without it being chosen for them.
+func profileRegion(name string) string {
+	if name == "" {
+		return ""
+	}
+	profiles, err := infra.ListAWSProfiles()
+	if err != nil {
+		return ""
+	}
+	for _, profile := range profiles {
+		if profile.Name == name {
+			return profile.Region
+		}
+	}
+	return ""
+}
+
+// regionFor settles the region for a profile that has just been chosen.
+//
+// A region already passed is the answer — somebody stated it. Otherwise it is
+// asked for, with the profile's own region as the suggestion the list opens on.
+//
+// Not taken silently from the profile, which is what this used to do: the profile
+// may have been configured for something else entirely, and infrastructure in a
+// region nobody said out loud is discovered later, by the bill or by the latency.
+func regionFor(ask *prompter, passed, profileRegion string) (string, error) {
+	if passed != "" {
+		return passed, nil
+	}
+	return askForRegion(ask, profileRegion)
 }

@@ -1367,6 +1367,7 @@ func askFromConfig(ask *prompter, layout infra.Layout) (string, error) {
 		}
 		choices = append(choices, option{value: name, label: label, note: note, environment: name})
 	}
+	nameTheAmbiguous(choices)
 
 	if len(choices) == 0 {
 		return "", fmt.Errorf("no account is configured in this checkout\n" +

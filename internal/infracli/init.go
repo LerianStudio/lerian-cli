@@ -692,8 +692,13 @@ func resolveCredentials(
 			// No suggestion of our own. Where the infrastructure lands is the
 			// operator's decision, and offering the region we happen to use makes the
 			// most likely keypress create everything in Ohio. The profile's own region
-			// is a suggestion worth making; ours is not.
-			region, err = askForRegion(ask, region)
+			// is a suggestion worth making; ours is not — so when nothing was passed,
+			// the profile is read for one rather than opening the list at its top.
+			suggestion := region
+			if suggestion == "" {
+				suggestion = profileRegion(opts.profile)
+			}
+			region, err = askForRegion(ask, suggestion)
 			if err != nil {
 				return "", "", caller, err
 			}
@@ -775,15 +780,9 @@ func resolveCredentials(
 			return "", "", caller, fmt.Errorf("profile %q does not resolve: %w\n"+
 				"  aws sso login --profile %s", chosen, entry.Err, chosen)
 		}
-		effective := region
-		if effective == "" {
-			effective = entry.Profile.Region
-		}
-		if effective == "" {
-			effective, err = askForRegion(ask, "")
-			if err != nil {
-				return "", "", caller, err
-			}
+		effective, err := regionFor(ask, region, entry.Profile.Region)
+		if err != nil {
+			return "", "", caller, err
 		}
 		return chosen, effective, entry.Caller, nil
 	}

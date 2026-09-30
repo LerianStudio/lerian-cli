@@ -1417,3 +1417,29 @@ func writeVarFile(t *testing.T, checkout, root, environment string) {
 		t.Fatal(err)
 	}
 }
+
+// Two sections reaching the same account, region and profile read identically in
+// the dry-run list too, and there the environment is the only thing that tells
+// them apart — the same rule the account rows follow.
+func TestTheDryRunListDisambiguatesWhenItMust(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeEnvConfig(t, checkout, map[string]string{
+		"dev": "account_id = 111122223333\nregion = sa-east-1\nprofile = same",
+		"stg": "account_id = 111122223333\nregion = sa-east-1\nprofile = same",
+	})
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ask, painted := selectorFor(t, keyEnterSeq)
+	if _, err := askFromConfig(ask, layout); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"dev", "stg"} {
+		if !strings.Contains(painted.String(), name) {
+			t.Errorf("two identical rows and %q is not shown to tell them apart:\n%s", name, painted.String())
+		}
+	}
+}
