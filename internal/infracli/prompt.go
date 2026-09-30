@@ -85,21 +85,35 @@ func (p *prompter) ask(question, purpose, fallback, flagName string) (string, er
 	if purpose != "" {
 		fmt.Fprintf(p.out, "  %s\n", theme.dim(purpose))
 	}
+	// The same line the selector shows, for the same reason: a prompt that does
+	// not say how to leave it is one the operator escapes with ctrl-c, which
+	// stops the command mid-step rather than declining the question.
+	hint := "q cancel"
 	if fallback != "" {
-		fmt.Fprintf(p.out, "  [%s]\n", theme.dim("Enter takes "+fallback))
+		hint = "enter takes " + fallback + " · q cancel"
 	}
+	fmt.Fprintf(p.out, "  %s\n", theme.dim(hint))
 
 	answer, edited, err := p.editableLine(p.out, "  > ")
 	if err != nil {
 		return "", fmt.Errorf("cannot read the answer to %q: %w", question, err)
 	}
 	if !edited {
-		// No terminal to edit on: read the line the plain way.
+		// No terminal to edit on: read the line the plain way. The prompt is
+		// printed here rather than above, because editableLine prints its own.
+		fmt.Fprint(p.out, "  > ")
 		line, readErr := p.in.ReadString('\n')
 		if readErr != nil && strings.TrimSpace(line) == "" {
 			return "", fmt.Errorf("cannot read the answer to %q: %w", question, readErr)
 		}
 		answer = strings.TrimSpace(line)
+	}
+	// Consistent with the selector, where q is how an operator backs out. A path
+	// of exactly "q" becomes unreachable, which is a trade worth making: no
+	// checkout is called that, and an inconsistent escape is worse than an
+	// unreachable answer.
+	if strings.EqualFold(answer, "q") {
+		return "", infra.ErrAborted
 	}
 	if answer == "" {
 		if fallback == "" {
