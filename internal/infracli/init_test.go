@@ -997,10 +997,13 @@ func TestTheDetectedAddressIsAChoice(t *testing.T) {
 func TestTheConfigureQuestionSaysBootstrapIsIncluded(t *testing.T) {
 	purpose := configurePurpose()
 
+	// What it has to convey, not which words convey it: that bootstrap is there
+	// and that it is there because the others need what it makes. Pinning a
+	// particular word made this fail on a rewrite that said the same thing better.
 	if !strings.Contains(purpose, "bootstrap") {
 		t.Errorf("the question does not mention bootstrap at all: %q", purpose)
 	}
-	if !strings.Contains(strings.ToLower(purpose), "always") {
+	if !strings.Contains(purpose, "comes too") && !strings.Contains(strings.ToLower(purpose), "always") {
 		t.Errorf("the question does not say bootstrap is not optional: %q", purpose)
 	}
 }
@@ -1143,10 +1146,15 @@ func TestTheSuggestedRegionSaysWhereItCameFrom(t *testing.T) {
 func TestTheConfigurePurposeFitsOnOneLine(t *testing.T) {
 	purpose := configurePurpose()
 
-	if len(purpose) > 100 {
-		t.Errorf("the purpose is %d characters and the selector shows one line:\n%s", len(purpose), purpose)
+	// 78 rather than 100: the selector fits this to width-2, so 80 columns — the
+	// width every terminal has — leaves 78. A line that only fits a wide terminal
+	// loses its end on the narrow one, and the end is where the new part sits.
+	if len(purpose) > 78 {
+		t.Errorf("the purpose is %d characters; 80 columns leaves 78:\n%s", len(purpose), purpose)
 	}
-	if !strings.Contains(purpose, "bootstrap") {
-		t.Errorf("the part that is not obvious was cut: %q", purpose)
+	for _, want := range []string{"bootstrap", "backend"} {
+		if !strings.Contains(purpose, want) {
+			t.Errorf("the purpose does not say %q, which is why bootstrap is not a choice: %q", want, purpose)
+		}
 	}
 }

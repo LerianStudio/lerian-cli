@@ -974,9 +974,14 @@ func printSharedTierNotice(out io.Writer, plan initPlan) {
 // tfvars like every other root. Its absence from a list of everything else reads
 // as an oversight unless the question says otherwise.
 func configurePurpose() string {
-	// One line: the selector truncates this to the terminal's width, and a long one
-	// loses its end — which is where the part nobody knows yet was sitting.
-	return "infra-base is the VPC and the cluster; bootstrap always comes with it."
+	// One line, and short enough to survive an 80-column terminal: the selector
+	// fits this to width-2, and a long one loses its end — which is where the part
+	// nobody knows yet was sitting. 77 characters.
+	//
+	// "comes too" alone said that bootstrap is not optional without saying why,
+	// which is the half worth keeping: it makes the backend the other targets
+	// write their state to.
+	return "infra-base is the VPC and cluster. bootstrap comes too: it makes the backend."
 }
 
 // printNextStep names what has to run before anything else can.
