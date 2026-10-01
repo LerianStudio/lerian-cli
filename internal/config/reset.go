@@ -92,7 +92,12 @@ func Describe() (string, error) {
 	}
 
 	// The next question somebody asks, answered before they have to go looking.
-	fmt.Fprintf(&out, "\n  AWS credentials are not here: they live in ~/.aws, which the AWS CLI owns\n")
-	fmt.Fprintf(&out, "  and every AWS tool on this machine reads. lerian infra reads them from there.\n")
+	//
+	// Not "they live in ~/.aws": that is the usual place and not the only one. A CI
+	// runner has them in the environment and no ~/.aws at all, and lerian infra
+	// deploys with those — saying otherwise sends somebody to create files they do
+	// not need.
+	fmt.Fprintf(&out, "\n  AWS credentials are not here. lerian infra reads them the way every AWS tool\n")
+	fmt.Fprintf(&out, "  does: a profile in ~/.aws, or the credentials already in the environment.\n")
 	return out.String(), nil
 }

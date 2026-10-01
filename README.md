@@ -642,8 +642,8 @@ removes that file, so the next run asks what it asked the first time.
   profile   default   (Lerian platform, not AWS)
   logins    none — lerian auth login creates one
 
-  AWS credentials are not here: they live in ~/.aws, which the AWS CLI owns
-  and every AWS tool on this machine reads. lerian infra reads them from there.
+  AWS credentials are not here. lerian infra reads them the way every AWS tool
+  does: a profile in ~/.aws, or the credentials already in the environment.
 ```
 
 **"profile" means two different things in this CLI**, and both have a flag:
@@ -692,8 +692,8 @@ removes that file, so the next run asks what it asked the first time.
   profile   default   (Lerian platform, not AWS)
   logins    none — lerian auth login creates one
 
-  AWS credentials are not here: they live in ~/.aws, which the AWS CLI owns
-  and every AWS tool on this machine reads. lerian infra reads them from there.
+  AWS credentials are not here. lerian infra reads them the way every AWS tool
+  does: a profile in ~/.aws, or the credentials already in the environment.
 ```
 
 **"profile" means two different things in this CLI**, and both have a flag:

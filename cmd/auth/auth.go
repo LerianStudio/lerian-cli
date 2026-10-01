@@ -14,8 +14,9 @@ var AuthCmd = &cobra.Command{
 	Long: `Manage the credentials this CLI uses to reach the Lerian platform: the
 API URL, the API key and the tenant. They are kept in ~/.lerian/config.yaml.
 
-AWS credentials are not managed here. They live in ~/.aws, which the AWS CLI
-owns, and 'lerian infra' reads them from there.`,
+AWS credentials are not managed here. 'lerian infra' reads them the way every
+AWS tool does: a profile in ~/.aws, or the credentials already in the
+environment — a CI runner has the second and no ~/.aws at all.`,
 }
 
 func init() {

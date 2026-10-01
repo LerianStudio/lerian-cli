@@ -79,3 +79,22 @@ func TestTheMenuSaysWhatEachCommandAuthenticatesWith(t *testing.T) {
 		}
 	}
 }
+
+// Nowhere in this CLI should say AWS credentials must be in ~/.aws. The infra
+// commands accept the ones already in the environment, which is what CI has — and
+// a machine with none of its own would be sent to create files it does not need.
+func TestNothingClaimsAWSCredentialsMustBeInAFile(t *testing.T) {
+	texts := map[string]string{
+		"profile flag":   rootCmd.PersistentFlags().Lookup("profile").Usage,
+		"config command": configCmd.Long,
+	}
+	for _, command := range rootCmd.Commands() {
+		texts[command.Name()+" long"] = command.Long
+	}
+
+	for where, text := range texts {
+		if strings.Contains(text, "They live in ~/.aws") || strings.Contains(text, "they live in ~/.aws") {
+			t.Errorf("%s says AWS credentials must be in a file: %q", where, text)
+		}
+	}
+}
