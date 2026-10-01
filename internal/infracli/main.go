@@ -1545,9 +1545,22 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 		rank := ready
 
 		switch {
-		case !entry.Usable():
+		case !entry.Usable() && entry.Profile.CanSignIn:
 			rank = needsLogin
 			opt.note = "session expired — choose to log in"
+		case !entry.Usable() && entry.Profile.Source == "credentials":
+			// An access key that does not work. Choosing it reports what AWS said,
+			// which is more use than a login that cannot apply to it.
+			rank = needsLogin
+			opt.note = "the access key does not work — choose it to see why"
+		case !entry.Usable():
+			// Nothing to revive and nothing to fix: ~/.aws commonly holds a [default]
+			// with a region and nothing else. Calling that an expired session sends
+			// somebody to a login that fails with "Unable to locate credentials",
+			// which names neither the problem nor the fix.
+			rank = unconfigured
+			opt.disabled = true
+			opt.note = "no credentials configured — aws configure --profile " + entry.Profile.Name
 		default:
 			if environment, ok := environmentForProfile(layout, entry.Profile.Name, entry.Caller.Account); ok {
 				// The account and the region, which is the whole of what is being

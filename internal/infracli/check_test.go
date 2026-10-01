@@ -535,9 +535,9 @@ func TestNoLoginIsOfferedForProfilesWithoutASession(t *testing.T) {
 // command, not by a dozen identical ones.
 func TestProfilesSharingASessionShareOneLogin(t *testing.T) {
 	resolved := []infra.ResolvedProfile{
-		{Profile: infra.AWSProfile{Name: "dev", SSOSession: "acme"}, Err: errors.New("expired")},
-		{Profile: infra.AWSProfile{Name: "stg", SSOSession: "acme"}, Err: errors.New("expired")},
-		{Profile: infra.AWSProfile{Name: "other", SSOSession: "second"}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "dev", SSOSession: "acme", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "stg", SSOSession: "acme", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "other", SSOSession: "second", CanSignIn: true}, Err: errors.New("expired")},
 	}
 
 	targets := loginTargets(resolved)

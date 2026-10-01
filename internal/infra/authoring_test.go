@@ -568,9 +568,9 @@ func TestEveryTemplatePlaceholderIsKnown(t *testing.T) {
 // technically correct and practically useless.
 func TestLoginHintCollapsesASharedSSOSession(t *testing.T) {
 	resolved := []ResolvedProfile{
-		{Profile: AWSProfile{Name: "dev", SSOSession: "acme-sso"}, Err: errors.New("expired")},
-		{Profile: AWSProfile{Name: "stg", SSOSession: "acme-sso"}, Err: errors.New("expired")},
-		{Profile: AWSProfile{Name: "prd", SSOSession: "acme-sso"}, Err: errors.New("expired")},
+		{Profile: AWSProfile{Name: "dev", SSOSession: "acme-sso", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: AWSProfile{Name: "stg", SSOSession: "acme-sso", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: AWSProfile{Name: "prd", SSOSession: "acme-sso", CanSignIn: true}, Err: errors.New("expired")},
 	}
 
 	hint := LoginHint(resolved)
@@ -581,8 +581,10 @@ func TestLoginHintCollapsesASharedSSOSession(t *testing.T) {
 
 func TestLoginHintNamesProfilesWithoutASession(t *testing.T) {
 	resolved := []ResolvedProfile{
-		{Profile: AWSProfile{Name: "shared", SSOSession: "acme-sso"}, Err: errors.New("expired")},
-		{Profile: AWSProfile{Name: "standalone"}, Err: errors.New("expired")},
+		// Expired means there was something to expire: both of these have SSO, one
+		// through a shared session and one through the older per-profile settings.
+		{Profile: AWSProfile{Name: "shared", SSOSession: "acme-sso", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: AWSProfile{Name: "standalone", CanSignIn: true}, Err: errors.New("expired")},
 		// A working profile contributes nothing to the hint.
 		{Profile: AWSProfile{Name: "fine"}, Caller: Caller{Account: "123456789012"}},
 	}
@@ -1022,5 +1024,65 @@ func TestUpsertStillRewritesAChangedSection(t *testing.T) {
 	got := string(upsertINISection(content, "dev", body))
 	if !strings.Contains(got, "999999999999") {
 		t.Errorf("the changed value was not written:\n%s", got)
+	}
+}
+
+// A profile that declares nothing but a region cannot be logged into: there is no
+// SSO session to revive and no key to use. Telling somebody their session expired
+// sends them to a login that fails with "Unable to locate credentials", which
+// says nothing about what is actually missing.
+func TestAProfileWithNoCredentialsIsRecognizable(t *testing.T) {
+	dir := t.TempDir()
+	body := "[default]\nregion = us-east-1\n\n" +
+		"[profile with-sso]\nsso_session = acme-sso\nregion = us-east-2\n\n" +
+		"[profile old-style]\nsso_start_url = https://acme.awsapps.com/start\nregion = us-east-2\n"
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	profiles, err := listAWSProfilesIn(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byName := map[string]AWSProfile{}
+	for _, profile := range profiles {
+		byName[profile.Name] = profile
+	}
+
+	if byName["default"].CanSignIn {
+		t.Error("a profile with only a region was reported as something to sign in to")
+	}
+	if !byName["with-sso"].CanSignIn {
+		t.Error("a profile with an sso_session cannot be signed in to")
+	}
+	// The older per-profile SSO config has no sso_session but does log in through
+	// `aws sso login --profile`.
+	if !byName["old-style"].CanSignIn {
+		t.Error("a profile with sso_start_url cannot be signed in to")
+	}
+}
+
+// The hint lists commands to run, so a profile that cannot be logged into does
+// not belong in it: `aws sso login --profile default` on a section holding only a
+// region fails with "Unable to locate credentials", and the operator has no way
+// to know which of the listed commands was the pointless one.
+func TestTheLoginHintOnlyNamesProfilesThatCanSignIn(t *testing.T) {
+	resolved := []ResolvedProfile{
+		{Profile: AWSProfile{Name: "default"}, Err: errors.New("no credentials")},
+		{Profile: AWSProfile{Name: "with-session", SSOSession: "acme", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: AWSProfile{Name: "old-style", CanSignIn: true}, Err: errors.New("expired")},
+	}
+
+	hint := LoginHint(resolved)
+
+	if strings.Contains(hint, "--profile default") {
+		t.Errorf("the hint offers a login for a profile that cannot be logged into:\n%s", hint)
+	}
+	if !strings.Contains(hint, "--sso-session acme") {
+		t.Errorf("the session that can be revived is missing:\n%s", hint)
+	}
+	if !strings.Contains(hint, "--profile old-style") {
+		t.Errorf("the per-profile SSO config is missing:\n%s", hint)
 	}
 }
