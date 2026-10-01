@@ -53,6 +53,16 @@ var rawMode = func() (func(), error) {
 func plainSelection() bool { return os.Getenv("LERIAN_SELECT") == "plain" }
 
 // pick asks for one value from a known set.
+// errBack is a question answered with "take me back", which is a different
+// answer from "stop". A caller that treats them alike turns r into q, which is
+// the one thing somebody pressing r is trying to avoid.
+var errBack = errors.New("infracli: back to the previous question")
+
+// ErrBack is errBack for callers outside this package — the root menu, which has
+// to know the difference between "back" and "leave" even though it has nowhere to
+// go back to.
+var ErrBack = errBack
+
 func (p *prompter) pick(question, purpose, flagName string, options []option, preset string) (string, error) {
 	values, err := p.selectFrom(question, purpose, flagName, options, []string{preset}, false)
 	if err != nil {
@@ -191,6 +201,9 @@ func (p *prompter) runSelector(
 		case keyAbort:
 			fmt.Fprint(p.out, "\r\n")
 			return nil, infra.ErrAborted
+		case keyBack:
+			fmt.Fprint(p.out, "\r\n")
+			return nil, errBack
 		case keySpace:
 			if multiple && !options[cursor].disabled {
 				value := options[cursor].value
@@ -265,9 +278,9 @@ func (p *prompter) paintOptions(
 	if purpose != "" {
 		write("  " + theme.dim(fit(purpose, width-2)))
 	}
-	hint := "↑↓ move · enter choose · q cancel"
+	hint := "↑↓ move · enter choose · r back · q cancel"
 	if multiple {
-		hint = "↑↓ move · space toggle · enter confirm · q cancel"
+		hint = "↑↓ move · space toggle · enter confirm · r back · q cancel"
 	}
 	write("  " + theme.dim(fit(hint, width-2)))
 
@@ -468,6 +481,8 @@ const (
 	keyEnter
 	keySpace
 	keyAbort
+	// keyBack is one question back, not out: r, next to q on the keys line.
+	keyBack
 	keyRune
 	keyOther
 )
@@ -502,6 +517,8 @@ func readKey(in io.RuneScanner) (keyPress, error) {
 		return keyPress{kind: keyAbort}, nil
 	case 'q':
 		return keyPress{kind: keyAbort}, nil
+	case 'r', 'R':
+		return keyPress{kind: keyBack}, nil
 	case 'k':
 		return keyPress{kind: keyUp}, nil
 	case 'j':

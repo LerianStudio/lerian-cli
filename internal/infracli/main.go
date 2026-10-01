@@ -1053,6 +1053,43 @@ func guidedRun(
 		return nil
 	}
 
+	// A list of steps rather than three calls in a row, so r can walk back through
+	// them. The questions are a sequence and a wrong turn on the first one used to
+	// cost the whole run: the only way to correct it was ctrl-c, which throws away
+	// the answers that were right along with the one that was not.
+	steps := []func() error{
+		func() error { return askAccountStep(ctx, ask, layout, resolved, opts, afterEnvironment) },
+		func() error { return askTargetStep(ask, catalog, layout, opts) },
+		func() error { return askActionStep(ask, opts) },
+	}
+
+	for at := 0; at < len(steps); {
+		err := steps[at]()
+		switch {
+		case errors.Is(err, errBack):
+			if at == 0 {
+				// Nothing before the first question, so back out of the run — which is
+				// where the operator came from.
+				return infra.ErrAborted
+			}
+			at--
+		case err != nil:
+			return err
+		default:
+			at++
+		}
+	}
+	return nil
+}
+
+func askAccountStep(
+	ctx context.Context,
+	ask *prompter,
+	layout infra.Layout,
+	resolved []infra.ResolvedProfile,
+	opts *options,
+	afterEnvironment func(environment, profile string, chosen bool) error,
+) error {
 	choice, err := askForAccount(ctx, ask, ask.out, layout, resolved)
 	if err != nil {
 		return err
@@ -1065,11 +1102,12 @@ func guidedRun(
 	// at which the profile is known, and asking two more questions to then report
 	// a login failure throws both answers away.
 	if afterEnvironment != nil {
-		if err := afterEnvironment(choice.environment, choice.profile, choice.chosen); err != nil {
-			return err
-		}
+		return afterEnvironment(choice.environment, choice.profile, choice.chosen)
 	}
+	return nil
+}
 
+func askTargetStep(ask *prompter, catalog infra.Catalog, layout infra.Layout, opts *options) error {
 	targets, err := ask.pickMany(
 		"What do you want to operate on?",
 		"Several can be combined; they are reordered into dependency order either way.",
@@ -1080,7 +1118,10 @@ func guidedRun(
 	if len(targets) > 0 {
 		opts.target = strings.Join(targets, ",")
 	}
+	return nil
+}
 
+func askActionStep(ask *prompter, opts *options) error {
 	action, err := ask.pick(
 		"What should it do?",
 		"plan changes nothing. apply and destroy ask for a confirmation before writing.",

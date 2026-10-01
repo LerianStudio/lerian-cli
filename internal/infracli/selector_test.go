@@ -565,3 +565,55 @@ func TestFitLeavesOutAWideRuneItCannotAfford(t *testing.T) {
 		t.Errorf("fit(%q) = %q, want it marked as clipped", "政策政策", got)
 	}
 }
+
+// r goes back one question, the way q leaves altogether. Four questions in a row
+// without a way back means a wrong turn on the first one costs the whole run —
+// and the only way to correct it was ctrl-c, which also throws away the ones
+// answered correctly.
+func TestRGoesBackAQuestion(t *testing.T) {
+	ask, _ := selectorFor(t, "r")
+
+	_, err := ask.pick("Which environment?", "", "--env", envOptions, "")
+
+	if !errors.Is(err, errBack) {
+		t.Errorf("pick = %v, want errBack", err)
+	}
+}
+
+// Upper case too: it is the same key.
+func TestCapitalRGoesBackAsWell(t *testing.T) {
+	ask, _ := selectorFor(t, "R")
+
+	if _, err := ask.pick("Which environment?", "", "--env", envOptions, ""); !errors.Is(err, errBack) {
+		t.Errorf("pick = %v, want errBack", err)
+	}
+}
+
+// Going back is not leaving: q still ends the run, and a caller that treats both
+// the same would make r quit.
+func TestBackAndAbortAreDifferentAnswers(t *testing.T) {
+	ask, _ := selectorFor(t, "q")
+
+	_, err := ask.pick("Which environment?", "", "--env", envOptions, "")
+
+	if errors.Is(err, errBack) {
+		t.Error("q was read as going back")
+	}
+	if !errors.Is(err, infra.ErrAborted) {
+		t.Errorf("pick = %v, want ErrAborted", err)
+	}
+}
+
+// And the keys line says so, because a key nobody is told about is a key nobody
+// presses.
+func TestTheHintNamesTheWayBack(t *testing.T) {
+	ask, painted := selectorFor(t, keyEnterSeq)
+
+	if _, err := ask.pick("Which environment?", "", "--env", envOptions, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(painted.String(), "r back") {
+		t.Errorf("the hint does not mention going back:\n%s", painted.String())
+	}
+}

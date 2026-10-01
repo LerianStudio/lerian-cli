@@ -173,7 +173,7 @@ one you pick, and asks again when that command is done. `q` closes it.
   ─────────────────────────────────────────────────────────────  v1.7.0
 
   What do you want to do?
-  ↑↓ move · enter choose · q cancel
+  ↑↓ move · enter choose · r back · q cancel
   ❯ auth     Authentication commands
     infra    Deploy the AWS stacks of lerian-terraform-foundation
     version  Print version information
@@ -192,6 +192,12 @@ The menu is a shorter list than the command set. `midaz` is reached with ledger
 ids, regions and sizes a menu has no way to ask for, so picking it from a list
 would land you on a help page rather than on anything you chose to do — it stays
 a command (`lerian midaz ledger list` is unaffected) and stays out of the menu.
+
+`r` goes back one question; `q` leaves. The questions come in a sequence, and a
+wrong turn on the first one used to cost the whole run — the only way to correct
+it was ctrl-c, which throws away the answers that were right along with the one
+that was not. On the first question, and on the main menu, there is nothing
+before: `r` there backs out of the run, and out of nothing, respectively.
 
 The session exists because these commands come in sequences — check the machine,
 then init; init fails, read what it says, run it again — and each of those used

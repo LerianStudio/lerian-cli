@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	infrapkg "github.com/lerian-studio/lerian-cli/internal/infra"
+	"github.com/lerian-studio/lerian-cli/internal/infracli"
 )
 
 // The menu is a session, not a launcher: running the thing that was picked and
@@ -292,5 +293,29 @@ func TestACommandWhoseChildrenAreAllFilteredIsJustRun(t *testing.T) {
 
 	if needsChild(root, "lonely") {
 		t.Errorf("a command with nothing to offer opens a menu: %+v", childChoices(root, "lonely"))
+	}
+}
+
+// r on the main menu has nowhere to go back to, and must not be read as leaving:
+// the session would end on a keypress whose whole meaning is "not that, the
+// previous thing".
+func TestBackOnTheMainMenuAsksAgain(t *testing.T) {
+	asked := 0
+	code := session(
+		func() (string, error) {
+			asked++
+			if asked == 1 {
+				return "", infracli.ErrBack
+			}
+			return "", infrapkg.ErrAborted
+		},
+		func(string) error { t.Fatal("something ran"); return nil },
+	)
+
+	if asked != 2 {
+		t.Errorf("the menu was shown %d times; back should bring it up again", asked)
+	}
+	if code != 0 {
+		t.Errorf("exit code %d", code)
 	}
 }
