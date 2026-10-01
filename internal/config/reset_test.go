@@ -208,3 +208,61 @@ func TestResetRemovesAFileItCannotParse(t *testing.T) {
 		t.Errorf("the damaged file survived: %v", err)
 	}
 }
+
+// "profile" means two different things in this CLI and both have a flag: a
+// Lerian platform credential here, and an AWS profile in the infra commands.
+// Somebody reading this output has no way to tell which they are looking at
+// unless it says so.
+func TestDescribeSaysWhichProfilesTheseAre(t *testing.T) {
+	atHome(t)
+
+	cfg, _ := Load()
+	cfg.CurrentProfile = "default"
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	described, err := Describe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(described, "Lerian platform") {
+		t.Errorf("the profile is not attributed to anything:\n%s", described)
+	}
+	// And it points at where the AWS ones actually live, because that is the next
+	// question somebody asks.
+	if !strings.Contains(described, ".aws") {
+		t.Errorf("nothing says where the AWS credentials are:\n%s", described)
+	}
+	if !strings.Contains(described, "not AWS") {
+		t.Errorf("the distinction is not spelled out:\n%s", described)
+	}
+}
+
+// Saying AWS credentials "live in ~/.aws" is not true of every machine that can
+// deploy, and this CLI knows it: the preflight accepts credentials already in the
+// environment, and an environment with `profile = -` deploys with them.
+//
+// A CI runner reading the old wording would go and create ~/.aws files it does
+// not need.
+func TestDescribeDoesNotInsistOnAProfileFile(t *testing.T) {
+	atHome(t)
+
+	cfg, _ := Load()
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	described, err := Describe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(described, ".aws") {
+		t.Errorf("the usual place is not named:\n%s", described)
+	}
+	if !strings.Contains(described, "environment") {
+		t.Errorf("credentials in the environment are not mentioned, and they work:\n%s", described)
+	}
+}

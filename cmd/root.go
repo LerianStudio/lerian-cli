@@ -145,7 +145,12 @@ func Execute() {
 func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.lerian/config.yaml)")
-	rootCmd.PersistentFlags().StringVarP(&profile, "profile", "p", "default", "profile to use")
+	// Whose profile, because the word means two things here: this one is a Lerian
+	// platform login from ~/.lerian/config.yaml, and `lerian infra --profile` means
+	// an AWS profile from ~/.aws. Two flags with one name is a surface we inherited;
+	// the least it can do is say which is which.
+	rootCmd.PersistentFlags().StringVarP(&profile, "profile", "p", "default",
+		"Lerian platform profile to use (not an AWS profile — see lerian infra --profile)")
 	rootCmd.PersistentFlags().StringVarP(&output, "output", "o", "table", "output format (table, json, yaml)")
 
 	// Add subcommands

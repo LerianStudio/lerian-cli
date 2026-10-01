@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -38,5 +39,62 @@ func TestResetRefusesAnArgumentItDoesNotUnderstand(t *testing.T) {
 	}
 	if _, statErr := os.Stat(path); statErr != nil {
 		t.Errorf("the configuration was removed by a command that was not understood: %v", statErr)
+	}
+}
+
+// The global --profile is a Lerian platform credential; the infra commands take
+// an AWS profile under the same flag name. A description that says only "profile
+// to use" leaves somebody to guess which.
+func TestTheGlobalProfileFlagSaysWhoseProfileItIs(t *testing.T) {
+	flag := rootCmd.PersistentFlags().Lookup("profile")
+	if flag == nil {
+		t.Fatal("the global --profile flag is gone")
+	}
+	if !strings.Contains(flag.Usage, "Lerian") {
+		t.Errorf("the flag does not say whose profile it is: %q", flag.Usage)
+	}
+	if !strings.Contains(flag.Usage, "AWS") {
+		t.Errorf("the flag does not distinguish itself from the AWS one: %q", flag.Usage)
+	}
+}
+
+// The main menu is built from each command's Short, so that line is where
+// somebody decides what a command is for. "Authentication commands" does not say
+// authentication with what — and on a menu whose other entry deploys AWS
+// infrastructure, the obvious guess is the wrong one.
+func TestTheMenuSaysWhatEachCommandAuthenticatesWith(t *testing.T) {
+	for _, choice := range menuChoices(rootCmd) {
+		switch choice.Value {
+		case "auth":
+			if !strings.Contains(choice.Note, "Lerian") {
+				t.Errorf("auth does not say what it authenticates with: %q", choice.Note)
+			}
+			if !strings.Contains(choice.Note, "AWS") {
+				t.Errorf("auth does not distinguish itself from AWS credentials: %q", choice.Note)
+			}
+		case "infra":
+			if !strings.Contains(choice.Note, "AWS") {
+				t.Errorf("infra does not say it is AWS: %q", choice.Note)
+			}
+		}
+	}
+}
+
+// Nowhere in this CLI should say AWS credentials must be in ~/.aws. The infra
+// commands accept the ones already in the environment, which is what CI has — and
+// a machine with none of its own would be sent to create files it does not need.
+func TestNothingClaimsAWSCredentialsMustBeInAFile(t *testing.T) {
+	texts := map[string]string{
+		"profile flag":   rootCmd.PersistentFlags().Lookup("profile").Usage,
+		"config command": configCmd.Long,
+	}
+	for _, command := range rootCmd.Commands() {
+		texts[command.Name()+" long"] = command.Long
+	}
+
+	for where, text := range texts {
+		if strings.Contains(text, "They live in ~/.aws") || strings.Contains(text, "they live in ~/.aws") {
+			t.Errorf("%s says AWS credentials must be in a file: %q", where, text)
+		}
 	}
 }
