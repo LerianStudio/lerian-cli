@@ -14,23 +14,29 @@ import (
 //
 // The product's own names are fine and unavoidable — the binary, the config
 // directory, the templates repository, the state bucket the templates create.
-// What this catches is our internal naming leaking into advice.
+// What this catches is our internal naming leaking into anything else.
+//
+// Tests count. A fixture named after one of our profiles reaches no client, but
+// it is where the next person looks for the shape to write — and the names that
+// ended up in the advice got there by being copied from somewhere.
 func TestNoInternalProfileNamesInAdvice(t *testing.T) {
 	// Spellings that could only be an example of a profile or account of ours.
 	banned := []string{
 		"lerian-dev",
 		"lerian-prd",
 		"lerian-stg",
+		"lerian-sso",
 		"lerian-sandbox",
 		"lerian-production",
 		"lerian-staging",
 		"lerian-devops",
 		"lerian-network",
+		"lerian-development",
 	}
 
 	roots := []string{"..", "../../cmd"}
 	for _, root := range roots {
-		walkGoFiles(t, root, func(path, body string) {
+		walkGoFiles(t, root, true, func(path, body string) {
 			for _, name := range banned {
 				if strings.Contains(body, name) {
 					t.Errorf("%s names %q, which is a profile of ours offered as an example", path, name)
@@ -40,7 +46,12 @@ func TestNoInternalProfileNamesInAdvice(t *testing.T) {
 	}
 }
 
-func walkGoFiles(t *testing.T, root string, check func(path, body string)) {
+// walkGoFiles visits the Go files under root. includeTests decides whether
+// fixtures count, and the two sweeps here want different answers: a profile named
+// after us teaches the next person the shape to write, wherever it sits, while a
+// region is only a problem where it is offered as an answer — in a fixture it is
+// just a value.
+func walkGoFiles(t *testing.T, root string, includeTests bool, check func(path, body string)) {
 	t.Helper()
 
 	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
@@ -52,7 +63,14 @@ func walkGoFiles(t *testing.T, root string, check func(path, body string)) {
 		if info.IsDir() {
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		if !includeTests && strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		// This file names them on purpose.
+		if strings.HasSuffix(path, "house_style_test.go") {
 			return nil
 		}
 		body, readErr := os.ReadFile(path)
@@ -81,7 +99,9 @@ func TestOurRegionIsNotOfferedAsTheDefault(t *testing.T) {
 		`region = "us-east-2"`,
 	}
 
-	walkGoFiles(t, "../infracli", func(path, body string) {
+	// Production code only: a region in a fixture is a value, not an answer being
+	// offered to anybody.
+	walkGoFiles(t, "../infracli", false, func(path, body string) {
 		for _, form := range offered {
 			if strings.Contains(body, form) {
 				t.Errorf("%s offers our own region as the default: %s", path, form)

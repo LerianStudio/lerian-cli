@@ -32,7 +32,7 @@ func TestLoadEnvConfigReadsASection(t *testing.T) {
 # a comment
 [dev]
 account_id = 123456789012
-profile    = lerian-dev     # trailing comment
+profile    = acme-dev     # trailing comment
 region     = us-east-2
 
 [prd]
@@ -48,8 +48,8 @@ region     = us-east-1
 	if dev.AccountID != "123456789012" {
 		t.Errorf("AccountID = %q, want 123456789012", dev.AccountID)
 	}
-	if dev.Profile != "lerian-dev" {
-		t.Errorf("Profile = %q, want lerian-dev (the trailing comment must be stripped)", dev.Profile)
+	if dev.Profile != "acme-dev" {
+		t.Errorf("Profile = %q, want acme-dev (the trailing comment must be stripped)", dev.Profile)
 	}
 	if dev.Region != "us-east-2" {
 		t.Errorf("Region = %q, want us-east-2", dev.Region)

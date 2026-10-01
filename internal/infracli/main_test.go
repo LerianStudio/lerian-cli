@@ -63,7 +63,7 @@ func fakeCheckout(t *testing.T, config, backend string) string {
 	return root
 }
 
-const goodConfig = "[dev]\naccount_id = 123456789012\nprofile = lerian-dev\nregion = us-east-2\n"
+const goodConfig = "[dev]\naccount_id = 123456789012\nprofile = acme-dev\nregion = us-east-2\n"
 
 func runCLI(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()

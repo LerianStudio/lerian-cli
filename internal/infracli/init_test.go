@@ -649,7 +649,7 @@ func TestInitWithoutTheAWSCLIExplainsTheDependency(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	_, stderr, err := runCLI(t, "init", "--repo", root, "--env", "dev",
-		"--profile", "lerian-dev", "--region", "us-east-2")
+		"--profile", "acme-dev", "--region", "us-east-2")
 	if err == nil {
 		t.Fatal("expected a refusal naming the AWS CLI")
 	}
@@ -669,7 +669,7 @@ func TestInitWithAnExplicitAccountStillWritesWithoutTheAWSCLI(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	_, stderr, err := runCLI(t, "init", "--repo", root, "--env", "dev",
-		"--profile", "lerian-dev", "--region", "us-east-2",
+		"--profile", "acme-dev", "--region", "us-east-2",
 		"--account", "123456789012", "--targets", "infra-base",
 		"--api-cidr", "203.0.113.7", "--auto-approve")
 	if err != nil {
@@ -692,7 +692,7 @@ func TestInitWithoutTheAWSCLIStillDemandsARegion(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	_, stderr, err := runCLI(t, "init", "--repo", root, "--env", "dev",
-		"--profile", "lerian-dev", "--account", "123456789012")
+		"--profile", "acme-dev", "--account", "123456789012")
 	if err == nil {
 		t.Fatal("expected a refusal about the region")
 	}
@@ -1125,14 +1125,14 @@ func TestAStatedRegionIsNotAskedAboutAgain(t *testing.T) {
 // profile in ~/.aws, and calling that a choice invites somebody to press enter
 // believing they are confirming their own earlier decision.
 func TestTheSuggestedRegionSaysWhereItCameFrom(t *testing.T) {
-	fromProfile := regionOptions("us-east-2", "from the lerian-sandbox profile")
+	fromProfile := regionOptions("us-east-2", "from the acme-sandbox profile")
 	if fromProfile[0].value != "us-east-2" {
 		t.Fatalf("the list does not open on the suggestion: %+v", fromProfile[0])
 	}
 	if strings.Contains(fromProfile[0].note, "already chosen") {
 		t.Errorf("the row claims a choice nobody made: %q", fromProfile[0].note)
 	}
-	if !strings.Contains(fromProfile[0].note, "lerian-sandbox profile") {
+	if !strings.Contains(fromProfile[0].note, "acme-sandbox profile") {
 		t.Errorf("the row does not say where it came from: %q", fromProfile[0].note)
 	}
 	// The place is still named, because that is the part a code does not say.

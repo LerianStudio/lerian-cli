@@ -156,7 +156,7 @@ func TestResolveCredentialsIgnoresWhatIsOnStderr(t *testing.T) {
 		stderr:  `{"AccessKeyId":"AKIAFROMSTDERR"}`,
 	}))
 
-	credentials, err := ResolveCredentials(context.Background(), "lerian-dev")
+	credentials, err := ResolveCredentials(context.Background(), "acme-dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestResolveCredentialsReadsTheExpiration(t *testing.T) {
 			`"Expiration":"` + expires.Format(time.RFC3339) + `"}`,
 	}))
 
-	credentials, err := ResolveCredentials(context.Background(), "lerian-dev")
+	credentials, err := ResolveCredentials(context.Background(), "acme-dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestResolveCredentialsAcceptsASessionThatDoesNotExpire(t *testing.T) {
 	} {
 		t.Setenv("PATH", fakeAWSCLIWith(t, awsScript{version: "aws-cli/2.31.22", stdout: stdout}))
 
-		credentials, err := ResolveCredentials(context.Background(), "lerian-dev")
+		credentials, err := ResolveCredentials(context.Background(), "acme-dev")
 		if err != nil {
 			t.Fatalf("%s: %v", stdout, err)
 		}
@@ -221,7 +221,7 @@ func TestResolveCredentialsNeverPutsTheSecretInTheError(t *testing.T) {
 		exit:    255,
 	}))
 
-	_, err := ResolveCredentials(context.Background(), "lerian-dev")
+	_, err := ResolveCredentials(context.Background(), "acme-dev")
 	if err == nil {
 		t.Fatal("a non-zero exit is a failure even when something was printed")
 	}
@@ -235,5 +235,34 @@ func TestResolveCredentialsNeverPutsTheSecretInTheError(t *testing.T) {
 	// The stderr the AWS CLI wrote is what diagnoses it, so that has to be there.
 	if !strings.Contains(err.Error(), "SSO session has expired") {
 		t.Errorf("the error must carry what the AWS CLI said:\n%v", err)
+	}
+}
+
+// A link to the installation page is a page to read; the command for the machine
+// in front of somebody is a thing to run. The CLI does not install it — that
+// needs a package manager and usually a password — but it can say exactly what to
+// type.
+func TestTheMissingAWSCLIErrorNamesTheCommandForThisMachine(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	err := RequireAWSCLI(context.Background())
+	if err == nil {
+		t.Fatal("with an empty PATH the AWS CLI cannot be found")
+	}
+
+	message := err.Error()
+	switch runtime.GOOS {
+	case "darwin":
+		if !strings.Contains(message, "brew install awscli") {
+			t.Errorf("no command for macOS:\n%s", message)
+		}
+	case "linux":
+		if !strings.Contains(message, "awscli-exe-linux") {
+			t.Errorf("no command for Linux:\n%s", message)
+		}
+	}
+	// And the page stays, for the machine this does not have a line for.
+	if !strings.Contains(message, "docs.aws.amazon.com") {
+		t.Errorf("the documentation link is gone:\n%s", message)
 	}
 }

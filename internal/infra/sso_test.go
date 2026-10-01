@@ -39,13 +39,13 @@ func TestANameThatWouldBecomeAFlagIsRefused(t *testing.T) {
 
 // And an ordinary name still builds the command it always built.
 func TestAnOrdinaryNameBuildsTheUsualCommand(t *testing.T) {
-	session := SSOTarget{Session: "lerian-sso"}
-	if got := strings.Join(session.Args(), " "); got != "sso login --sso-session lerian-sso" {
+	session := SSOTarget{Session: "acme-sso"}
+	if got := strings.Join(session.Args(), " "); got != "sso login --sso-session acme-sso" {
 		t.Errorf("args = %q", got)
 	}
 
-	profile := SSOTarget{Profile: "lerian-sandbox"}
-	if got := strings.Join(profile.Args(), " "); got != "sso login --profile lerian-sandbox" {
+	profile := SSOTarget{Profile: "acme-sandbox"}
+	if got := strings.Join(profile.Args(), " "); got != "sso login --profile acme-sandbox" {
 		t.Errorf("args = %q", got)
 	}
 }

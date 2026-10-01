@@ -108,7 +108,7 @@ func TestTheCredentialIsCheckedAsSoonAsTheEnvironmentIsKnown(t *testing.T) {
 	opts := options{}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
-	expired := errors.New("the SSO session for profile \"lerian-sandbox\" has expired")
+	expired := errors.New("the SSO session for profile \"acme-sandbox\" has expired")
 	err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), func(string, string, bool) error { return expired })
 
 	if !errors.Is(err, expired) {

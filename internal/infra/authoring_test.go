@@ -32,11 +32,11 @@ func TestListAWSProfiles(t *testing.T) {
 	dir := awsHome(t,
 		// "[profile x]" in config, bare "[default]", plus a section that is neither
 		// and must not become a profile.
-		"[profile lerian-dev]\nregion = us-east-2\n\n"+
+		"[profile acme-dev]\nregion = us-east-2\n\n"+
 			"[default]\nregion = us-east-1\n\n"+
 			"[sso-session lerian]\nsso_start_url = https://example.awsapps.com/start\n",
-		// Bare sections in credentials; lerian-dev repeats and must not lose its region.
-		"[ci-user]\naws_access_key_id = AKIAEXAMPLE\n\n[lerian-dev]\n",
+		// Bare sections in credentials; acme-dev repeats and must not lose its region.
+		"[ci-user]\naws_access_key_id = AKIAEXAMPLE\n\n[acme-dev]\n",
 	)
 
 	profiles, err := listAWSProfilesIn(dir)
@@ -48,7 +48,7 @@ func TestListAWSProfiles(t *testing.T) {
 	for _, profile := range profiles {
 		got[profile.Name] = profile
 	}
-	for _, name := range []string{"lerian-dev", "default", "ci-user"} {
+	for _, name := range []string{"acme-dev", "default", "ci-user"} {
 		if _, ok := got[name]; !ok {
 			t.Errorf("expected profile %q, got %v", name, profiles)
 		}
@@ -57,11 +57,11 @@ func TestListAWSProfiles(t *testing.T) {
 		t.Error("an sso-session section must not be listed as a profile")
 	}
 	// config carries the region and must win over the bare credentials entry.
-	if got["lerian-dev"].Region != "us-east-2" {
-		t.Errorf("lerian-dev region = %q, want us-east-2", got["lerian-dev"].Region)
+	if got["acme-dev"].Region != "us-east-2" {
+		t.Errorf("acme-dev region = %q, want us-east-2", got["acme-dev"].Region)
 	}
-	if got["lerian-dev"].Source != "config" {
-		t.Errorf("lerian-dev source = %q, want config", got["lerian-dev"].Source)
+	if got["acme-dev"].Source != "config" {
+		t.Errorf("acme-dev source = %q, want config", got["acme-dev"].Source)
 	}
 }
 
@@ -204,7 +204,7 @@ func readFile(t *testing.T, path string) string {
 
 func TestWriteEnvironmentsConfCreates(t *testing.T) {
 	layout := authoringCheckout(t)
-	spec := EnvSpec{Environment: "dev", AccountID: "123456789012", Profile: "lerian-dev", Region: "us-east-2"}
+	spec := EnvSpec{Environment: "dev", AccountID: "123456789012", Profile: "acme-dev", Region: "us-east-2"}
 
 	result, err := WriteEnvironmentsConf(layout, []EnvSpec{spec}, WriteOptions{})
 	if err != nil {
@@ -230,7 +230,7 @@ func TestWriteEnvironmentsConfPreservesCommentsAndOtherSections(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	original := "# our own note about prd\n[prd]\naccount_id = 345678901234\nprofile    = lerian-prd\nregion     = us-east-1\n"
+	original := "# our own note about prd\n[prd]\naccount_id = 345678901234\nprofile    = acme-prd\nregion     = us-east-1\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
