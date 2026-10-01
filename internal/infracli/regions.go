@@ -3,6 +3,7 @@ package infracli
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
@@ -49,19 +50,24 @@ var awsRegions = []struct{ code, place string }{
 
 // regionOptions is the region list, opening on the one already known.
 //
-// known is whatever the run has been told so far — --region, or the region the
-// chosen profile declares. It goes first because the cursor starts on the first
-// row, and it is added even when this list has never heard of it: a region the
-// operator named is a region that exists, whatever this file thinks.
-func regionOptions(known string) []option {
+// known is whatever the run has been told so far, and source says where that came
+// from — a flag the operator passed, or the profile's own region. Saying which
+// matters: "already chosen" was on this row for a while, and it was not true. The
+// region had been read off ~/.aws, and calling it a choice invites somebody to
+// press enter believing they are confirming a decision they made earlier.
+//
+// It goes first because the cursor starts on the first row, and it is added even
+// when this list has never heard of it: a region the operator named is a region
+// that exists, whatever this file thinks.
+func regionOptions(known, source string) []option {
 	options := make([]option, 0, len(awsRegions)+2)
 
 	if known != "" {
-		options = append(options, option{
-			value: known,
-			label: known,
-			note:  placeOf(known) + "already chosen",
-		})
+		note := placeOf(known) + source
+		if source == "" {
+			note = strings.TrimSuffix(placeOf(known), " · ")
+		}
+		options = append(options, option{value: known, label: known, note: note})
 	}
 
 	for _, region := range awsRegions {
@@ -91,11 +97,11 @@ func placeOf(code string) string {
 
 // askForRegion offers the list and falls through to typing when the operator
 // wants one it does not have.
-func askForRegion(ask *prompter, known string) (string, error) {
+func askForRegion(ask *prompter, known, source string) (string, error) {
 	chosen, err := ask.pick(
 		"Which AWS region will the infrastructure be created in?",
 		"Every resource lands here. Moving later means recreating them.",
-		"--region", regionOptions(known), known)
+		"--region", regionOptions(known, source), known)
 	if err != nil {
 		return "", err
 	}
@@ -179,9 +185,13 @@ func profileRegion(name string) string {
 // Not taken silently from the profile, which is what this used to do: the profile
 // may have been configured for something else entirely, and infrastructure in a
 // region nobody said out loud is discovered later, by the bill or by the latency.
-func regionFor(ask *prompter, passed, profileRegion string) (string, error) {
+func regionFor(ask *prompter, profile, passed, profileRegion string) (string, error) {
 	if passed != "" {
 		return passed, nil
 	}
-	return askForRegion(ask, profileRegion)
+	source := ""
+	if profileRegion != "" {
+		source = "from the " + profile + " profile"
+	}
+	return askForRegion(ask, profileRegion, source)
 }

@@ -694,11 +694,13 @@ func resolveCredentials(
 			// most likely keypress create everything in Ohio. The profile's own region
 			// is a suggestion worth making; ours is not — so when nothing was passed,
 			// the profile is read for one rather than opening the list at its top.
+			source := "given with --region"
 			suggestion := region
 			if suggestion == "" {
 				suggestion = profileRegion(opts.profile)
+				source = "from the " + opts.profile + " profile"
 			}
-			region, err = askForRegion(ask, suggestion)
+			region, err = askForRegion(ask, suggestion, source)
 			if err != nil {
 				return "", "", caller, err
 			}
@@ -780,7 +782,7 @@ func resolveCredentials(
 			return "", "", caller, fmt.Errorf("profile %q does not resolve: %w\n"+
 				"  aws sso login --profile %s", chosen, entry.Err, chosen)
 		}
-		effective, err := regionFor(ask, region, entry.Profile.Region)
+		effective, err := regionFor(ask, entry.Profile.Name, region, entry.Profile.Region)
 		if err != nil {
 			return "", "", caller, err
 		}
@@ -972,9 +974,14 @@ func printSharedTierNotice(out io.Writer, plan initPlan) {
 // tfvars like every other root. Its absence from a list of everything else reads
 // as an oversight unless the question says otherwise.
 func configurePurpose() string {
-	return "infra-base is the VPC and the cluster. Add products to configure their " +
-		"datastores too. bootstrap is always configured: it creates the state backend " +
-		"everything else writes to, so it is not a choice."
+	// One line, and short enough to survive an 80-column terminal: the selector
+	// fits this to width-2, and a long one loses its end — which is where the part
+	// nobody knows yet was sitting. 77 characters.
+	//
+	// "comes too" alone said that bootstrap is not optional without saying why,
+	// which is the half worth keeping: it makes the backend the other targets
+	// write their state to.
+	return "infra-base is the VPC and cluster. bootstrap comes too: it makes the backend."
 }
 
 // printNextStep names what has to run before anything else can.
