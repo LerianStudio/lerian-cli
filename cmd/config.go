@@ -78,7 +78,7 @@ func setTemplates(out io.Writer, path string) error {
 	if !infra.IsCheckout(absolute) {
 		return fmt.Errorf("no lerian-terraform-foundation checkout at %s\n"+
 			"A checkout is recognized by the directories examples/aws/_modules and\n"+
-			"examples/aws/backend; at least one of them is missing there.", absolute)
+			"examples/aws/backend; at least one of them is missing there", absolute)
 	}
 
 	cfg, err := config.Load()
