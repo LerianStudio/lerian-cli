@@ -667,6 +667,19 @@ removes caches and run logs, and it says the same thing about AWS.
 It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
 refuses rather than guessing.
 
+It also says what it will **not** change. A checkout sitting in the managed path —
+`~/lerian/lerian-terraform-foundation`, where `init --clone` puts it — is found by
+convention rather than recorded in the config, so the next run still uses it:
+
+```
+  The checkout at ~/lerian/lerian-terraform-foundation stays.
+  It is found by convention rather than recorded here, so the next run
+  still uses it. Remove the directory yourself if that is what you want.
+```
+
+Being told the tool forgot everything and then watching it carry on with a
+checkout is the kind of surprise worth three lines.
+
 From the menu, picking `config` offers what it can do:
 
 ```
@@ -716,6 +729,19 @@ removes caches and run logs, and it says the same thing about AWS.
 
 It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
 refuses rather than guessing.
+
+It also says what it will **not** change. A checkout sitting in the managed path —
+`~/lerian/lerian-terraform-foundation`, where `init --clone` puts it — is found by
+convention rather than recorded in the config, so the next run still uses it:
+
+```
+  The checkout at ~/lerian/lerian-terraform-foundation stays.
+  It is found by convention rather than recorded here, so the next run
+  still uses it. Remove the directory yourself if that is what you want.
+```
+
+Being told the tool forgot everything and then watching it carry on with a
+checkout is the kind of surprise worth three lines.
 
 From the menu, picking `config` offers what it can do:
 

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
 // `lerian config reset production --yes` reads like "reset the production
@@ -96,5 +98,83 @@ func TestNothingClaimsAWSCredentialsMustBeInAFile(t *testing.T) {
 		if strings.Contains(text, "They live in ~/.aws") || strings.Contains(text, "they live in ~/.aws") {
 			t.Errorf("%s says AWS credentials must be in a file: %q", where, text)
 		}
+	}
+}
+
+// reset forgets what the config records, and a checkout in the managed path is
+// not recorded — it is found by convention. Somebody who has just been told the
+// tool forgot everything, and then watches it carry on using a checkout, is owed
+// the sentence explaining why.
+func TestResetSaysTheManagedCheckoutStays(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	managed, err := infra.ManagedCheckoutPath("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"examples/aws/_modules", "examples/aws/backend"} {
+		if err := os.MkdirAll(filepath.Join(managed, filepath.FromSlash(marker)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var out bytes.Buffer
+	noteManagedCheckout(&out)
+
+	if !strings.Contains(out.String(), managed) {
+		t.Errorf("the checkout that stays is not named:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "stays") {
+		t.Errorf("the note does not say it survives the reset:\n%s", out.String())
+	}
+}
+
+// With nothing in the managed path there is nothing to warn about, and a warning
+// about a directory that does not exist is noise.
+func TestResetIsQuietWithNoManagedCheckout(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var out bytes.Buffer
+	noteManagedCheckout(&out)
+
+	if out.Len() != 0 {
+		t.Errorf("warned about a checkout that is not there:\n%s", out.String())
+	}
+}
+
+// "The next run starts from nothing" is false when a managed checkout is about to
+// be picked up again, and it sits three lines under the note saying exactly that.
+func TestResetDoesNotPromiseNothingWhenSomethingStays(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	managed, err := infra.ManagedCheckoutPath("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"examples/aws/_modules", "examples/aws/backend"} {
+		if err := os.MkdirAll(filepath.Join(managed, filepath.FromSlash(marker)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(home, ".lerian", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("current-profile: default\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	configResetYes = true
+	t.Cleanup(func() { configResetYes = false })
+
+	var out bytes.Buffer
+	if err := resetConfig(&out); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(out.String(), "starts from nothing") {
+		t.Errorf("it promises nothing while a checkout stays:\n%s", out.String())
 	}
 }

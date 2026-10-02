@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/lerian-studio/lerian-cli/internal/config"
+	"github.com/lerian-studio/lerian-cli/internal/infra"
 	"github.com/lerian-studio/lerian-cli/internal/infracli"
 )
 
@@ -58,6 +59,25 @@ possibly with work in it. Neither is this command's to delete.`,
 	SilenceUsage: true,
 }
 
+// noteManagedCheckout says what reset will not change.
+//
+// reset forgets what the config records. A checkout sitting in the managed path
+// is not recorded — it is found by convention, which is the whole point of that
+// path — so the next run keeps using it. Somebody who has just been told the tool
+// forgot everything, and then watches it carry on with a checkout, is owed the
+// sentence that explains why.
+func noteManagedCheckout(out io.Writer) bool {
+	managed, err := infra.ManagedCheckoutPath("")
+	if err != nil || !infra.IsCheckout(managed) {
+		return false
+	}
+
+	fmt.Fprintf(out, "  The checkout at %s stays.\n", managed)
+	fmt.Fprintf(out, "  It is found by convention rather than recorded here, so the next run\n")
+	fmt.Fprintf(out, "  still uses it. Remove the directory yourself if that is what you want.\n\n")
+	return true
+}
+
 func showConfig(out io.Writer) error {
 	described, err := config.Describe()
 	if err != nil {
@@ -78,6 +98,7 @@ func resetConfig(out io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(out, "\n%s\n", described)
+	staying := noteManagedCheckout(out)
 
 	if !configResetYes {
 		if !infracli.CanAsk(out) {
@@ -110,6 +131,12 @@ func resetConfig(out io.Writer) error {
 	}
 	for _, path := range removed {
 		fmt.Fprintf(out, "  removed %s\n", path)
+	}
+	// Not "from nothing" when something is about to be picked up again — that
+	// sentence would sit three lines under the note saying otherwise.
+	if staying {
+		fmt.Fprintf(out, "\n  The next run asks again, and finds the checkout above.\n\n")
+		return nil
 	}
 	fmt.Fprintf(out, "\n  The next run starts from nothing.\n\n")
 	return nil
