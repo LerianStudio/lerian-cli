@@ -722,112 +722,40 @@ made, possibly with work in it.
 It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
 refuses rather than guessing.
 
-It also says what it will **not** change. A checkout sitting in the managed path —
-`~/lerian/lerian-terraform-foundation`, where `init --clone` puts it — is found by
-convention rather than recorded in the config, so the next run still uses it:
+Then it offers to delete the templates checkouts themselves — **one question per
+directory**, answered separately from the first one:
 
 ```
-  The checkout at ~/lerian/lerian-terraform-foundation stays.
-  It is found by convention rather than recorded here, so the next run
-  still uses it. Remove the directory yourself if that is what you want.
+  /Users/you/lerian/lerian-terraform-foundation
+  cloned by this tool · 1 file changed and not committed · 412 MB
+  Everything in it goes, committed or not, and no later run can bring it back.
+
+  Delete this templates checkout?
+  Deletes the directory and everything in it. This cannot be undone.
+  ❯ keep the directory  nothing is deleted
+    delete it           the directory and all its contents
 ```
 
-Being told the tool forgot everything and then watching it carry on with a
-checkout is the kind of surprise worth three lines.
+Separate because the two answers undo differently: forgetting a path is undone
+by the next run asking again, and deleting a git clone is undone by nothing. The
+line above the question is the part worth reading — whose directory it is, and
+whether anything in it was never committed, which is the only thing a fresh
+clone cannot bring back. The cursor starts on the row that deletes nothing.
 
-From the menu, picking `config` offers what it can do:
+Only the checkouts this tool would use are in scope: the recorded one and the
+managed path. **Not the directory you are standing in** — `reset` is run from
+wherever you happen to be, and deleting the repository you are sitting in
+because you were sitting in it is not a reset. Before anything is removed it
+refuses any path that is not a checkout, so a config holding a stale or mistyped
+directory cannot turn this into a recursive delete of whatever lives there now.
 
-```
-  Which config command?
-  ❯ show   Print the configuration and where it lives
-    reset  Forget everything, as if the CLI had never run here
-```
+`--yes` alone never deletes a directory: it has meant "forget the configuration"
+on every machine that already runs it, and widening that silently would change
+what those invocations do. `--delete-templates` is the flag that says it, and
+the only way to reach the deletion with no terminal to ask at.
 
-`reset` is last on purpose: the cursor starts on the first row, and a list that
-opens on the command that removes things makes the most likely keypress the
-destructive one.
-
-## Configuration
-
-### What the CLI remembers, and how to forget it
-
-```bash
-lerian config          # what it has written down, and where
-lerian config reset    # forget it, as if the CLI had never run here
-```
-
-There is one file — `~/.lerian/config.yaml` — and it holds two things: where the
-templates checkout is, and the profiles `lerian auth login` creates. `reset`
-removes that file, so the next run asks what it asked the first time.
-
-```
-  file      ~/.lerian/config.yaml
-  templates ~/lerian/lerian-terraform-foundation
-  profile   default   (Lerian platform, not AWS)
-  logins    none — lerian auth login creates one
-
-  AWS credentials are not here. lerian infra reads them the way every AWS tool
-  does: a profile in ~/.aws, or the credentials already in the environment.
-```
-
-**"profile" means two different things in this CLI**, and both have a flag:
-`lerian --profile` is a Lerian platform login kept in the file above, while
-`lerian infra --profile` is an AWS profile from `~/.aws`. Two flags with one name
-is a surface inherited from the `lerian-infra` binary; every place the word
-appears now says which one it means.
-
-It takes that file and **nothing else**. `~/.aws` belongs to the AWS CLI and every
-tool on this machine reads it; a templates checkout is a git clone you made,
-possibly with work in it. Neither is this command's to delete, and a "reset" that
-took them would be an expensive surprise. `lerian infra cleanup` is the one that
-removes caches and run logs, and it says the same thing about AWS.
-
-### Pointing it at a checkout
-
-```bash
-lerian config templates /path/to/lerian-terraform-foundation   # record it
-lerian config templates --clear                                # forget it
-```
-
-Picked off the menu instead, with no path to give, it asks — offering the
-checkouts this machine already has, plus a line to type one and, when there is
-something recorded, a row to forget it.
-
-There are five ways to say where the templates are, and this is the one that
-sticks. In order of precedence:
-
-| | |
-|---|---|
-| `--repo <path>` | this run only |
-| `$LERIAN_TF_REPO` | this shell only |
-| the working directory, or one above it | the checkout you are standing in |
-| **recorded** — `config templates` | **every run, until cleared** |
-| the managed path `~/lerian/lerian-terraform-foundation` | where `init --clone` puts one |
-
-A recorded path beats the managed one: that is a decision, this is a directory
-that happens to exist somewhere conventional. It loses to the working directory,
-because the checkout you are inside is the one you mean.
-
-`--clear` forgets the path and leaves the directory alone — it is a clone you
-made, possibly with work in it.
-
-### Forgetting everything
-
-It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
-refuses rather than guessing.
-
-It also says what it will **not** change. A checkout sitting in the managed path —
-`~/lerian/lerian-terraform-foundation`, where `init --clone` puts it — is found by
-convention rather than recorded in the config, so the next run still uses it:
-
-```
-  The checkout at ~/lerian/lerian-terraform-foundation stays.
-  It is found by convention rather than recorded here, so the next run
-  still uses it. Remove the directory yourself if that is what you want.
-```
-
-Being told the tool forgot everything and then watching it carry on with a
-checkout is the kind of surprise worth three lines.
+`~/.aws` is never touched. It belongs to the AWS CLI, and every tool on the
+machine reads it.
 
 From the menu, picking `config` offers what it can do:
 

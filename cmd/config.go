@@ -15,7 +15,10 @@ import (
 	"github.com/lerian-studio/lerian-cli/internal/infracli"
 )
 
-var configResetYes bool
+var (
+	configResetYes       bool
+	configResetTemplates bool
+)
 
 var configCmd = &cobra.Command{
 	Use:   "config",
@@ -165,11 +168,18 @@ var configResetCmd = &cobra.Command{
 	Long: `Removes ~/.lerian/config.yaml, so the next run asks what it asked the first
 time: where the templates are, which account to deploy into.
 
-It takes that file and nothing else. ~/.aws belongs to the AWS CLI and every
-tool on this machine reads it; a templates checkout is a git clone you made,
-possibly with work in it. Neither is this command's to delete.`,
-	Args:         cobra.NoArgs,
-	RunE:         func(cmd *cobra.Command, _ []string) error { return resetConfig(cmd.OutOrStdout()) },
+It then offers to delete the templates checkouts on this machine — one question
+per directory, answered separately from the one above, because forgetting a path
+is undone by the next run and deleting a git clone is not. Declining is the
+default, and --delete-templates deletes without asking, for a script that means
+it.
+
+~/.aws is never touched. It belongs to the AWS CLI and every tool on this
+machine reads it.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		return resetConfig(cmd.Context(), cmd.OutOrStdout())
+	},
 	SilenceUsage: true,
 }
 
@@ -180,16 +190,56 @@ possibly with work in it. Neither is this command's to delete.`,
 // path — so the next run keeps using it. Somebody who has just been told the tool
 // forgot everything, and then watches it carry on with a checkout, is owed the
 // sentence that explains why.
-func noteManagedCheckout(out io.Writer) bool {
-	managed, err := infra.ManagedCheckoutPath("")
-	if err != nil || !infra.IsCheckout(managed) {
-		return false
-	}
+// deleteTemplatesFound offers to remove the checkouts on disk, one at a time,
+// and reports how many are still there afterwards.
+//
+// A question of its own, after the configuration has already gone. Folding it
+// into the first one would make a single "yes" mean both "forget what you know"
+// — which the next run simply asks again — and "delete a git clone", which no
+// run can undo. They are not the same decision and must not share an answer.
+//
+// The default row is the one that deletes nothing.
+func deleteTemplatesFound(ctx context.Context, out io.Writer, found []infracli.TemplatesOnDisk) int {
+	staying := 0
+	for _, checkout := range found {
+		if !configResetTemplates && !infracli.CanAsk(out) {
+			// Nobody to ask, and no flag saying to go ahead. Said rather than passed
+			// over in silence: "reset" was just reported as done, and a directory
+			// this command mentioned by name must not be left in an unstated state.
+			fmt.Fprintf(out, "  kept %s — pass --delete-templates to remove it\n", checkout.Path)
+			staying++
+			continue
+		}
 
-	fmt.Fprintf(out, "  The checkout at %s stays.\n", managed)
-	fmt.Fprintf(out, "  It is found by convention rather than recorded here, so the next run\n")
-	fmt.Fprintf(out, "  still uses it. Remove the directory yourself if that is what you want.\n\n")
-	return true
+		if !configResetTemplates {
+			fmt.Fprintf(out, "  %s\n  %s\n", checkout.Path, checkout.Describe())
+			fmt.Fprintf(out, "  Everything in it goes, committed or not, and no later run can bring it back.\n\n")
+			// Short enough to survive the width the purpose line is cut at. The
+			// sentence above carries the detail, where nothing truncates it.
+			answer, err := infracli.Choose(out, "Delete this templates checkout?",
+				"Deletes the directory and everything in it. This cannot be undone.",
+				[]infracli.Choice{
+					{Value: "no", Label: "keep the directory", Note: "nothing is deleted"},
+					{Value: "yes", Label: "delete it", Note: "the directory and all its contents"},
+				})
+			if err != nil || answer != "yes" {
+				fmt.Fprintf(out, "  kept %s\n", checkout.Path)
+				staying++
+				continue
+			}
+		}
+
+		if err := infracli.RemoveTemplates(checkout.Path); err != nil {
+			// Said and carried on. The configuration is already gone, the other
+			// checkout may still be removable, and the operator can delete this one
+			// themselves — there is nothing here worth abandoning the command for.
+			fmt.Fprintf(out, "  could not delete %s: %v\n", checkout.Path, err)
+			staying++
+			continue
+		}
+		fmt.Fprintf(out, "  deleted %s\n", checkout.Path)
+	}
+	return staying
 }
 
 func showConfig(out io.Writer) error {
@@ -202,13 +252,17 @@ func showConfig(out io.Writer) error {
 // script, and outside a terminal there is nobody to ask.
 //
 //nolint:nilerr // see the comment on the declining branch below
-func resetConfig(out io.Writer) error {
+func resetConfig(ctx context.Context, out io.Writer) error {
 	described, err := config.Describe()
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "\n%s\n", described)
-	staying := noteManagedCheckout(out)
+
+	// Before the file goes: the recorded path is in it, and afterwards there is
+	// nothing left saying where that checkout was.
+	found := infracli.TemplatesFound(ctx)
+	noteTemplatesFound(out, found)
 
 	if !configResetYes {
 		if !infracli.CanAsk(out) {
@@ -216,7 +270,7 @@ func resetConfig(out io.Writer) error {
 				"Pass --yes if that is what you want")
 		}
 		answer, err := infracli.Choose(out, "Forget this configuration?",
-			"The next run asks what it asked the first time. Nothing outside the file above is touched.",
+			"The next run asks what it asked the first time. No directory is removed by this answer.",
 			[]infracli.Choice{
 				{Value: "no", Label: "keep it", Note: "changes nothing"},
 				{Value: "yes", Label: "forget it", Note: "removes ~/.lerian/config.yaml"},
@@ -235,25 +289,52 @@ func resetConfig(out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if len(removed) == 0 {
+	switch {
+	case len(removed) == 0 && len(found) == 0:
 		fmt.Fprintf(out, "  nothing to forget — there was no configuration.\n\n")
 		return nil
+	case len(removed) == 0:
+		fmt.Fprintf(out, "  there was no configuration to forget.\n")
 	}
 	for _, path := range removed {
 		fmt.Fprintf(out, "  removed %s\n", path)
 	}
+
+	staying := deleteTemplatesFound(ctx, out, found)
+
 	// Not "from nothing" when something is about to be picked up again — that
-	// sentence would sit three lines under the note saying otherwise.
-	if staying {
-		fmt.Fprintf(out, "\n  The next run asks again, and finds the checkout above.\n\n")
+	// sentence would sit a few lines under the note saying otherwise.
+	if staying > 0 {
+		fmt.Fprintf(out, "\n  The next run asks again, and finds the checkout that stayed.\n\n")
 		return nil
 	}
 	fmt.Fprintf(out, "\n  The next run starts from nothing.\n\n")
 	return nil
 }
 
+// noteTemplatesFound says, before anything is decided, which directories are
+// about to be asked about. Somebody deciding whether to reset at all should not
+// learn only afterwards that a clone of theirs was in scope.
+func noteTemplatesFound(out io.Writer, found []infracli.TemplatesOnDisk) {
+	if len(found) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "  %d templates checkout(s) on this machine. Each is asked about separately\n", len(found))
+	fmt.Fprintf(out, "  after the configuration is forgotten:\n")
+	for _, checkout := range found {
+		fmt.Fprintf(out, "    %s\n", checkout.Path)
+	}
+	fmt.Fprintf(out, "\n")
+}
+
 func init() {
 	configResetCmd.Flags().BoolVar(&configResetYes, "yes", false, "do not ask")
+	// Separate from --yes on purpose. A script that already passes --yes means
+	// "forget the configuration"; making it also delete a git clone would be a
+	// change of meaning nobody asked for, applied to every machine it already runs
+	// on.
+	configResetCmd.Flags().BoolVar(&configResetTemplates, "delete-templates", false,
+		"also delete the templates checkouts, without asking")
 	configTemplatesCmd.Flags().BoolVar(&configTemplatesClear, "clear", false, "forget the recorded path")
 	configCmd.AddCommand(configShowCmd, configTemplatesCmd, configResetCmd)
 	rootCmd.AddCommand(configCmd)

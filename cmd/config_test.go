@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -104,45 +105,96 @@ func TestNothingClaimsAWSCredentialsMustBeInAFile(t *testing.T) {
 	}
 }
 
-// reset forgets what the config records, and a checkout in the managed path is
-// not recorded — it is found by convention. Somebody who has just been told the
-// tool forgot everything, and then watches it carry on using a checkout, is owed
-// the sentence explaining why.
-func TestResetSaysTheManagedCheckoutStays(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
+// managedCheckout builds a checkout where init --clone would put one.
+func managedCheckout(t *testing.T) string {
+	t.Helper()
 	managed, err := infra.ManagedCheckoutPath("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, marker := range []string{"examples/aws/_modules", "examples/aws/backend"} {
-		if err := os.MkdirAll(filepath.Join(managed, filepath.FromSlash(marker)), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
+	return checkoutAt(t, managed)
+}
+
+// Somebody deciding whether to reset should not learn afterwards that a clone of
+// theirs was in scope. The directories are named before the first question.
+func TestResetNamesTheCheckoutsBeforeAsking(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	managed := managedCheckout(t)
+
+	configResetYes = true
+	t.Cleanup(func() { configResetYes = false })
 
 	var out bytes.Buffer
-	noteManagedCheckout(&out)
+	if err := resetConfig(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
 
 	if !strings.Contains(out.String(), managed) {
-		t.Errorf("the checkout that stays is not named:\n%s", out.String())
-	}
-	if !strings.Contains(out.String(), "stays") {
-		t.Errorf("the note does not say it survives the reset:\n%s", out.String())
+		t.Errorf("the checkout in scope is not named:\n%s", out.String())
 	}
 }
 
-// With nothing in the managed path there is nothing to warn about, and a warning
-// about a directory that does not exist is noise.
-func TestResetIsQuietWithNoManagedCheckout(t *testing.T) {
+// With no checkout anywhere there is nothing to ask about, and a question about
+// a directory that is not there is noise.
+func TestResetIsQuietWithNoCheckoutAnywhere(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	var out bytes.Buffer
-	noteManagedCheckout(&out)
+	configResetYes = true
+	t.Cleanup(func() { configResetYes = false })
 
-	if out.Len() != 0 {
-		t.Errorf("warned about a checkout that is not there:\n%s", out.String())
+	var out bytes.Buffer
+	if err := resetConfig(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(out.String(), "templates checkout(s)") {
+		t.Errorf("asked about a checkout that is not there:\n%s", out.String())
+	}
+}
+
+// --yes has meant "forget the configuration" on every machine it already runs
+// on. Making it delete a git clone as well would change what those invocations
+// do, silently, the next time the CLI is updated.
+func TestYesAloneDeletesNoDirectory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	managed := managedCheckout(t)
+
+	configResetYes = true
+	t.Cleanup(func() { configResetYes = false })
+
+	var out bytes.Buffer
+	if err := resetConfig(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(managed); err != nil {
+		t.Fatalf("--yes alone deleted %s: %v", managed, err)
+	}
+	if !strings.Contains(out.String(), "kept "+managed) {
+		t.Errorf("the directory was kept and not said to be:\n%s", out.String())
+	}
+}
+
+// And the flag that does say it deletes it, for a script that means it — the
+// only way to reach the deletion with no terminal to ask at.
+func TestDeleteTemplatesRemovesTheDirectory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	managed := managedCheckout(t)
+
+	configResetYes = true
+	configResetTemplates = true
+	t.Cleanup(func() { configResetYes, configResetTemplates = false, false })
+
+	var out bytes.Buffer
+	if err := resetConfig(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(managed); !os.IsNotExist(err) {
+		t.Errorf("%s is still there: %v", managed, err)
+	}
+	if !strings.Contains(out.String(), "starts from nothing") {
+		t.Errorf("everything is gone and it does not say so:\n%s", out.String())
 	}
 }
 
@@ -156,11 +208,7 @@ func TestResetDoesNotPromiseNothingWhenSomethingStays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, marker := range []string{"examples/aws/_modules", "examples/aws/backend"} {
-		if err := os.MkdirAll(filepath.Join(managed, filepath.FromSlash(marker)), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
+	checkoutAt(t, managed)
 	path := filepath.Join(home, ".lerian", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
@@ -173,22 +221,22 @@ func TestResetDoesNotPromiseNothingWhenSomethingStays(t *testing.T) {
 	t.Cleanup(func() { configResetYes = false })
 
 	var out bytes.Buffer
-	if err := resetConfig(&out); err != nil {
+	if err := resetConfig(context.Background(), &out); err != nil {
 		t.Fatal(err)
 	}
 
 	if strings.Contains(out.String(), "starts from nothing") {
 		t.Errorf("it promises nothing while a checkout stays:\n%s", out.String())
 	}
-	// Driven through resetConfig, not through noteManagedCheckout: a test that
+	// Driven through resetConfig, not through the helper under it: a test that
 	// calls the helper proves the helper works and says nothing about whether the
 	// command calls it. Mine did exactly that, and stayed green with the call
 	// removed.
 	if !strings.Contains(out.String(), managed) {
 		t.Errorf("reset did not mention the checkout that stays:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "stays") {
-		t.Errorf("reset did not say it survives:\n%s", out.String())
+	if !strings.Contains(out.String(), "kept "+managed) {
+		t.Errorf("reset did not say the directory survives:\n%s", out.String())
 	}
 }
 
