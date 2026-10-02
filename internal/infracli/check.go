@@ -34,7 +34,7 @@ Exits non-zero when anything is missing, which makes it usable as a CI gate.
 Flags:
   --repo <path>           the checkout to report on. Skips discovery.
   --templates-dir <path>  where the managed checkout lives
-                          (default ~/lerian/lerian-terraform-foundation)
+                          (default ~/.lerian/lerian-terraform-foundation)
   -h, --help              this message
 `
 
@@ -59,7 +59,7 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	flags.Usage = func() { fmt.Fprint(stderr, checkUsage) }
 	flags.StringVar(&opts.repo, "repo", "", "path to the checkout")
 	flags.StringVar(&opts.templatesDir, "templates-dir", "",
-		"where the managed checkout lives (default ~/lerian/lerian-terraform-foundation)")
+		"where the managed checkout lives (default ~/.lerian/lerian-terraform-foundation)")
 
 	if err := flags.Parse(args); err != nil {
 		return err

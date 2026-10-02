@@ -287,7 +287,7 @@ checks the machine before it asks anything:
   ==> Environment check
   ok       terraform    /opt/homebrew/bin/terraform
   ok       aws          /opt/homebrew/bin/aws
-  ok       templates    ~/lerian/lerian-terraform-foundation @ v1.6.0
+  ok       templates    ~/.lerian/lerian-terraform-foundation @ v1.6.0
   ok       aws session  8 of 9 profiles resolve: dev, stg, prd and 5 more
 
   4 checks, all ok.
@@ -649,7 +649,7 @@ removes that file, so the next run asks what it asked the first time.
   logins     none — lerian auth login creates one
 
   ==> Templates
-  checkout   ~/lerian/lerian-terraform-foundation
+  checkout   ~/.lerian/lerian-terraform-foundation
   found by   the managed path — found by convention, not recorded
   version    v1.11.0
 
@@ -695,6 +695,35 @@ lerian config templates /path/to/lerian-terraform-foundation   # record it
 lerian config templates --clear                                # forget it
 ```
 
+### Getting a checkout in the first place
+
+With none on the machine, `infra` offers to fetch one instead of asking where
+something that is not there is:
+
+```
+  There is no templates checkout on this machine. Get one?
+  The Terraform templates every stack is rendered from. About 30 MB, cloned with git.
+❯ Clone it into ~/.lerian/lerian-terraform-foundation  this tool's own directory
+  Clone it somewhere else                              you choose the directory
+  I already have a clone                               give the path to it
+```
+
+Then it asks which release, from the tags that exist and that this binary can
+read, newest first — rather than making you go and look one up for a flag.
+
+The default lives under `~/.lerian`, beside the configuration, so everything the
+CLI manages on a machine is in one directory. It is a perfectly ordinary git
+checkout: open it, read it, run `terraform` in it by hand. **Clone it somewhere
+else** takes any directory you like and records it, so later runs find it
+without a flag; `--templates-dir` does the same for a single run.
+
+A clone made before the move, at `~/lerian/lerian-terraform-foundation`, is
+still found. That location is read and never written to: a checkout already on a
+machine — with `environments.conf` and `tfvars` inside it that were never
+committed — must not be silently abandoned for an empty directory next door.
+
+### Pointing at a clone you already have
+
 Picked off the menu instead, with no path to give, it asks — offering the
 checkouts this machine already has, plus a line to type one and, when there is
 something recorded, a row to forget it.
@@ -708,7 +737,8 @@ sticks. In order of precedence:
 | `$LERIAN_TF_REPO` | this shell only |
 | the working directory, or one above it | the checkout you are standing in |
 | **recorded** — `config templates` | **every run, until cleared** |
-| the managed path `~/lerian/lerian-terraform-foundation` | where `init --clone` puts one |
+| the managed path `~/.lerian/lerian-terraform-foundation` | where `init --clone` puts one |
+| the old managed path `~/lerian/lerian-terraform-foundation` | read, never written — a clone made before the move |
 
 A recorded path beats the managed one: that is a decision, this is a directory
 that happens to exist somewhere conventional. It loses to the working directory,

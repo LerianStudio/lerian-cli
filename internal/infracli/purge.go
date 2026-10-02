@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
@@ -35,10 +36,8 @@ func TemplatesFound(ctx context.Context) []TemplatesOnDisk {
 	// found it: a recorded path very often IS the managed one, and reporting that
 	// as "you cloned this one" tells somebody deciding whether to delete it the
 	// opposite of the truth.
-	managedPath, err := infra.ManagedCheckoutPath("")
-	if err != nil {
-		managedPath = ""
-	}
+	managedPaths := infra.ManagedCheckoutPaths("")
+	isManaged := func(path string) bool { return slices.Contains(managedPaths, path) }
 
 	var found []TemplatesOnDisk
 	seen := map[string]bool{}
@@ -50,7 +49,7 @@ func TemplatesFound(ctx context.Context) []TemplatesOnDisk {
 		seen[path] = true
 		found = append(found, TemplatesOnDisk{
 			Path:     path,
-			Managed:  path == managedPath,
+			Managed:  isManaged(path),
 			Recorded: path == recorded,
 			Dirty:    uncommitted(ctx, path),
 			Size:     totalSize([]string{path}),
@@ -58,7 +57,9 @@ func TemplatesFound(ctx context.Context) []TemplatesOnDisk {
 	}
 
 	add(recorded)
-	add(managedPath)
+	for _, managed := range managedPaths {
+		add(managed)
+	}
 	return found
 }
 

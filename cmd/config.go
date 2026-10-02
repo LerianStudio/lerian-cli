@@ -43,7 +43,7 @@ var configTemplatesCmd = &cobra.Command{
 	Long: `Writes the path into ~/.lerian/config.yaml, so every later run finds it
 without a flag or a variable.
 
-It beats the managed path at ~/lerian/lerian-terraform-foundation — one is a
+It beats the managed path at ~/.lerian/lerian-terraform-foundation — one is a
 decision, the other a directory that happens to exist somewhere conventional —
 and loses to standing inside a checkout, which is the one you are looking at.
 

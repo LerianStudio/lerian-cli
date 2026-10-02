@@ -150,7 +150,7 @@ func defaultCheckout(templatesDir string) string {
 	if working, err := os.Getwd(); err == nil && infra.IsCheckout(working) {
 		return working
 	}
-	if managed, err := infra.ManagedCheckoutPath(templatesDir); err == nil && infra.IsCheckout(managed) {
+	if managed := infra.FirstManagedCheckout(templatesDir); managed != "" {
 		return managed
 	}
 	return ""
@@ -238,7 +238,7 @@ func templatesChoices(recorded string) []Choice {
 	if working, err := os.Getwd(); err == nil {
 		add(working, "the directory you are in")
 	}
-	if managed, err := infra.ManagedCheckoutPath(""); err == nil {
+	for _, managed := range infra.ManagedCheckoutPaths("") {
 		add(managed, "cloned by infra init --clone")
 	}
 

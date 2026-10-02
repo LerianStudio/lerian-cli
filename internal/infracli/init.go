@@ -106,9 +106,11 @@ THE TEMPLATES
                         and the error lists the tags that exist. v1.6.0 is the
                         oldest with the AWS layout this tool drives.
   --clone               Clone the templates into the managed checkout, which lives
-                        at ~/lerian/lerian-terraform-foundation. Not hidden, and
-                        named after the repository, because it is an ordinary git
-                        checkout you are meant to be able to open and use by hand.
+                        at ~/.lerian/lerian-terraform-foundation — alongside the
+                        configuration, so everything this tool manages is in one
+                        place. It is an ordinary git checkout: open it, read it and
+                        run terraform in it by hand. --templates-dir puts it
+                        elsewhere.
   --no-clone            Fail instead of cloning when no checkout is found.
   --sync                Move the managed checkout to --templates-ref, then exit.
                         Your environments.conf and every envs/*.tfvars survive it:
@@ -198,7 +200,7 @@ func runInit(ctx context.Context, args []string, stdout, stderr io.Writer) error
 
 	flags.StringVar(&opts.repo, "repo", "", "path to the checkout")
 	flags.StringVar(&opts.templatesDir, "templates-dir", "",
-		"where the managed checkout lives (default ~/lerian/lerian-terraform-foundation)")
+		"where the managed checkout lives (default ~/.lerian/lerian-terraform-foundation)")
 	flags.StringVar(&opts.templatesRef, "templates-ref", "",
 		"templates tag to clone or sync to, e.g. v1.6.0 (required by --clone and --sync)")
 	flags.StringVar(&opts.environment, "env", "", "dev, stg or prd")

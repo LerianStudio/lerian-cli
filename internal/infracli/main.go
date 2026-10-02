@@ -90,7 +90,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags.Usage = func() { fmt.Fprint(stderr, usage) }
 
 	flags.StringVar(&opts.templatesDir, "templates-dir", "",
-		"where the managed checkout lives (default ~/lerian/lerian-terraform-foundation)")
+		"where the managed checkout lives (default ~/.lerian/lerian-terraform-foundation)")
 	flags.StringVar(&opts.repo, "repo", "",
 		"path to the lerian-terraform-foundation checkout "+
 			"(default: $LERIAN_TF_REPO, else discovered by walking up from the working directory)")
@@ -147,7 +147,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		// could give right now. The answer is written down, so it is asked once per
 		// machine rather than once per shell.
 		if ask := newPrompter(stderr); ask.interactive && errors.Is(err, errNoCheckoutAnywhere) {
-			answered, askErr := askForCheckout(ask, stderr, opts.templatesDir)
+			answered, askErr := obtainCheckout(ctx, ask, stderr, opts.templatesDir)
 			if askErr != nil {
 				return askErr
 			}
@@ -433,11 +433,9 @@ func resolveLayout(flagRepo, envRepo, templatesDir string) (infra.Layout, checko
 		}
 	}
 	if root == "" {
-		managed, err := infra.ManagedCheckoutPath(templatesDir)
-		if err != nil {
-			return infra.Layout{}, "", err
-		}
-		if infra.IsCheckout(managed) {
+		// Both locations: the one under ~/.lerian and the one managed checkouts
+		// used to go to. A machine that cloned before the move keeps working.
+		if managed := infra.FirstManagedCheckout(templatesDir); managed != "" {
 			root, source = managed, sourceManaged
 		}
 	}
@@ -554,7 +552,8 @@ func pointingOptions() string {
 		"  3. run it from inside the checkout — any directory in it will do, the root\n" +
 		"     is found by walking up.\n" +
 		"  4. lerian infra init --clone — clones the templates matching this binary\n" +
-		"     into ~/lerian/lerian-terraform-foundation and uses that from then on."
+		"     into ~/.lerian/lerian-terraform-foundation and uses that from then on.\n" +
+		"     --templates-dir puts the clone somewhere else."
 }
 
 // loadBackend reads backend/<env>.hcl and runs the two offline guards. A run made
