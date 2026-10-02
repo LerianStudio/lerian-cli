@@ -688,6 +688,33 @@ possibly with work in it. Neither is this command's to delete, and a "reset" tha
 took them would be an expensive surprise. `lerian infra cleanup` is the one that
 removes caches and run logs, and it says the same thing about AWS.
 
+### Pointing it at a checkout
+
+```bash
+lerian config templates /path/to/lerian-terraform-foundation   # record it
+lerian config templates --clear                                # forget it
+```
+
+There are five ways to say where the templates are, and this is the one that
+sticks. In order of precedence:
+
+| | |
+|---|---|
+| `--repo <path>` | this run only |
+| `$LERIAN_TF_REPO` | this shell only |
+| the working directory, or one above it | the checkout you are standing in |
+| **recorded** — `config templates` | **every run, until cleared** |
+| the managed path `~/lerian/lerian-terraform-foundation` | where `init --clone` puts one |
+
+A recorded path beats the managed one: that is a decision, this is a directory
+that happens to exist somewhere conventional. It loses to the working directory,
+because the checkout you are inside is the one you mean.
+
+`--clear` forgets the path and leaves the directory alone — it is a clone you
+made, possibly with work in it.
+
+### Forgetting everything
+
 It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
 refuses rather than guessing.
 
@@ -750,6 +777,33 @@ tool on this machine reads it; a templates checkout is a git clone you made,
 possibly with work in it. Neither is this command's to delete, and a "reset" that
 took them would be an expensive surprise. `lerian infra cleanup` is the one that
 removes caches and run logs, and it says the same thing about AWS.
+
+### Pointing it at a checkout
+
+```bash
+lerian config templates /path/to/lerian-terraform-foundation   # record it
+lerian config templates --clear                                # forget it
+```
+
+There are five ways to say where the templates are, and this is the one that
+sticks. In order of precedence:
+
+| | |
+|---|---|
+| `--repo <path>` | this run only |
+| `$LERIAN_TF_REPO` | this shell only |
+| the working directory, or one above it | the checkout you are standing in |
+| **recorded** — `config templates` | **every run, until cleared** |
+| the managed path `~/lerian/lerian-terraform-foundation` | where `init --clone` puts one |
+
+A recorded path beats the managed one: that is a decision, this is a directory
+that happens to exist somewhere conventional. It loses to the working directory,
+because the checkout you are inside is the one you mean.
+
+`--clear` forgets the path and leaves the directory alone — it is a clone you
+made, possibly with work in it.
+
+### Forgetting everything
 
 It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
 refuses rather than guessing.

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lerian-studio/lerian-cli/internal/config"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
@@ -186,5 +187,85 @@ func TestResetDoesNotPromiseNothingWhenSomethingStays(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "stays") {
 		t.Errorf("reset did not say it survives:\n%s", out.String())
+	}
+}
+
+// Pointing the CLI at a checkout had five forms and none of them stuck: a flag
+// for one run, a variable for one shell, standing inside it, a conventional
+// path, and an answer the CLI only asks for when every other way has failed. A
+// client who cloned the templates somewhere of their own had no way to say so.
+func TestSettingTheTemplatesPathRecordsIt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	checkout := filepath.Join(home, "somewhere", "foundation")
+	for _, marker := range []string{"examples/aws/_modules", "examples/aws/backend"} {
+		if err := os.MkdirAll(filepath.Join(checkout, filepath.FromSlash(marker)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var out bytes.Buffer
+	if err := setTemplates(&out, checkout); err != nil {
+		t.Fatalf("setTemplates = %v", err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TemplatesCheckout != checkout {
+		t.Errorf("recorded %q, want %q", cfg.TemplatesCheckout, checkout)
+	}
+	if !strings.Contains(out.String(), checkout) {
+		t.Errorf("it did not say what it recorded:\n%s", out.String())
+	}
+}
+
+// A directory that is not a checkout is refused at the prompt rather than
+// several steps later, where the failure names a missing file instead of the
+// wrong directory.
+func TestSettingAPathThatIsNotACheckoutIsRefused(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var out bytes.Buffer
+	err := setTemplates(&out, t.TempDir())
+
+	if err == nil {
+		t.Fatal("a directory with no templates in it was accepted")
+	}
+	if !strings.Contains(err.Error(), "examples/aws/_modules") {
+		t.Errorf("the error does not say what makes a checkout: %v", err)
+	}
+
+	cfg, _ := config.Load()
+	if cfg.TemplatesCheckout != "" {
+		t.Errorf("it recorded %q anyway", cfg.TemplatesCheckout)
+	}
+}
+
+// A relative path means a different directory from the next place it is read, so
+// it is resolved before it is written down.
+func TestARelativeTemplatesPathIsRecordedAbsolute(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	checkout := filepath.Join(home, "rel")
+	for _, marker := range []string{"examples/aws/_modules", "examples/aws/backend"} {
+		if err := os.MkdirAll(filepath.Join(checkout, filepath.FromSlash(marker)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(home)
+
+	var out bytes.Buffer
+	if err := setTemplates(&out, "rel"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, _ := config.Load()
+	if !filepath.IsAbs(cfg.TemplatesCheckout) {
+		t.Errorf("recorded the relative %q", cfg.TemplatesCheckout)
 	}
 }

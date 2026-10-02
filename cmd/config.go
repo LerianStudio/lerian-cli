@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -30,6 +31,91 @@ else, and nothing belonging to another tool.`,
 		return showConfig(cmd.OutOrStdout())
 	},
 	SilenceUsage: true,
+}
+
+var configTemplatesCmd = &cobra.Command{
+	Use:   "templates <path>",
+	Short: "Record which lerian-terraform-foundation checkout to use",
+	Long: `Writes the path into ~/.lerian/config.yaml, so every later run finds it
+without a flag or a variable.
+
+It beats the managed path at ~/lerian/lerian-terraform-foundation — one is a
+decision, the other a directory that happens to exist somewhere conventional —
+and loses to standing inside a checkout, which is the one you are looking at.
+
+  lerian config templates /path/to/lerian-terraform-foundation
+  lerian config templates --clear`,
+	Args:         cobra.MaximumNArgs(1),
+	RunE:         runSetTemplates,
+	SilenceUsage: true,
+}
+
+var configTemplatesClear bool
+
+func runSetTemplates(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
+	if configTemplatesClear {
+		return clearTemplates(out)
+	}
+	if len(args) == 0 {
+		return fmt.Errorf("give the path to a lerian-terraform-foundation checkout\n" +
+			"  lerian config templates /path/to/lerian-terraform-foundation\n" +
+			"  lerian config templates --clear")
+	}
+	return setTemplates(out, args[0])
+}
+
+// setTemplates records a checkout, after checking it is one.
+//
+// Checked here rather than at the next run: a path accepted now and rejected
+// later fails naming a missing file, several steps from the moment somebody could
+// have fixed the typo.
+func setTemplates(out io.Writer, path string) error {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("cannot resolve %q: %w", path, err)
+	}
+	if !infra.IsCheckout(absolute) {
+		return fmt.Errorf("no lerian-terraform-foundation checkout at %s\n"+
+			"A checkout is recognized by the directories examples/aws/_modules and\n"+
+			"examples/aws/backend; at least one of them is missing there.", absolute)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	cfg.TemplatesCheckout = absolute
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "\n  templates  %s\n", absolute)
+	fmt.Fprintf(out, "  Recorded. Later runs use it without a flag.\n\n")
+	return nil
+}
+
+// clearTemplates forgets the path and leaves the directory alone: it is a clone
+// somebody made, possibly with work in it.
+func clearTemplates(out io.Writer) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if cfg.TemplatesCheckout == "" {
+		fmt.Fprintf(out, "\n  Nothing was recorded.\n\n")
+		return nil
+	}
+
+	previous := cfg.TemplatesCheckout
+	cfg.TemplatesCheckout = ""
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "\n  Forgot %s\n", previous)
+	fmt.Fprintf(out, "  The directory is untouched. Later runs discover a checkout again.\n\n")
+	return nil
 }
 
 var configShowCmd = &cobra.Command{
@@ -141,6 +227,7 @@ func resetConfig(out io.Writer) error {
 
 func init() {
 	configResetCmd.Flags().BoolVar(&configResetYes, "yes", false, "do not ask")
-	configCmd.AddCommand(configShowCmd, configResetCmd)
+	configTemplatesCmd.Flags().BoolVar(&configTemplatesClear, "clear", false, "forget the recorded path")
+	configCmd.AddCommand(configShowCmd, configTemplatesCmd, configResetCmd)
 	rootCmd.AddCommand(configCmd)
 }

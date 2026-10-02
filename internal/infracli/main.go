@@ -420,19 +420,25 @@ func resolveLayout(flagRepo, envRepo, templatesDir string) (infra.Layout, checko
 		}
 	}
 	if root == "" {
+		// A recorded answer before the managed path: one is somebody saying which
+		// checkout to use, the other is a directory happening to exist at a
+		// conventional location. With the convention first, a client who cloned the
+		// templates somewhere of their own could not make this use it — the question
+		// was never asked, because the managed path had already answered.
+		//
+		// It still loses to the working directory: standing inside a checkout means
+		// that one, whatever was written down on a previous run.
+		if remembered := rememberedCheckout(); remembered != "" {
+			root, source = remembered, sourceRemembered
+		}
+	}
+	if root == "" {
 		managed, err := infra.ManagedCheckoutPath(templatesDir)
 		if err != nil {
 			return infra.Layout{}, "", err
 		}
 		if infra.IsCheckout(managed) {
 			root, source = managed, sourceManaged
-		}
-	}
-	if root == "" {
-		// A remembered answer is a default, not an override: standing inside a
-		// checkout still wins over one written down on a previous run.
-		if remembered := rememberedCheckout(); remembered != "" {
-			root, source = remembered, sourceRemembered
 		}
 	}
 	if root == "" {

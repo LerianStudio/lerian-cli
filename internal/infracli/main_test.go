@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lerian-studio/lerian-cli/internal/config"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
@@ -555,6 +556,88 @@ func TestRefreshHintWithoutAProfileStillReadsAsInstructions(t *testing.T) {
 	for _, want := range []string{"IAM Identity Center", "anything else"} {
 		if !strings.Contains(hint, want) {
 			t.Errorf("the hint does not mention %q:\n%s", want, hint)
+		}
+	}
+}
+
+// A recorded checkout beats the managed path.
+//
+// The managed path is a convention — "there is a directory at ~/lerian" — while a
+// recorded one was somebody saying which checkout to use. With the convention
+// winning, a client who had cloned the templates somewhere of their own had no way
+// to make the CLI use it: the answer was never asked for, because the managed
+// path answered first.
+func TestARecordedCheckoutBeatsTheManagedPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(t.TempDir())
+
+	// Both exist: one by convention, one because somebody chose it.
+	managed, err := infra.ManagedCheckoutPath("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeCheckout(t, managed)
+	chosen := fakeCheckout(t, "", "")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.TemplatesCheckout = chosen
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	layout, source, err := resolveLayout("", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if layout.Root != chosen {
+		t.Errorf("resolved to %q, want the one that was chosen: %q", layout.Root, chosen)
+	}
+	if source != sourceRemembered {
+		t.Errorf("source = %q, want remembered", source)
+	}
+}
+
+// Standing inside a checkout still wins over both: whatever was recorded, the one
+// somebody is looking at is the one they mean.
+func TestTheWorkingDirectoryStillWinsOverARecordedOne(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	recorded := fakeCheckout(t, "", "")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.TemplatesCheckout = recorded
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	standing := fakeCheckout(t, "", "")
+	t.Chdir(standing)
+
+	layout, source, err := resolveLayout("", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.Root != standing {
+		t.Errorf("resolved to %q, want the working directory %q", layout.Root, standing)
+	}
+	if source != sourceWorkingIn {
+		t.Errorf("source = %q", source)
+	}
+}
+
+func makeCheckout(t *testing.T, dir string) {
+	t.Helper()
+	for _, marker := range []string{"examples/aws/_modules", "examples/aws/backend"} {
+		if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(marker)), 0o755); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
