@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -58,11 +59,37 @@ func runSetTemplates(cmd *cobra.Command, args []string) error {
 		return clearTemplates(out)
 	}
 	if len(args) == 0 {
+		// Reached off the menu, where there is no command line to put a path on.
+		// The usage text of a command nobody typed is not an answer to that.
+		if infracli.CanAsk(out) {
+			return askThenRecord(out, infracli.AskForTemplates)
+		}
 		return fmt.Errorf("give the path to a lerian-terraform-foundation checkout\n" +
 			"  lerian config templates /path/to/lerian-terraform-foundation\n" +
 			"  lerian config templates --clear")
 	}
 	return setTemplates(out, args[0])
+}
+
+// askThenRecord asks and then does what the answer says.
+//
+// Leaving the prompt is not a failure: r and q mean "not this", and the session
+// is about to redraw the menu that was left. Reporting an error there would put
+// a red line under a decision not to decide.
+// The prompt arrives as an argument so a test can answer it. A test cannot
+// reach the real one: it needs a terminal on both ends, and under go test there
+// is none — which is also why the CanAsk line above has no test of its own.
+func askThenRecord(out io.Writer, ask func(io.Writer) (infracli.TemplatesAnswer, error)) error {
+	answer, err := ask(out)
+	switch {
+	case errors.Is(err, infracli.ErrBack), errors.Is(err, infra.ErrAborted):
+		return nil
+	case err != nil:
+		return err
+	case answer.Forget:
+		return clearTemplates(out)
+	}
+	return setTemplates(out, answer.Path)
 }
 
 // setTemplates records a checkout, after checking it is one.

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/lerian-studio/lerian-cli/internal/config"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
+	"github.com/lerian-studio/lerian-cli/internal/infracli"
 )
 
 // `lerian config reset production --yes` reads like "reset the production
@@ -267,5 +269,114 @@ func TestARelativeTemplatesPathIsRecordedAbsolute(t *testing.T) {
 	cfg, _ := config.Load()
 	if !filepath.IsAbs(cfg.TemplatesCheckout) {
 		t.Errorf("recorded the relative %q", cfg.TemplatesCheckout)
+	}
+}
+
+// checkoutAt builds the pair of directories the CLI recognizes a checkout by.
+func checkoutAt(t *testing.T, root string) string {
+	t.Helper()
+	for _, dir := range []string{"examples/aws/_modules", "examples/aws/backend"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// The menu row has no command line to put a path on, so arriving there with no
+// argument has to be a question. Printing the usage of a command nobody typed
+// leaves the operator exactly where they started.
+func TestChoosingTemplatesOffTheMenuRecordsWhatWasAnswered(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	checkout := checkoutAt(t, t.TempDir())
+
+	var out bytes.Buffer
+	answered := func(io.Writer) (infracli.TemplatesAnswer, error) {
+		return infracli.TemplatesAnswer{Path: checkout}, nil
+	}
+
+	if err := askThenRecord(&out, answered); err != nil {
+		t.Fatalf("askThenRecord = %v", err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TemplatesCheckout != checkout {
+		t.Errorf("config holds %q, want the answered %q", cfg.TemplatesCheckout, checkout)
+	}
+}
+
+// Forgetting is reachable from the same menu, because --clear is not: a row that
+// can only record would strand anybody who wanted to undo one.
+func TestForgettingFromTheMenuClearsTheRecordedPath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.TemplatesCheckout = checkoutAt(t, t.TempDir())
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	forgetting := func(io.Writer) (infracli.TemplatesAnswer, error) {
+		return infracli.TemplatesAnswer{Forget: true}, nil
+	}
+
+	if err := askThenRecord(&out, forgetting); err != nil {
+		t.Fatalf("askThenRecord = %v", err)
+	}
+
+	after, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.TemplatesCheckout != "" {
+		t.Errorf("config still holds %q", after.TemplatesCheckout)
+	}
+}
+
+// r and q mean "not this". The session is about to redraw the menu that was
+// left, and a red line under it would report a decision not to decide as a
+// failure.
+func TestLeavingThePromptIsNotAFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	for _, leaving := range []error{infracli.ErrBack, infra.ErrAborted} {
+		t.Run(leaving.Error(), func(t *testing.T) {
+			var out bytes.Buffer
+			left := func(io.Writer) (infracli.TemplatesAnswer, error) {
+				return infracli.TemplatesAnswer{}, leaving
+			}
+
+			if err := askThenRecord(&out, left); err != nil {
+				t.Errorf("askThenRecord = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// With nobody to ask — a pipe, CI — the usage text is still the right answer,
+// and it is the only one left.
+func TestWithNoTerminalTheCommandStillSaysWhatItNeeds(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&out)
+	rootCmd.SetArgs([]string{"config", "templates"})
+	t.Cleanup(func() { rootCmd.SetArgs(nil) })
+
+	err := rootCmd.Execute()
+
+	if err == nil {
+		t.Fatal("no path, no terminal, and no error")
+	}
+	if !strings.Contains(err.Error(), "--clear") {
+		t.Errorf("the error does not mention how to clear it:\n%v", err)
 	}
 }

@@ -695,6 +695,10 @@ lerian config templates /path/to/lerian-terraform-foundation   # record it
 lerian config templates --clear                                # forget it
 ```
 
+Picked off the menu instead, with no path to give, it asks — offering the
+checkouts this machine already has, plus a line to type one and, when there is
+something recorded, a row to forget it.
+
 There are five ways to say where the templates are, and this is the one that
 sticks. In order of precedence:
 
@@ -784,6 +788,10 @@ removes caches and run logs, and it says the same thing about AWS.
 lerian config templates /path/to/lerian-terraform-foundation   # record it
 lerian config templates --clear                                # forget it
 ```
+
+Picked off the menu instead, with no path to give, it asks — offering the
+checkouts this machine already has, plus a line to type one and, when there is
+something recorded, a row to forget it.
 
 There are five ways to say where the templates are, and this is the one that
 sticks. In order of precedence:
