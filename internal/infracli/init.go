@@ -289,7 +289,7 @@ func runInit(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	}
 
 	if !opts.autoApprove {
-		if err := ask.confirm(stderr, fmt.Sprintf("Write %d file(s)?", len(plan.writes))); err != nil {
+		if err := ask.confirm(ctx, stderr, fmt.Sprintf("Write %d file(s)?", len(plan.writes))); err != nil {
 			return err
 		}
 	}

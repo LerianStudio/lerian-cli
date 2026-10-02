@@ -129,7 +129,7 @@ func acquireTemplates(
 
 	// An operator at a terminal still confirms: they named a tag, not a download.
 	if !opts.clone {
-		if err := ask.confirm(out, "Clone the templates there now?"); err != nil {
+		if err := ask.confirm(ctx, out, "Clone the templates there now?"); err != nil {
 			return infra.Layout{}, err
 		}
 	}

@@ -685,7 +685,7 @@ func execute(
 		fmt.Fprintf(out, "    %s\n", changeSummary(create, update, destroy))
 		fmt.Fprintf(out, "    %s\n\n", destinationLine(config))
 
-		return confirmOnStdin(out, "  type yes to continue: ")
+		return confirmOnStdin(ctx, out, "  type yes to continue · ctrl-c cancels: ")
 	}
 	if action == infra.ActionPlan {
 		confirm = nil
@@ -789,7 +789,7 @@ func writeOutputs(ctx context.Context, runner *infra.Runner, units []infra.Unit,
 }
 
 // confirmOnStdin asks once, and only accepts the whole word.
-func confirmOnStdin(out io.Writer, prompt string) error {
+func confirmOnStdin(ctx context.Context, out io.Writer, prompt string) error {
 	// A real isatty, not a character-device check: /dev/null is a character device
 	// too, and a CI run redirecting stdin from it would be mistaken for a human.
 	if !isTerminal(os.Stdin) {
@@ -803,14 +803,21 @@ func confirmOnStdin(out io.Writer, prompt string) error {
 	// Only what is typed after the question counts as the answer. Stages here take
 	// minutes, and anything pressed while waiting is still queued when the prompt
 	// finally appears.
-	if err := drainStdin(); err != nil {
+	reader, err := drain()
+	if err != nil {
 		return fmt.Errorf("cannot make sure the confirmation is answered deliberately: %w\n"+
 			"Re-run with --auto-approve if you mean to skip it.", err)
 	}
+	if reader == nil {
+		reader = bufio.NewReader(os.Stdin)
+	}
 
 	fmt.Fprint(out, prompt)
-	reader := bufio.NewReader(os.Stdin)
-	answer, err := reader.ReadString('\n')
+	answer, err := readLineOrCancel(ctx, reader)
+	if errors.Is(err, infra.ErrAborted) {
+		fmt.Fprintln(out)
+		return infra.ErrAborted
+	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("cannot read the confirmation: %w", err)
 	}
