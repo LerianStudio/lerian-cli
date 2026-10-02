@@ -1151,9 +1151,12 @@ func askAboutBackend(ctx context.Context, ask *prompter, layout infra.Layout, op
 	// is built from it. A mismatch between the two is a separate guard's job, and
 	// it runs before anything is applied.
 	config, err := infra.LoadEnvConfig(layout, opts.environment)
+	//nolint:nilerr // There is no account to look a bucket up for, so the question
+	// has no subject and is skipped. The error is not swallowed: every path that
+	// needs this config loads it again and reports it properly. Returning it here
+	// would turn a missing environments.conf into a failure at the one question
+	// that exists only to offer a shortcut.
 	if err != nil {
-		// Nothing to look up an account with. The run reports this properly later;
-		// skipping the question is right, because it has no subject.
 		return nil
 	}
 

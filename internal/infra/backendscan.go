@@ -169,7 +169,7 @@ func AdoptBackend(layout Layout, env string, backend StateBackend) (string, erro
 	if _, err := os.Stat(path); err == nil {
 		return "", fmt.Errorf("infra: %s already exists\n"+
 			"It is the backend this environment's state is under. Remove it yourself if\n"+
-			"you mean to point %s somewhere else.", layout.RepoRel(path), env)
+			"you mean to point %s somewhere else", layout.RepoRel(path), env)
 	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("infra: cannot read %s: %w", layout.RepoRel(path), err)
 	}
@@ -177,7 +177,7 @@ func AdoptBackend(layout Layout, env string, backend StateBackend) (string, erro
 	region := backend.Region
 	if region == "" {
 		return "", fmt.Errorf("infra: the region of %s could not be read\n"+
-			"Without it terraform init cannot reach the bucket. Write %s by hand.",
+			"Without it terraform init cannot reach the bucket. Write %s by hand",
 			backend.Bucket, layout.RepoRel(path))
 	}
 

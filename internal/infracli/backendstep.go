@@ -50,7 +50,8 @@ func resolveBackend(
 		// either way. Failing here would block a run over a question that is only
 		// there to save somebody from a duplicate bucket.
 		fmt.Fprintf(out, "  could not list the buckets in this account: %v\n", err)
-		fmt.Fprintf(out, "  %s\n\n", theme.dim("bootstrap creates one; it is safe to run on an account that already has it"))
+		fmt.Fprintf(out, "  %s\n\n", theme.dim(
+			"bootstrap creates one; it is safe to run on an account that already has it"))
 		return nil
 	}
 
@@ -112,11 +113,9 @@ func backendOptions(found []infra.StateBackend, environment, account string) []o
 		if backend.Matches(environment, account) {
 			continue
 		}
-		where := "another environment"
+		where := "made for " + backend.Env
 		if backend.Env == "" {
 			where = "named by hand"
-		} else {
-			where = "made for " + backend.Env
 		}
 		add(backend, where+" · "+describeBackend(backend))
 	}
