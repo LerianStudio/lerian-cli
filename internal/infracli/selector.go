@@ -28,11 +28,21 @@ type option struct {
 	label    string
 	note     string
 	disabled bool
+	// fixed marks a row that is part of the answer whatever else is chosen. It
+	// paints as ticked and cannot be focused or toggled, which is the difference
+	// from disabled: disabled means "not available to you", fixed means "already
+	// decided, and here is what was decided".
+	fixed bool
 	// environment is the name this row deploys as, when it has one. It is not
 	// shown unless two rows would otherwise read identically — see
 	// nameTheAmbiguous.
 	environment string
 }
+
+// selectable reports whether the cursor may land on this row. Both states are
+// unreachable, for opposite reasons, and every piece of navigation has to skip
+// both or the cursor lands on a row that cannot answer anything.
+func (o option) selectable() bool { return !o.disabled && !o.fixed }
 
 // rawMode switches the terminal to raw and returns the restore func. It is a
 // field rather than a direct call so a test can replace it: the key sequences are
@@ -175,12 +185,12 @@ func (p *prompter) runSelector(
 
 	cursor := 0
 	for i, opt := range options {
-		if !opt.disabled && chosen[opt.value] {
+		if opt.selectable() && chosen[opt.value] {
 			cursor = i
 			break
 		}
 	}
-	if options[cursor].disabled {
+	if !options[cursor].selectable() {
 		cursor = firstEnabled(options)
 	}
 
@@ -205,13 +215,13 @@ func (p *prompter) runSelector(
 			fmt.Fprint(p.out, "\r\n")
 			return nil, errBack
 		case keySpace:
-			if multiple && !options[cursor].disabled {
+			if multiple && options[cursor].selectable() {
 				value := options[cursor].value
 				chosen[value] = !chosen[value]
 			}
 		case keyEnter:
 			if !multiple {
-				if options[cursor].disabled {
+				if !options[cursor].selectable() {
 					continue
 				}
 				fmt.Fprint(p.out, "\r\n")
@@ -221,7 +231,7 @@ func (p *prompter) runSelector(
 			if len(selected) == 0 {
 				// Enter on an empty multi-selection takes the row under the cursor,
 				// so the obvious gesture works without having to press space first.
-				if options[cursor].disabled {
+				if !options[cursor].selectable() {
 					continue
 				}
 				selected = []string{options[cursor].value}
@@ -288,7 +298,7 @@ func (p *prompter) paintOptions(
 		pointer, mark := "  ", ""
 		if multiple {
 			box := " "
-			if chosen[opt.value] {
+			if chosen[opt.value] || opt.fixed {
 				box = "x"
 			}
 			mark = "[" + box + "] "
@@ -299,6 +309,8 @@ func (p *prompter) paintOptions(
 		// styled string would both measure wrong and risk cutting an escape in half.
 		label := opt.label
 		if opt.disabled {
+			// Only disabled. A fixed row is the opposite of unavailable — it is in
+			// the answer already — and its note is what says so.
 			label += "  (unavailable)"
 		}
 
@@ -318,7 +330,7 @@ func (p *prompter) paintOptions(
 			pointer = theme.bold("❯ ")
 		}
 		switch {
-		case opt.disabled:
+		case opt.disabled, opt.fixed:
 			label = theme.dim(label)
 		case i == cursor:
 			label = theme.bold(label)
@@ -429,7 +441,10 @@ func capForLayout(width int) int {
 func selectedValues(options []option, chosen map[string]bool) []string {
 	var out []string
 	for _, opt := range options {
-		if !opt.disabled && chosen[opt.value] {
+		// A fixed row is excluded on purpose. It is not something the operator
+		// picked, and the caller that drew it is the one that already handles it —
+		// returning it would have that caller add it twice.
+		if opt.selectable() && chosen[opt.value] {
 			out = append(out, opt.value)
 		}
 	}
@@ -441,7 +456,7 @@ func step(options []option, from, delta int) int {
 	next := from
 	for i := 0; i < len(options); i++ {
 		next = (next + delta + len(options)) % len(options)
-		if !options[next].disabled {
+		if options[next].selectable() {
 			return next
 		}
 	}
@@ -450,7 +465,7 @@ func step(options []option, from, delta int) int {
 
 func firstEnabled(options []option) int {
 	for i, opt := range options {
-		if !opt.disabled {
+		if opt.selectable() {
 			return i
 		}
 	}
@@ -463,7 +478,7 @@ func jumpTo(options []option, r rune, cursor int) int {
 	want := strings.ToLower(string(r))
 	for i := 1; i <= len(options); i++ {
 		at := (cursor + i) % len(options)
-		if options[at].disabled {
+		if !options[at].selectable() {
 			continue
 		}
 		if strings.HasPrefix(strings.ToLower(options[at].label), want) {

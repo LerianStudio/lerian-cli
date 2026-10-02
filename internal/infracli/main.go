@@ -59,8 +59,13 @@ type options struct {
 	// string is an answer — the credentials already in this environment, which have
 	// no profile name — and it is indistinguishable from the absence of one. A
 	// scripted run leaves both zero and the file decides, exactly as before.
-	profile               string
-	profileChosen         bool
+	profile       string
+	profileChosen bool
+
+	// backends lists the state backends an account holds. It is here so a test can
+	// answer the question without credentials; a run leaves it nil and gets the
+	// AWS CLI.
+	backends              infra.BackendLister
 	jobs                  int
 	minCredentialLifetime time.Duration
 	autoApprove           bool
@@ -1064,7 +1069,7 @@ func guidedRun(
 	// the answers that were right along with the one that was not.
 	steps := []func() error{
 		func() error { return askAccountStep(ctx, ask, layout, resolved, opts, afterEnvironment) },
-		func() error { return askTargetStep(ask, catalog, layout, opts) },
+		func() error { return askTargetStep(ctx, ask, catalog, layout, opts) },
 		func() error { return askActionStep(ask, opts) },
 	}
 
@@ -1112,7 +1117,60 @@ func askAccountStep(
 	return nil
 }
 
-func askTargetStep(ask *prompter, catalog infra.Catalog, layout infra.Layout, opts *options) error {
+// askAboutBackend settles what the state backend is, by asking the account
+// rather than inferring it from a file that may simply never have been written
+// in this checkout.
+//
+// Called from inside the targets step rather than standing as a step of its own.
+// It needs the account, and it changes the list that follows — with a backend
+// adopted, every target becomes runnable instead of one. As a separate step it
+// would also swallow r whenever it had nothing to ask: a step that returns
+// without a question cannot tell "going back" from "done", so the cursor would
+// bounce off it and never reach the account question.
+// backendLister is the AWS CLI unless a caller supplied something else.
+func (o *options) backendLister() infra.BackendLister {
+	if o.backends != nil {
+		return o.backends
+	}
+	return infra.CLIBackends{}
+}
+
+func askAboutBackend(ctx context.Context, ask *prompter, layout infra.Layout, opts *options) error {
+	if backendExists(layout, opts.environment) {
+		return nil
+	}
+	// Nobody to answer means nothing to do with the answer. Adopting a backend is
+	// a decision, so without a terminal the scan would spend an AWS call to print
+	// something no one asked for — in CI, on every run.
+	if !ask.interactive {
+		return nil
+	}
+
+	// The account comes from environments.conf rather than from the credentials:
+	// it is the account this environment is ALLOWED to touch, and the bucket name
+	// is built from it. A mismatch between the two is a separate guard's job, and
+	// it runs before anything is applied.
+	config, err := infra.LoadEnvConfig(layout, opts.environment)
+	if err != nil {
+		// Nothing to look up an account with. The run reports this properly later;
+		// skipping the question is right, because it has no subject.
+		return nil
+	}
+
+	return resolveBackend(ctx, ask, ask.out, opts.backendLister(), layout,
+		opts.environment, opts.profile, config.Region, config.AccountID)
+}
+
+func askTargetStep(
+	ctx context.Context,
+	ask *prompter,
+	catalog infra.Catalog,
+	layout infra.Layout,
+	opts *options,
+) error {
+	if err := askAboutBackend(ctx, ask, layout, opts); err != nil {
+		return err
+	}
 	targets, err := ask.pickMany(
 		"What do you want to operate on?",
 		"Several can be combined; they are reordered into dependency order either way.",

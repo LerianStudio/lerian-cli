@@ -695,6 +695,48 @@ lerian config templates /path/to/lerian-terraform-foundation   # record it
 lerian config templates --clear                                # forget it
 ```
 
+### Knowing whether bootstrap has run
+
+`backend/<env>.hcl` is written by `bootstrap`, never committed, and its absence
+is how a checkout looks when nobody has bootstrapped. But that is a fact about
+the **checkout**, not about the account — a fresh clone, or a colleague who ran
+bootstrap from their own machine, produces a missing file over a bucket that has
+existed for months. Acting on the file alone sends somebody to create a second
+state backend beside the one their infrastructure's state is already in.
+
+So when the file is missing, the CLI asks the account:
+
+```
+==> State backend
+  no examples/aws/backend/dev.hcl here — asking the account
+
+  A state backend already exists in this account. Use it?
+  Adopting writes examples/aws/backend/dev.hcl from what is in the account.
+❯ lerian-tfstate-dev-524121347244  this environment's own backend · us-east-2
+  lerian-tfstate-stg-524121347244  made for stg · us-east-2
+  create a new one                 bootstrap makes lerian-tfstate-dev-524121347244
+```
+
+That is `aws s3api list-buckets` filtered by the account suffix, plus
+`get-bucket-location` and a `describe-table` for the lock table — fact, read off
+the account, not inferred. Adopting writes the four lines `bootstrap` would have
+written, which is what the old error told you to do by hand.
+
+Every bucket is offered, not only the one whose name matches: one named by hand
+is still a backend somebody made deliberately. The note carries what decides
+whether adopting is safe — the region (adopting one in the wrong region fails at
+`terraform init` with a redirect that reads like anything but a region problem)
+and whether a lock table exists (without one, concurrent runs are unprotected).
+
+It never overwrites an existing `backend/<env>.hcl`: that file is the bucket the
+state is under, and replacing it points a stack at state it has never seen. An
+empty account says so plainly and `bootstrap` is the answer. A lookup that fails
+— no permission, no network — is reported and the run continues: unknown is not
+no, and blocking a run over a question that only prevents a duplicate bucket
+would trade a small risk for a certain stoppage. With no terminal, nothing is
+looked up at all; adopting is a decision, and CI would be paying for an API call
+to print something nobody asked for.
+
 ### Getting a checkout in the first place
 
 With none on the machine, `infra` offers to fetch one instead of asking where

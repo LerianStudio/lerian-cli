@@ -1227,7 +1227,20 @@ func profileOptions(resolved []infra.ResolvedProfile) []option {
 // carries its services as the note, which is what makes "midaz" decidable without
 // leaving the question to go and look.
 func targetOptions(catalog infra.Catalog) []option {
-	options := make([]option, 0, 1+len(catalog.Names))
+	options := make([]option, 0, 2+len(catalog.Names))
+	// Shown rather than left to the line above the list. bootstrap is configured
+	// whatever else is chosen, and a list of everything else reads as an oversight
+	// — or as a choice somebody made wrong — until the row is there with a tick in
+	// it. Fixed, not merely preticked: unticking it has no effect, and a box that
+	// moves without changing anything is worse than one that does not move.
+	options = append(options, option{
+		value: "bootstrap",
+		label: "bootstrap",
+		// Short enough to survive 80 columns beside the label and the box: the
+		// previous wording lost its end, and the end was the word "configured".
+		note:  "always configured — it makes the state backend",
+		fixed: true,
+	})
 	options = append(options, option{
 		value: "infra-base",
 		label: "infra-base",

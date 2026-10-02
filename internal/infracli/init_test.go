@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1156,5 +1157,96 @@ func TestTheConfigurePurposeFitsOnOneLine(t *testing.T) {
 		if !strings.Contains(purpose, want) {
 			t.Errorf("the purpose does not say %q, which is why bootstrap is not a choice: %q", want, purpose)
 		}
+	}
+}
+
+// bootstrap is configured whatever else is chosen, and a list of everything else
+// reads as an oversight — or as a choice somebody made wrong — until the row is
+// there with a tick in it.
+func TestBootstrapIsShownAsAlreadyIncluded(t *testing.T) {
+	options := targetOptions(infra.Catalog{Names: []string{"midaz"}})
+
+	if len(options) == 0 || options[0].value != "bootstrap" {
+		t.Fatalf("bootstrap is not the first row: %+v", options)
+	}
+	if !options[0].fixed {
+		t.Error("the bootstrap row is not fixed, so it paints unticked and can be toggled")
+	}
+	if options[0].disabled {
+		t.Error("bootstrap is marked unavailable; it is the opposite — always included")
+	}
+}
+
+// Fixed is not disabled. The cursor must skip it for the same reason it skips an
+// unavailable row — neither can answer anything — but it must not be labeled
+// "(unavailable)", which says the opposite of what is true.
+func TestAFixedRowIsSkippedButNotCalledUnavailable(t *testing.T) {
+	options := []option{
+		{value: "bootstrap", label: "bootstrap", fixed: true},
+		{value: "infra-base", label: "infra-base"},
+		{value: "midaz", label: "midaz"},
+	}
+
+	if got := firstEnabled(options); got != 1 {
+		t.Errorf("the cursor starts at %d, on a row that cannot be chosen", got)
+	}
+	// Wrapping upwards from the first selectable row goes past it, not onto it.
+	if got := step(options, 1, -1); got == 0 {
+		t.Error("moving up lands on the fixed row")
+	}
+	if got := jumpTo(options, 'b', 1); got == 0 {
+		t.Error("typing b jumps to the fixed row")
+	}
+}
+
+// The caller that draws the fixed row is the one that already adds it to the
+// plan. Returning it as well would have that caller add it twice.
+func TestAFixedRowIsNotReturnedAsAChoice(t *testing.T) {
+	options := []option{
+		{value: "bootstrap", label: "bootstrap", fixed: true},
+		{value: "infra-base", label: "infra-base"},
+	}
+	chosen := map[string]bool{"bootstrap": true, "infra-base": true}
+
+	got := selectedValues(options, chosen)
+
+	if slices.Contains(got, "bootstrap") {
+		t.Errorf("selectedValues = %v, want infra-base alone", got)
+	}
+	if !slices.Contains(got, "infra-base") {
+		t.Errorf("selectedValues = %v", got)
+	}
+}
+
+// The tick is the whole point of the row: it is what says "this is in the
+// answer" without anybody having to read the line above the list. Asserted on
+// what is painted, because the field being set says nothing about what the
+// operator sees.
+func TestTheFixedRowIsPaintedTicked(t *testing.T) {
+	var out bytes.Buffer
+	ask := &prompter{interactive: true, out: &out}
+
+	options := []option{
+		{value: "bootstrap", label: "bootstrap", note: "always", fixed: true},
+		{value: "infra-base", label: "infra-base"},
+	}
+	ask.paintOptions("What do you want to configure?", "", options, map[string]bool{}, 1, true, 0)
+
+	painted := stripANSI(out.String())
+	var bootstrapLine string
+	for _, line := range strings.Split(painted, "\n") {
+		if strings.Contains(line, "bootstrap") {
+			bootstrapLine = line
+		}
+	}
+
+	if bootstrapLine == "" {
+		t.Fatalf("no bootstrap row was painted:\n%s", painted)
+	}
+	if !strings.Contains(bootstrapLine, "[x]") {
+		t.Errorf("the fixed row paints unticked: %q", bootstrapLine)
+	}
+	if strings.Contains(bootstrapLine, "unavailable") {
+		t.Errorf("the fixed row says it is unavailable: %q", bootstrapLine)
 	}
 }
