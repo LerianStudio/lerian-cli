@@ -177,4 +177,14 @@ func TestResetDoesNotPromiseNothingWhenSomethingStays(t *testing.T) {
 	if strings.Contains(out.String(), "starts from nothing") {
 		t.Errorf("it promises nothing while a checkout stays:\n%s", out.String())
 	}
+	// Driven through resetConfig, not through noteManagedCheckout: a test that
+	// calls the helper proves the helper works and says nothing about whether the
+	// command calls it. Mine did exactly that, and stayed green with the call
+	// removed.
+	if !strings.Contains(out.String(), managed) {
+		t.Errorf("reset did not mention the checkout that stays:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "stays") {
+		t.Errorf("reset did not say it survives:\n%s", out.String())
+	}
 }
