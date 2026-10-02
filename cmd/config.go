@@ -199,7 +199,7 @@ machine reads it.`,
 // run can undo. They are not the same decision and must not share an answer.
 //
 // The default row is the one that deletes nothing.
-func deleteTemplatesFound(ctx context.Context, out io.Writer, found []infracli.TemplatesOnDisk) int {
+func deleteTemplatesFound(out io.Writer, found []infracli.TemplatesOnDisk) int {
 	staying := 0
 	for _, checkout := range found {
 		if !configResetTemplates && !infracli.CanAsk(out) {
@@ -300,7 +300,7 @@ func resetConfig(ctx context.Context, out io.Writer) error {
 		fmt.Fprintf(out, "  removed %s\n", path)
 	}
 
-	staying := deleteTemplatesFound(ctx, out, found)
+	staying := deleteTemplatesFound(out, found)
 
 	// Not "from nothing" when something is about to be picked up again — that
 	// sentence would sit a few lines under the note saying otherwise.
