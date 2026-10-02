@@ -10,6 +10,7 @@ package infracli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -79,17 +80,19 @@ func (p *prompter) ask(question, purpose, fallback, flagName string) (string, er
 		fmt.Fprintf(p.out, "  %s\n", theme.dim(purpose))
 	}
 	// The same line the selector shows, for the same reason: a prompt that does
-	// not say how to leave it is one the operator escapes with ctrl-c, which
-	// stops the command mid-step rather than declining the question.
-	hint := "q cancel"
+	// not say how to leave it is one somebody stares at wondering whether the
+	// command has hung. Both ways out are named — q declines this question, ctrl-c
+	// ends the run — because the keys mean different things and only one of them
+	// is a habit everybody already has.
+	hint := "q cancel · ctrl-c quit"
 	if fallback != "" {
-		hint = "enter takes " + fallback + " · q cancel"
+		hint = "enter takes " + fallback + " · q cancel · ctrl-c quit"
 	}
 	fmt.Fprintf(p.out, "  %s\n", theme.dim(hint))
 
 	answer, edited, err := p.editableLine(p.out, "  > ")
 	if err != nil {
-		return "", fmt.Errorf("cannot read the answer to %q: %w", question, err)
+		return "", p.leftTheQuestion(question, err)
 	}
 	if !edited {
 		// No terminal to edit on: read the line the plain way. The prompt is
@@ -97,7 +100,7 @@ func (p *prompter) ask(question, purpose, fallback, flagName string) (string, er
 		fmt.Fprint(p.out, "  > ")
 		line, readErr := p.in.ReadString('\n')
 		if readErr != nil && strings.TrimSpace(line) == "" {
-			return "", fmt.Errorf("cannot read the answer to %q: %w", question, readErr)
+			return "", p.leftTheQuestion(question, readErr)
 		}
 		answer = strings.TrimSpace(line)
 	}
@@ -115,6 +118,26 @@ func (p *prompter) ask(question, purpose, fallback, flagName string) (string, er
 		return fallback, nil
 	}
 	return answer, nil
+}
+
+// leftTheQuestion turns the end of input into leaving, and anything else into
+// an error.
+//
+// ctrl-c arrives here as io.EOF rather than as a signal: the line editor runs in
+// raw mode, where the terminal generates none, so x/term reports the keypress
+// instead. ctrl-d on an empty line arrives the same way, and so does a pipe that
+// ran out. All three mean the same thing — there is no answer coming — and all
+// three used to be reported as "cannot read the answer: EOF", which reads as a
+// malfunction when somebody has just pressed the key every terminal program has
+// taught them means stop.
+func (p *prompter) leftTheQuestion(question string, err error) error {
+	if errors.Is(err, io.EOF) {
+		// The keypress leaves the cursor mid-line, and whatever is printed next
+		// would start there.
+		fmt.Fprintln(p.out)
+		return infra.ErrAborted
+	}
+	return fmt.Errorf("cannot read the answer to %q: %w", question, err)
 }
 
 // confirm requires the word "yes", the same bar the apply confirmation uses.

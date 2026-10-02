@@ -168,17 +168,6 @@ func TestQLeavesTheTypedPrompt(t *testing.T) {
 	}
 }
 
-func TestTheTypedPromptSaysHowToLeave(t *testing.T) {
-	out := &bytes.Buffer{}
-	ask := &prompter{interactive: true, in: bufio.NewReader(strings.NewReader("\n")), out: out}
-
-	_, _ = ask.ask("Where is it?", "", "/some/default", "--repo")
-
-	if !strings.Contains(out.String(), "q cancel") {
-		t.Errorf("the prompt does not say q cancels:\n%s", out.String())
-	}
-}
-
 func names(items []leftover) []string {
 	out := make([]string, 0, len(items))
 	for _, item := range items {

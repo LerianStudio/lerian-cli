@@ -711,6 +711,14 @@ something that is not there is:
 Then it asks which release, from the tags that exist and that this binary can
 read, newest first — rather than making you go and look one up for a flag.
 
+Every prompt names both ways out. In a menu, `r` goes back one question and `q`
+leaves; where you type an answer, the line reads `q cancel · ctrl-c quit`.
+ctrl-c works at any of them — the line editor runs in raw mode, where the
+keypress is delivered to the CLI rather than as a signal, and it is read as
+"stop", not as a broken read. Leaving prints `canceled.`, never an error; the
+exit status is still non-zero, so `lerian infra apply && deploy` cannot mistake
+a confirmation nobody gave for a successful apply.
+
 The default lives under `~/.lerian`, beside the configuration, so everything the
 CLI manages on a machine is in one directory. It is a perfectly ordinary git
 checkout: open it, read it, run `terraform` in it by hand. **Clone it somewhere
