@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -79,11 +80,7 @@ func noteManagedCheckout(out io.Writer) bool {
 }
 
 func showConfig(out io.Writer) error {
-	described, err := config.Describe()
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "\n%s\n", described)
+	infracli.DescribeMachine(context.Background(), out)
 	return nil
 }
 

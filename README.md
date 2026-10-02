@@ -643,14 +643,38 @@ templates checkout is, and the profiles `lerian auth login` creates. `reset`
 removes that file, so the next run asks what it asked the first time.
 
 ```
-  file      ~/.lerian/config.yaml
-  templates ~/lerian/lerian-terraform-foundation
-  profile   default   (Lerian platform, not AWS)
-  logins    none — lerian auth login creates one
+  ==> This tool
+  config     ~/.lerian/config.yaml
+  profile    default   (Lerian platform, not AWS)
+  logins     none — lerian auth login creates one
 
-  AWS credentials are not here. lerian infra reads them the way every AWS tool
-  does: a profile in ~/.aws, or the credentials already in the environment.
+  ==> Templates
+  checkout   ~/lerian/lerian-terraform-foundation
+  found by   the managed path — found by convention, not recorded
+  version    v1.11.0
+
+  ==> AWS
+  config     ~/.aws/config
+  profiles   7: default, acme-dev, acme-production and 4 more
+  sessions   acme-sso
+  whether they work is an AWS call: lerian infra check makes it
+
+  ==> Tools
+  terraform  /opt/homebrew/bin/terraform
+  aws        /opt/homebrew/bin/aws
+  git        /usr/bin/git
 ```
+
+Grouped by who owns each thing, because the same word means different things in
+different groups: a profile under **This tool** is a Lerian platform login, a
+profile under **AWS** is a credential in `~/.aws`. Side by side with no headings
+they read as one kind of thing.
+
+It reads files and makes no AWS call — it has to work on a machine with no
+network, and nobody opening a "where are things" page wants a round trip per
+profile. What that costs is knowing whether the credentials work, so the page
+names the command that answers it.
+
 
 **"profile" means two different things in this CLI**, and both have a flag:
 `lerian --profile` is a Lerian platform login kept in the file above, while
