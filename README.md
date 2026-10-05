@@ -741,6 +741,29 @@ would trade a small risk for a certain stoppage. With no terminal, nothing is
 looked up at all; adopting is a decision, and CI would be paying for an API call
 to print something nobody asked for.
 
+### The targets are asked once
+
+Choosing an account that is not set up yet runs `init`, and `init` asks what to
+configure. The run then used to ask what to operate on — a second list of thirty
+rows whose only sensible answer was the one given seconds earlier.
+
+It is now said rather than asked:
+
+```
+==> Target
+  infra-base  — what you just configured
+```
+
+Read back from the disk, not from memory: `init` decides what to write by
+asking, and the files it leaves are the only record both this run and a later
+one can agree on. An account that was already set up still gets the question,
+because nothing was decided a moment ago.
+
+`r` still reaches the account question from the action one. A step that decides
+without asking is invisible to it — going back to a screen that is not there
+would return immediately and move forward again, so the key would appear to do
+nothing.
+
 ### After a run
 
 A run used to end by returning to the top menu, which threw away every answer

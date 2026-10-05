@@ -269,7 +269,7 @@ func TestAdoptingABackendUnlocksTheTargetList(t *testing.T) {
 		}}},
 	}
 
-	if err := askTargetStep(context.Background(), ask, catalog, layout, &opts); err != nil {
+	if _, err := askTargetStep(context.Background(), ask, catalog, layout, &opts); err != nil {
 		t.Fatalf("askTargetStep = %v\n%s", err, painted.String())
 	}
 

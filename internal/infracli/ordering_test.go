@@ -617,7 +617,7 @@ func TestSigningOutLogsBackIn(t *testing.T) {
 	// asked afresh — which accounts are reachable has just changed.
 	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 
-	choice, err := askForAccount(context.Background(), ask, &out, layout, resolved)
+	choice, err := askForAccount(context.Background(), ask, &out, infra.Catalog{}, layout, resolved)
 	if err != nil {
 		t.Fatalf("askForAccount = %v\n%s", err, out.String())
 	}
@@ -697,7 +697,7 @@ func TestChoosingAnUnsetAccountConfiguresIt(t *testing.T) {
 	var out bytes.Buffer
 	ask, _ := selectorFor(t, keyEnterSeq)
 
-	choice, err := askForAccount(context.Background(), ask, &out, layout, resolved)
+	choice, err := askForAccount(context.Background(), ask, &out, infra.Catalog{}, layout, resolved)
 	if err != nil {
 		t.Fatalf("askForAccount = %v\n%s", err, out.String())
 	}
@@ -864,7 +864,7 @@ func TestAnAccessKeyProfileIsNotOfferedAnSSOLogin(t *testing.T) {
 	ask, _ := selectorFor(t, keyEnterSeq)
 	var out bytes.Buffer
 
-	_, err = askForAccount(context.Background(), ask, &out, layout, resolved)
+	_, err = askForAccount(context.Background(), ask, &out, infra.Catalog{}, layout, resolved)
 
 	if called {
 		t.Error("an SSO login was offered for a profile that has no SSO session")
@@ -1583,4 +1583,118 @@ func values(options []option) []string {
 		out = append(out, opt.value)
 	}
 	return out
+}
+
+// Setting an account up means answering "what do you want to configure?" seconds
+// earlier. Asking "what do you want to operate on?" straight after reads as the
+// same list twice, and the only sensible second answer is the first one.
+func TestTheTargetsAreNotAskedTwiceAfterSetup(t *testing.T) {
+	layout := configuredLayout(t)
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	ask, painted := selectorFor(t, keyEnterSeq)
+	opts := options{environment: "dev", target: "infra-base", targetsFromSetup: true}
+
+	asked, err := askTargetStep(context.Background(), ask, catalog, layout, &opts)
+	if err != nil {
+		t.Fatalf("askTargetStep = %v", err)
+	}
+
+	if asked {
+		t.Error("the target question was asked again after the setup chose it")
+	}
+	if strings.Contains(painted.String(), "What do you want to operate on") {
+		t.Errorf("the list was painted anyway:\n%s", painted.String())
+	}
+	// Said, not silent: what is about to run has to be on screen.
+	if !strings.Contains(painted.String(), "infra-base") {
+		t.Errorf("what will run is not named:\n%s", painted.String())
+	}
+	if opts.target != "infra-base" {
+		t.Errorf("target = %q", opts.target)
+	}
+}
+
+// And with nothing decided for it, it still asks.
+func TestTheTargetsAreAskedWhenNothingDecidedThem(t *testing.T) {
+	layout := configuredLayout(t)
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	ask, painted := selectorFor(t, keyEnterSeq)
+	opts := options{environment: "dev"}
+
+	asked, err := askTargetStep(context.Background(), ask, catalog, layout, &opts)
+	if err != nil {
+		t.Fatalf("askTargetStep = %v", err)
+	}
+	if !asked {
+		t.Errorf("the question was skipped with nothing to skip it for:\n%s", painted.String())
+	}
+}
+
+// r has to reach the account question even when the step between them asked
+// nothing. Landing on a screen that is not there returns immediately and moves
+// forward again, so the key appears to do nothing at all.
+func TestGoingBackSkipsAStepThatAskedNothing(t *testing.T) {
+	asked := []bool{true, false, true}
+
+	if back := previousQuestion(asked, 2); back != 0 {
+		t.Errorf("r from the action lands on step %d, want the account at 0", back)
+	}
+	// And with nothing before it at all, there is nowhere to go.
+	if back := previousQuestion([]bool{false, true}, 1); back != -1 {
+		t.Errorf("previousQuestion = %d, want -1", back)
+	}
+}
+
+// The skip has to be decided where the setup happens, not taken on trust. This
+// drives the account step with an init that writes the variables, and checks the
+// step carried that decision forward.
+func TestSettingUpAnAccountDecidesTheTargets(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	previous := runInitCommand
+	runInitCommand = func(_ context.Context, _ []string, _, _ io.Writer) error {
+		// What init writes: the account map, and variables for the foundation.
+		writeEnvConfig(t, checkout, map[string]string{
+			"dev": "account_id = 111122223333\nregion = us-east-1\nprofile = sandbox",
+		})
+		for _, unit := range []string{"vpc", "eks"} {
+			dir := filepath.Join(checkout, "examples", "aws", "infra-base", unit, "envs")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "dev.tfvars"), []byte("region = \"us-east-1\"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() { runInitCommand = previous })
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "sandbox", Region: "us-east-1"}, Caller: infra.Caller{Account: "111122223333"}},
+	}
+	ask, painted := selectorFor(t, keyEnterSeq)
+	opts := options{}
+
+	asked, err := askAccountStep(context.Background(), ask, catalog, layout, resolved, &opts, nil)
+	if err != nil {
+		t.Fatalf("askAccountStep = %v\n%s", err, painted.String())
+	}
+	if !asked {
+		t.Error("the account question reported that it asked nothing")
+	}
+
+	if !opts.targetsFromSetup {
+		t.Error("the setup chose the targets and the run will ask for them again")
+	}
+	if opts.target != "infra-base" {
+		t.Errorf("target = %q, want what the setup wrote variables for", opts.target)
+	}
 }

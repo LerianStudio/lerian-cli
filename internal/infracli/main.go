@@ -62,6 +62,10 @@ type options struct {
 	profile       string
 	profileChosen bool
 
+	// targetsFromSetup records that init just chose the targets, so the question
+	// that would ask for them again is skipped.
+	targetsFromSetup bool
+
 	// backends lists the state backends an account holds. It is here so a test can
 	// answer the question without credentials; a run leaves it nil and gets the
 	// AWS CLI.
@@ -1085,22 +1089,32 @@ func guidedRun(
 	// them. The questions are a sequence and a wrong turn on the first one used to
 	// cost the whole run: the only way to correct it was ctrl-c, which throws away
 	// the answers that were right along with the one that was not.
-	steps := []func() error{
-		func() error { return askAccountStep(ctx, ask, layout, resolved, opts, afterEnvironment) },
-		func() error { return askTargetStep(ctx, ask, catalog, layout, opts) },
-		func() error { return askActionStep(ask, opts) },
+	//
+	// Each step reports whether it actually asked anything. A step that decided
+	// without a question must be invisible to r — going back to it would land on a
+	// screen that is not there, return immediately, and move forward again, so the
+	// key would appear to do nothing.
+	steps := []func() (bool, error){
+		func() (bool, error) {
+			return askAccountStep(ctx, ask, catalog, layout, resolved, opts, afterEnvironment)
+		},
+		func() (bool, error) { return askTargetStep(ctx, ask, catalog, layout, opts) },
+		func() (bool, error) { return askActionStep(ask, opts) },
 	}
+	asked := make([]bool, len(steps))
 
 	for at := 0; at < len(steps); {
-		err := steps[at]()
+		answered, err := steps[at]()
+		asked[at] = answered
 		switch {
 		case errors.Is(err, errBack):
-			if at == 0 {
+			back := previousQuestion(asked, at)
+			if back < 0 {
 				// Nothing before the first question, so back out of the run — which is
 				// where the operator came from.
 				return infra.ErrAborted
 			}
-			at--
+			at = back
 		case err != nil:
 			return err
 		default:
@@ -1110,29 +1124,50 @@ func guidedRun(
 	return nil
 }
 
+// previousQuestion is the last step before at that put a question on screen, or
+// -1 when there is none.
+func previousQuestion(asked []bool, at int) int {
+	for back := at - 1; back >= 0; back-- {
+		if asked[back] {
+			return back
+		}
+	}
+	return -1
+}
+
 func askAccountStep(
 	ctx context.Context,
 	ask *prompter,
+	catalog infra.Catalog,
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
 	opts *options,
 	afterEnvironment func(environment, profile string, chosen bool) error,
-) error {
-	choice, err := askForAccount(ctx, ask, ask.out, layout, resolved)
+) (bool, error) {
+	choice, err := askForAccount(ctx, ask, ask.out, catalog, layout, resolved)
 	if err != nil {
-		return err
+		return false, err
 	}
 	opts.environment = choice.environment
 	opts.profile = choice.profile
 	opts.profileChosen = choice.chosen
+	// What init just wrote tfvars for is the answer to the next question, so the
+	// next question does not get asked. Choosing an account that needed setting up
+	// means answering "what do you want to configure?" seconds earlier; asking
+	// "what do you want to operate on?" straight after reads as the same list
+	// twice, and the only sensible second answer is the first one.
+	if len(choice.configured) > 0 {
+		opts.target = strings.Join(choice.configured, ",")
+		opts.targetsFromSetup = true
+	}
 
 	// Before the next question rather than after the last one: this is the point
 	// at which the profile is known, and asking two more questions to then report
 	// a login failure throws both answers away.
 	if afterEnvironment != nil {
-		return afterEnvironment(choice.environment, choice.profile, choice.chosen)
+		return true, afterEnvironment(choice.environment, choice.profile, choice.chosen)
 	}
-	return nil
+	return true, nil
 }
 
 // askAboutBackend settles what the state backend is, by asking the account
@@ -1188,9 +1223,18 @@ func askTargetStep(
 	catalog infra.Catalog,
 	layout infra.Layout,
 	opts *options,
-) error {
+) (bool, error) {
 	if err := askAboutBackend(ctx, ask, layout, opts); err != nil {
-		return err
+		return false, err
+	}
+
+	// Already decided by the setup that just ran. Said rather than asked, because
+	// the answer is on screen two questions up and asking for it again is the
+	// duplicate this removes.
+	if opts.targetsFromSetup {
+		fmt.Fprintf(ask.out, "\n%s\n  %s\n\n", newStyle(ask.out).bold("==> Target"),
+			opts.target+"  "+newStyle(ask.out).dim("— what you just configured"))
+		return false, nil
 	}
 	// Preselected from the disk rather than from memory: whatever this environment
 	// has tfvars for is what somebody just configured, and it stays true on the
@@ -1205,24 +1249,24 @@ func askTargetStep(
 		"Written already — this is what to run now. Several can be combined.",
 		"--target", runTargetOptions(catalog, layout, opts.environment), preset)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(targets) > 0 {
 		opts.target = strings.Join(targets, ",")
 	}
-	return nil
+	return true, nil
 }
 
-func askActionStep(ask *prompter, opts *options) error {
+func askActionStep(ask *prompter, opts *options) (bool, error) {
 	action, err := ask.pick(
 		"What should it do?",
 		"plan changes nothing. apply and destroy ask for a confirmation before writing.",
 		"--action", actionOptions(), opts.action)
 	if err != nil {
-		return err
+		return false, err
 	}
 	opts.action = action
-	return nil
+	return true, nil
 }
 
 // askForAccount asks which account to deploy into and returns the environment it
@@ -1241,12 +1285,17 @@ type accountChoice struct {
 	environment string
 	profile     string
 	chosen      bool
+	// configured is what the setup just wrote variables for, when this choice ran
+	// one. Empty for an account that was already set up — then the targets are a
+	// question, because nothing was decided a moment ago.
+	configured []string
 }
 
 func askForAccount(
 	ctx context.Context,
 	ask *prompter,
 	out io.Writer,
+	catalog infra.Catalog,
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
 ) (accountChoice, error) {
@@ -1270,7 +1319,7 @@ func askForAccount(
 	}
 
 	if profile == signOutChoice {
-		return signOutAndBackIn(ctx, ask, out, layout, resolved)
+		return signOutAndBackIn(ctx, ask, out, catalog, layout, resolved)
 	}
 
 	picked := findProfile(resolved, profile)
@@ -1316,7 +1365,14 @@ func askForAccount(
 	// and to know which of three names to give it — is asking them to do the part
 	// this already knows how to do.
 	environment, err = configureAccount(ctx, out, layout, *picked)
-	return accountChoice{environment: environment, profile: picked.Profile.Name, chosen: true}, err
+	choice := accountChoice{environment: environment, profile: picked.Profile.Name, chosen: true}
+	if err == nil {
+		// Read back from the disk rather than returned by init: init decides what
+		// to write by asking, and the files it left are the only record of the
+		// answer that both this and a later run can agree on.
+		choice.configured = configuredTargets(catalog, layout, environment)
+	}
+	return choice, err
 }
 
 // runInitCommand is a variable so the chaining can be exercised without writing
@@ -1534,6 +1590,7 @@ func signOutAndBackIn(
 	ctx context.Context,
 	ask *prompter,
 	out io.Writer,
+	catalog infra.Catalog,
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
 ) (accountChoice, error) {
@@ -1553,7 +1610,7 @@ func signOutAndBackIn(
 	// Who everything resolves as has just changed, so nothing read before this is
 	// still true.
 	refreshed := infra.ResolveProfiles(ctx, checkIdentity, profilesOf(resolved), "")
-	return askForAccount(ctx, ask, out, layout, refreshed)
+	return askForAccount(ctx, ask, out, catalog, layout, refreshed)
 }
 
 // sessionsOf is every SSO session the known profiles sit behind, first seen
