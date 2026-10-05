@@ -369,14 +369,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	switch action {
-	case infra.ActionHelmValues:
-		return writeHelmValues(ctx, runner, allUnits, opts.format, stdout)
-	case infra.ActionOutput:
-		return writeOutputs(ctx, runner, allUnits, stdout)
-	default:
-		return execute(ctx, runner, stages, action, opts, config, runDir, logs, terraform.Credentials, progressOut)
+	// One function for every action, so the menu that follows a run can ask for
+	// another one without rebuilding the runner, the logs or the plans.
+	perform := func(action infra.Action) error {
+		switch action {
+		case infra.ActionHelmValues:
+			return writeHelmValues(ctx, runner, allUnits, opts.format, stdout)
+		case infra.ActionOutput:
+			return writeOutputs(ctx, runner, allUnits, stdout)
+		default:
+			return execute(ctx, runner, stages, action, opts, config, runDir, logs, terraform.Credentials, progressOut)
+		}
 	}
+
+	if err := perform(action); err != nil {
+		return err
+	}
+	// Inside the run, not after it: the saved plans are removed when this function
+	// returns, and they are what the detail is read from.
+	return afterRun(ctx, newPrompter(progressOut), runner, terraform, stages, action, progressOut, perform)
 }
 
 // checkoutSource says which of the four ways of finding a checkout was the one
@@ -1181,10 +1192,18 @@ func askTargetStep(
 	if err := askAboutBackend(ctx, ask, layout, opts); err != nil {
 		return err
 	}
+	// Preselected from the disk rather than from memory: whatever this environment
+	// has tfvars for is what somebody just configured, and it stays true on the
+	// runs after this one too.
+	preset := splitList(opts.target)
+	if len(preset) == 0 {
+		preset = configuredTargets(catalog, layout, opts.environment)
+	}
+
 	targets, err := ask.pickMany(
 		"What do you want to operate on?",
-		"Several can be combined; they are reordered into dependency order either way.",
-		"--target", runTargetOptions(catalog, layout, opts.environment), splitList(opts.target))
+		"Written already — this is what to run now. Several can be combined.",
+		"--target", runTargetOptions(catalog, layout, opts.environment), preset)
 	if err != nil {
 		return err
 	}
@@ -1698,14 +1717,27 @@ func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment st
 	//
 	// Said rather than disabled, because choosing it is how it gets configured —
 	// the same as an account that is not set up yet.
+	configured := map[string]bool{}
 	for index, opt := range options {
 		if opt.value == "bootstrap" || opt.value == "all" {
 			continue
 		}
-		if !targetIsConfigured(layout, catalog, opt.value, environment) {
-			options[index].note = opt.note + "  ·  not configured here yet"
+		if targetIsConfigured(layout, catalog, opt.value, environment) {
+			configured[opt.value] = true
+			continue
 		}
+		options[index].note = opt.note + "  ·  not configured here yet"
 	}
+
+	// The configured ones first. This question arrives right after `init` wrote
+	// the tfvars for one or two targets, and finding them on row 14 of 30 reads as
+	// the same list being asked again rather than as the short answer it is.
+	//
+	// Stable, so the catalog's order survives inside each group and the list does
+	// not reshuffle between runs.
+	sort.SliceStable(options, func(i, j int) bool {
+		return rankTarget(options[i], configured) < rankTarget(options[j], configured)
+	})
 
 	// Everything except bootstrap needs somewhere to keep its state, and bootstrap
 	// is what creates it — so on an account nobody has bootstrapped yet, it is the
@@ -1742,6 +1774,36 @@ func targetIsConfigured(layout infra.Layout, catalog infra.Catalog, target, envi
 		}
 	}
 	return true
+}
+
+// configuredTargets is what this environment already has variables for, which is
+// the answer to "what do you want to operate on" on nearly every run: the targets
+// somebody configured are the targets they came here to deploy.
+func configuredTargets(catalog infra.Catalog, layout infra.Layout, environment string) []string {
+	var ready []string
+	for _, name := range append([]string{"infra-base"}, catalog.Names...) {
+		if targetIsConfigured(layout, catalog, name, environment) {
+			ready = append(ready, name)
+		}
+	}
+	return ready
+}
+
+// rankTarget groups the target list: the fixed rows keep their place, then
+// anything this environment has variables for, then the rest.
+func rankTarget(opt option, configured map[string]bool) int {
+	switch {
+	case opt.value == "bootstrap":
+		return 0
+	case opt.value == "infra-base":
+		return 1
+	case configured[opt.value]:
+		return 2
+	case opt.value == "all":
+		return 4
+	default:
+		return 3
+	}
 }
 
 // backendExists reports whether this environment has a state backend to write to.

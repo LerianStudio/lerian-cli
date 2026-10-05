@@ -1521,3 +1521,66 @@ func TestAProfileWithNothingConfiguredSaysSo(t *testing.T) {
 		t.Errorf("an expired session is not offered a login: %q", byValue["stale"].note)
 	}
 }
+
+// The targets this environment has variables for come first and arrive ticked.
+// This question follows `init` writing those very files, and finding them on row
+// 14 of 30 reads as the same list being asked again rather than as the short
+// answer it is.
+func TestConfiguredTargetsLeadTheList(t *testing.T) {
+	layout := configuredLayout(t)
+	catalog := infra.Catalog{
+		Names:    []string{"zzz-last", "midaz"},
+		Products: map[string][]string{"zzz-last": {"postgres"}, "midaz": {"postgres"}},
+	}
+	// midaz has variables; zzz-last sorts before it alphabetically and has none,
+	// so only the ranking can put midaz above it.
+	configureTarget(t, layout, "midaz", "postgres", "dev")
+
+	options := runTargetOptions(catalog, layout, "dev")
+
+	if options[0].value != "bootstrap" || options[1].value != "infra-base" {
+		t.Fatalf("the fixed rows moved: %q, %q", options[0].value, options[1].value)
+	}
+	if options[2].value != "midaz" {
+		t.Errorf("the configured target is not first below the foundation: %v", values(options))
+	}
+	if options[len(options)-1].value != "all" {
+		t.Errorf("all is not last: %v", values(options))
+	}
+}
+
+// configureTarget writes the variables file that makes a target count as
+// configured, which is what targetIsConfigured reads.
+func configureTarget(t *testing.T, layout infra.Layout, product, component, env string) {
+	t.Helper()
+	dir := filepath.Join(layout.ProductsDir(), product, component, "envs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, env+".tfvars"), []byte("region = \"us-east-1\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Preselected from the disk, so the common run is Enter: whatever has tfvars is
+// what somebody configured in order to deploy it.
+func TestWhatIsConfiguredIsWhatIsPreselected(t *testing.T) {
+	layout := configuredLayout(t)
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	ready := configuredTargets(catalog, layout, "dev")
+
+	for _, name := range ready {
+		if !targetIsConfigured(layout, catalog, name, "dev") {
+			t.Errorf("%q is preselected and has no variables", name)
+		}
+	}
+}
+
+func values(options []option) []string {
+	out := make([]string, 0, len(options))
+	for _, opt := range options {
+		out = append(out, opt.value)
+	}
+	return out
+}

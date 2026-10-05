@@ -261,6 +261,70 @@ func (c *CLI) ShowPlan(ctx context.Context, unit Unit, planFile string) (Changes
 	return countChanges(plan), nil
 }
 
+// PlanChange is one resource a saved plan would touch.
+type PlanChange struct {
+	// Action is create, update, delete, replace or read.
+	Action string
+	// Address is the resource as Terraform names it.
+	Address string
+}
+
+// PlanDetail lists what a saved plan would do, resource by resource.
+//
+// The counts answer "how much"; this answers "what", which is the question
+// somebody actually has in front of an apply. Reading it back from the saved plan
+// rather than re-planning is the point: it describes the exact plan that is about
+// to be applied, not a second one taken a minute later.
+func (c *CLI) PlanDetail(ctx context.Context, unit Unit, planFile string) ([]PlanChange, error) {
+	client, err := c.terraform(unit)
+	if err != nil {
+		return nil, err
+	}
+	defer c.quiet(client, unit)()
+
+	plan, err := client.ShowPlanFile(ctx, planFile)
+	if err != nil {
+		return nil, fmt.Errorf("infra: cannot read the saved plan of %s: %w", unit.Name, err)
+	}
+	if plan == nil {
+		return nil, nil
+	}
+
+	changes := make([]PlanChange, 0, len(plan.ResourceChanges))
+	for _, resource := range plan.ResourceChanges {
+		if resource == nil || resource.Change == nil {
+			continue
+		}
+		if action := describeActions(resource.Change.Actions); action != "" {
+			changes = append(changes, PlanChange{Action: action, Address: resource.Address})
+		}
+	}
+	return changes, nil
+}
+
+// describeActions names what Terraform is going to do to one resource, and
+// returns the empty string for a no-op.
+//
+// A replacement arrives as two actions — delete and create — and is one event to
+// anybody reading it: the resource goes away and comes back, which for a database
+// is the difference between a deploy and an outage.
+func describeActions(actions tfjson.Actions) string {
+	switch {
+	case actions.Replace():
+		return "replace"
+	case actions.Create():
+		return "create"
+	case actions.Delete():
+		return "destroy"
+	case actions.Update():
+		return "update"
+	case actions.Read():
+		return "read"
+	default:
+		return ""
+	}
+}
+
 // countChanges follows the same rule the shell version's jq did: an action counts
 // once per resource that carries it, so a replacement — delete then create — shows
 // up in both columns, which is exactly what the operator needs to see.

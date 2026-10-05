@@ -741,6 +741,34 @@ would trade a small risk for a certain stoppage. With no terminal, nothing is
 looked up at all; adopting is a decision, and CI would be paying for an API call
 to print something nobody asked for.
 
+### After a run
+
+A run used to end by returning to the top menu, which threw away every answer
+that produced it. After a plan the next thing anybody wants is one of two things
+— to read what it would change, or to apply it — and both meant walking the
+account, backend, target and action questions again to arrive back where they
+already were.
+
+```
+  What now?
+  Same targets, same account. apply runs them for real, after one confirmation.
+❯ show what the plan would change  resource by resource, from the plan just made
+  apply                            writes, after one confirmation
+  output                           reads terraform output
+  helm-values                      merges helm_values onto stdout
+  back to the menu                 leaves this account and target
+```
+
+The detail is read back from the saved plan, not from a second one taken a
+minute later — it describes the exact plan an `apply` from this menu would run.
+Destructive actions come first within each stack, because "2 to destroy" is the
+line worth finding in forty; a replacement is reported as `replace` rather than
+as a delete and a create, since for a database that is the difference between a
+deploy and an outage.
+
+The offer only exists where the plans do: they are deleted when the run returns,
+so this question lives inside it.
+
 ### Getting a checkout in the first place
 
 With none on the machine, `infra` offers to fetch one instead of asking where

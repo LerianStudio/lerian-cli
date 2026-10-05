@@ -59,9 +59,11 @@ func Banner(out io.Writer, release string) {
 		return
 	}
 
-	painted := renderBanner(release, screenWidth(out))
+	colored := newStyle(out).enabled
+	width := screenWidth(out)
+	painted := renderBanner(release, width, colored)
 	if animates(out) {
-		revealBanner(out, painted, revealStep)
+		revealBanner(out, painted, revealStep, bannerShape(width, colored))
 		return
 	}
 	fmt.Fprint(out, painted)
@@ -73,7 +75,7 @@ func Banner(out io.Writer, release string) {
 // A wrapped wordmark is not a wordmark, it is six broken lines, and the terminal
 // decides where it wraps — so the narrow form is not a degraded banner, it is the
 // correct one at that width.
-func renderBanner(release string, width int) string {
+func renderBanner(release string, width int, colored bool) string {
 	// The wordmark says the name, so the line under it only has the release left
 	// to say. The narrow form has no wordmark, so it says both.
 	if width > 0 && width < wordmarkWidth() {
@@ -82,10 +84,17 @@ func renderBanner(release string, width int) string {
 	subtitle := ruleWithRelease(describeRelease(release))
 
 	margin := strings.Repeat(" ", wordmarkIndent)
+	// The mascot only when there is room for all of it. Half a wizard is worse
+	// than none, and the wordmark is the part that has to survive.
+	withMascot := width <= 0 || width >= bannerWidthWithMascot()
 
 	var banner strings.Builder
 	banner.WriteString("\n")
-	for _, line := range wordmark {
+	for index, line := range wordmark {
+		if withMascot {
+			banner.WriteString(margin + besideWordmark(line, mascot[index], colored) + "\n")
+			continue
+		}
 		banner.WriteString(margin + line + "\n")
 	}
 	banner.WriteString("\n" + subtitle + "\n\n")
@@ -157,10 +166,23 @@ func describeRelease(release string) string {
 // Where it ends is exactly the static banner — the animation is a way of arriving
 // at it, not a second version of it. A test paints this onto a small terminal and
 // compares the screen.
-func revealBanner(out io.Writer, banner string, step time.Duration) {
+func revealBanner(out io.Writer, banner string, step time.Duration, shape *bannerArt) {
 	lines := strings.Split(banner, "\n")
 
+	drawn := 0
 	for index, line := range lines {
+		// The sweep belongs here, between the last line of art and the rule: the
+		// cursor is one row below the art, so going back up is a known number of
+		// lines. After the rule it is not — there are blanks and a subtitle in
+		// between, and counting them from out here is the kind of arithmetic that
+		// silently paints a second banner when the shape changes.
+		if shape != nil && drawn == len(wordmark) {
+			sweepWordmark(out, *shape)
+			shape = nil
+		}
+		if strings.TrimSpace(line) != "" && !strings.Contains(line, "─") {
+			drawn++
+		}
 		// The split leaves a final empty element for the trailing newline. Writing
 		// it as a line would add one the static banner does not have.
 		if index == len(lines)-1 {
@@ -206,6 +228,62 @@ func drawAcross(out io.Writer, line string, step time.Duration) {
 	}
 	fmt.Fprint(out, "\n")
 }
+
+// sweepWordmark runs a band of light across the finished wordmark, once.
+//
+// The reveal is a wave going DOWN, one line at a time; this is a wave going
+// ACROSS, all six lines at once, and the two together read as the art settling
+// rather than as a list of rows being printed. It happens after the lines exist,
+// so it costs a cursor move rather than a redraw of the screen.
+//
+// The margin is written on every frame because the cursor returns to column zero,
+// not to the margin.
+// bannerArt is which shape was drawn, so the sweep can recompose it. It is nil
+// when the banner has no wordmark to sweep — the narrow form.
+type bannerArt struct {
+	colored    bool
+	withMascot bool
+}
+
+// bannerShape describes what renderBanner would draw at this width.
+func bannerShape(width int, colored bool) *bannerArt {
+	if width > 0 && width < wordmarkWidth() {
+		return nil
+	}
+	return &bannerArt{colored: colored, withMascot: width <= 0 || width >= bannerWidthWithMascot()}
+}
+
+func sweepWordmark(out io.Writer, shape bannerArt) {
+	const (
+		band  = 10
+		steps = 12
+	)
+
+	span := wordmarkWidth() - wordmarkIndent + band
+	margin := strings.Repeat(" ", wordmarkIndent)
+
+	for step := 0; step <= steps; step++ {
+		at := step*span/steps - band
+		fmt.Fprintf(out, "\x1b[%dA", len(wordmark))
+		for index := range wordmark {
+			light := litWindow(at, band)
+			if step == steps {
+				// The last frame is the plain banner. An animation that ends on a
+				// highlight leaves the screen in a state no static path produces.
+				light = nil
+			}
+			fmt.Fprint(out, "\r"+margin+bannerLine(index, shape.withMascot, shape.colored, light)+"\n")
+		}
+		if step < steps {
+			time.Sleep(sweepStep)
+		}
+	}
+}
+
+// sweepStep is the pause between frames of the sweep. Twelve of them is about a
+// fifth of a second — long enough to see a direction, short enough that nobody
+// waits for it.
+const sweepStep = 18 * time.Millisecond
 
 // animates reports whether this terminal should get the reveal.
 //
