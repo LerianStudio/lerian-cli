@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 )
 
@@ -21,6 +22,21 @@ const StateBucketPrefix = "lerian-tfstate-"
 
 // LockTableFor is the lock table bootstrap pairs with an environment's bucket.
 func LockTableFor(env string) string { return StateBucketPrefix + "lock-" + env }
+
+// knownEnvironment keeps a name only when it is one of ours, and returns the
+// empty string otherwise.
+//
+// Everything between the prefix and the account is NOT an environment. A bucket
+// somebody named lerian-tfstate-sandbox-<account> yields "sandbox", which is not
+// an environment this tool has — so the menu called it "made for sandbox" and the
+// scan spent a DynamoDB call looking for lerian-tfstate-lock-sandbox, which
+// cannot exist. Empty is what "named by hand" is spelled as downstream.
+func knownEnvironment(name string) string {
+	if slices.Contains(Environments, name) {
+		return name
+	}
+	return ""
+}
 
 // StateBackend is a state bucket that exists in the account right now, as the
 // AWS API reports it — not as a local file claims.
@@ -77,7 +93,7 @@ func (c CLIBackends) ListStateBackends(ctx context.Context, profile, region, acc
 		}
 		backend := StateBackend{
 			Bucket: name,
-			Env:    strings.TrimSuffix(strings.TrimPrefix(name, StateBucketPrefix), "-"+account),
+			Env:    knownEnvironment(strings.TrimSuffix(strings.TrimPrefix(name, StateBucketPrefix), "-"+account)),
 			Region: c.bucketRegion(ctx, profile, region, name),
 		}
 		// A lock table name is only predictable for a bucket that follows the

@@ -191,21 +191,36 @@ func checkAWSSession(ctx context.Context, identity infra.Identity) (checkResult,
 		}
 	}
 	if len(usable) == 0 {
-		hint := infra.LoginHint(resolved)
-		if hint == "" {
-			hint = "Check the credentials for these profiles."
-		}
 		result.ok = false
 		result.summary = "not logged in"
-		result.detail = fmt.Sprintf("None of the %d profile(s) in ~/.aws resolve right now.\n"+
-			"An expired SSO session is the usual cause. This revives them:\n\n  %s\n\n"+
-			"Then run this command again.", len(resolved), hint)
+		result.detail = sessionAdvice(resolved)
 		return result, resolved
 	}
 
 	result.summary = fmt.Sprintf("%d of %d profiles resolve: %s",
 		len(usable), len(resolved), nameAFew(usable))
 	return result, resolved
+}
+
+// sessionAdvice is what to do about no profile resolving.
+//
+// Two different failures used to share one message. With nothing to log into —
+// profiles holding static keys, or a [default] carrying only a region — "an
+// expired SSO session is the usual cause, this revives them" names a cause that
+// does not exist and then offers a sentence where a command should be. A client
+// who has never used SSO was told to renew a session they never had.
+func sessionAdvice(resolved []infra.ResolvedProfile) string {
+	if hint := infra.LoginHint(resolved); hint != "" {
+		return fmt.Sprintf("None of the %d profile(s) in ~/.aws resolve right now.\n"+
+			"An expired SSO session is the usual cause. This revives them:\n\n  %s\n\n"+
+			"Then run this command again.", len(resolved), hint)
+	}
+	return fmt.Sprintf("None of the %d profile(s) in ~/.aws resolve right now, and none\n"+
+		"of them can be signed in to: they carry no SSO configuration, so there is\n"+
+		"no session to renew. Give one of them working credentials:\n\n"+
+		"  aws configure sso --profile <name>      # IAM Identity Center\n"+
+		"  aws configure --profile <name>          # access key and secret\n\n"+
+		"Then run this command again.", len(resolved))
 }
 
 // nameAFew lists the first few names and counts the rest.

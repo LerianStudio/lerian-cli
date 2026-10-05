@@ -145,10 +145,36 @@ func installAWSCLI() string {
 	case "darwin":
 		return "  brew install awscli\n" + page
 	case "linux":
-		return "  curl -s 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o awscliv2.zip\n" +
+		archive := linuxArchive(runtime.GOARCH)
+		if archive == "" {
+			return page
+		}
+		return "  curl -s 'https://awscli.amazonaws.com/awscli-exe-linux-" + archive + ".zip' -o awscliv2.zip\n" +
 			"  unzip -q awscliv2.zip && sudo ./aws/install\n" + page
 	default:
 		return page
+	}
+}
+
+// linuxArchive names the AWS CLI archive for a Go architecture, or returns the
+// empty string when there is no archive to name.
+//
+// AWS publishes one per architecture and no generic one, so handing an ARM
+// machine the x86_64 zip produces a binary that cannot run — reported as "cannot
+// execute binary file", which reads as a broken download rather than the wrong
+// download. Anything else gets the documentation page instead: guessing a URL
+// for an architecture AWS may not publish is worse than linking the list.
+//
+// A function of its own so the mapping can be tested for every architecture
+// rather than only for the one the test happens to run on.
+func linuxArchive(goarch string) string {
+	switch goarch {
+	case "amd64":
+		return "x86_64"
+	case "arm64":
+		return "aarch64"
+	default:
+		return ""
 	}
 }
 

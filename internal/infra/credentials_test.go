@@ -266,3 +266,38 @@ func TestTheMissingAWSCLIErrorNamesTheCommandForThisMachine(t *testing.T) {
 		t.Errorf("the documentation link is gone:\n%s", message)
 	}
 }
+
+// AWS publishes one archive per architecture and no generic one. A Graviton
+// instance, an ARM CI runner or an ARM workstation handed the x86_64 zip gets a
+// binary that cannot run, reported as "cannot execute binary file" — which reads
+// as a broken download rather than the wrong one.
+//
+// The mapping is tested rather than the command, so every architecture is
+// covered instead of only the one this test runs on.
+func TestTheLinuxInstallerMatchesTheArchitecture(t *testing.T) {
+	for goarch, want := range map[string]string{
+		"amd64": "x86_64",
+		"arm64": "aarch64",
+		// Neither published nor guessable: the caller falls back to the page.
+		"riscv64": "",
+		"386":     "",
+	} {
+		if got := linuxArchive(goarch); got != want {
+			t.Errorf("linuxArchive(%q) = %q, want %q", goarch, got, want)
+		}
+	}
+}
+
+// And the command built from it names that archive.
+func TestTheInstallCommandCarriesTheArchive(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skipf("installAWSCLI returns the %s command here", runtime.GOOS)
+	}
+	archive := linuxArchive(runtime.GOARCH)
+	if archive == "" {
+		return
+	}
+	if !strings.Contains(installAWSCLI(), "awscli-exe-linux-"+archive+".zip") {
+		t.Errorf("the %s installer is not offered:\n%s", archive, installAWSCLI())
+	}
+}

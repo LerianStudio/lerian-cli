@@ -3,6 +3,7 @@ package infracli
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/lerian-studio/lerian-cli/internal/config"
+	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
 // isolatedHome points the config at a temporary directory. Without it these
@@ -378,5 +380,42 @@ func TestAskingForThePathDoesNotRecordIt(t *testing.T) {
 
 	if got := recordedCheckout(); got != "" {
 		t.Errorf("the config holds %q; the prompt wrote it down", got)
+	}
+}
+
+// Leaving outranks the last wrong answer. Typing a path that is not a checkout
+// and then deciding not to continue reported the validation error — answering a
+// question that was withdrawn, and turning a clean exit into a red line.
+func TestLeavingAfterAWrongAnswerIsStillLeaving(t *testing.T) {
+	isolatedHome(t)
+	t.Chdir(t.TempDir())
+
+	wrong := t.TempDir()
+	ask := &prompter{
+		interactive: true,
+		in:          bufio.NewReader(strings.NewReader(wrong + "\nq\n")),
+		out:         &bytes.Buffer{},
+	}
+
+	_, err := promptCheckoutPath(ask, &bytes.Buffer{}, t.TempDir())
+
+	if !errors.Is(err, infra.ErrAborted) {
+		t.Errorf("promptCheckoutPath = %v, want ErrAborted", err)
+	}
+}
+
+// And with no wrong answer before it, which is the path that already worked.
+func TestLeavingStraightAwayIsLeaving(t *testing.T) {
+	isolatedHome(t)
+	t.Chdir(t.TempDir())
+
+	ask := &prompter{
+		interactive: true,
+		in:          bufio.NewReader(strings.NewReader("q\n")),
+		out:         &bytes.Buffer{},
+	}
+
+	if _, err := promptCheckoutPath(ask, &bytes.Buffer{}, t.TempDir()); !errors.Is(err, infra.ErrAborted) {
+		t.Errorf("promptCheckoutPath = %v, want ErrAborted", err)
 	}
 }

@@ -100,3 +100,36 @@ func TestTheCheckoutSourceReadsAsASentence(t *testing.T) {
 		}
 	}
 }
+
+// LERIAN_TF_REPO naming a directory that is not a checkout is the failure this
+// page exists to explain: it said "none found — lerian infra init --clone",
+// sending somebody to clone while the variable they set stayed wrong.
+func TestABadRepoVariableIsNamedRatherThanHiddenBehindClone(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+	t.Setenv("LERIAN_TF_REPO", t.TempDir()) // exists, is not a checkout
+
+	var out bytes.Buffer
+	DescribeMachine(context.Background(), &out)
+
+	if strings.Contains(out.String(), "none found — lerian infra init --clone") {
+		t.Errorf("a bad LERIAN_TF_REPO is reported as having no checkout to clone:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "none usable") {
+		t.Errorf("the real cause is not shown:\n%s", out.String())
+	}
+}
+
+// And with nothing set anywhere, cloning IS the answer.
+func TestWithNothingAnywhereCloningIsStillTheAdvice(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+	t.Setenv("LERIAN_TF_REPO", "")
+
+	var out bytes.Buffer
+	DescribeMachine(context.Background(), &out)
+
+	if !strings.Contains(out.String(), "none found — lerian infra init --clone") {
+		t.Errorf("an empty machine is not told how to get a checkout:\n%s", out.String())
+	}
+}

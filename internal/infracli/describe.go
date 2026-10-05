@@ -2,6 +2,7 @@ package infracli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -87,8 +88,17 @@ func describeTool(line func(label, value string)) {
 // of pointing at one produced it.
 func describeTemplates(ctx context.Context, line func(label, value string)) {
 	layout, source, err := resolveLayout("", os.Getenv("LERIAN_TF_REPO"), "")
-	if err != nil {
+	switch {
+	case errors.Is(err, errNoCheckoutAnywhere):
 		line("checkout", "none found — lerian infra init --clone")
+		return
+	case err != nil:
+		// Any other failure is a checkout that was POINTED AT and did not work —
+		// usually LERIAN_TF_REPO naming a directory that is not one. Telling that
+		// person to clone sends them to fix something that is not broken, while the
+		// variable they set stays wrong; this page exists to say where the answer
+		// came from, so it has to say when the answer is the problem.
+		line("checkout", "none usable — "+firstLine(err.Error()))
 		return
 	}
 

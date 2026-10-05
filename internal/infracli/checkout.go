@@ -1,6 +1,7 @@
 package infracli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -117,6 +118,13 @@ func promptCheckoutPath(ask *prompter, out io.Writer, templatesDir string) (stri
 			checkoutPurpose(templatesDir),
 			defaultCheckout(templatesDir), "--repo")
 		if err != nil {
+			// Leaving outranks the last wrong answer. q and ctrl-c both arrive here,
+			// and reporting "that path is not a checkout" to somebody who just asked
+			// to stop answers a question they withdrew — and turns a clean exit into
+			// a failure the caller prints in red.
+			if errors.Is(err, infra.ErrAborted) || errors.Is(err, errBack) {
+				return "", err
+			}
 			if lastErr != nil {
 				return "", lastErr
 			}

@@ -722,8 +722,12 @@ That is `aws s3api list-buckets` filtered by the account suffix, plus
 the account, not inferred. Adopting writes the four lines `bootstrap` would have
 written, which is what the old error told you to do by hand.
 
-Every bucket is offered, not only the one whose name matches: one named by hand
-is still a backend somebody made deliberately. The note carries what decides
+Every state bucket the account holds is offered, not only the one whose name
+matches this environment — including the ones made for other environments, and
+ones whose suffix is not an environment this tool knows (`lerian-tfstate-sandbox-…`
+shows as *named by hand*). The search is bounded: a bucket has to carry the
+`lerian-tfstate-` prefix the templates give it and end with this account's id, so
+an account's unrelated buckets never appear. The note carries what decides
 whether adopting is safe — the region (adopting one in the wrong region fails at
 `terraform init` with a redirect that reads like anything but a region problem)
 and whether a lock table exists (without one, concurrent runs are unprotected).
@@ -827,8 +831,10 @@ directory**, answered separately from the first one:
 Separate because the two answers undo differently: forgetting a path is undone
 by the next run asking again, and deleting a git clone is undone by nothing. The
 line above the question is the part worth reading — whose directory it is, and
-whether anything in it was never committed, which is the only thing a fresh
-clone cannot bring back. The cursor starts on the row that deletes nothing.
+whether anything in it was never committed. Uncommitted work and commits that
+were never pushed are the parts a fresh clone cannot bring back; the count
+covers the first, so check `git log` against the remote before deleting a
+checkout you have worked in. The cursor starts on the row that deletes nothing.
 
 Only the checkouts this tool would use are in scope: the recorded one and the
 managed path. **Not the directory you are standing in** — `reset` is run from

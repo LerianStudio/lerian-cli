@@ -93,10 +93,16 @@ func resolveBackend(
 // backendChoices lists what the account holds, with the one bootstrap would have
 // made for this environment first.
 //
-// Every bucket is offered, not only the matching one. A backend whose name does
-// not follow the convention is still a backend somebody made deliberately, and
-// hiding it would leave them with no way to say so — which is the whole reason
-// the old advice was "write the file by hand".
+// Every state bucket the account holds is offered, not only the matching one:
+// the ones made for other environments, and the ones whose suffix is not an
+// environment this tool knows — those are somebody's deliberate naming, and
+// hiding them leaves that person where the old advice did, writing the file by
+// hand.
+//
+// Bounded, though. ListStateBackends only returns buckets carrying the prefix
+// the templates give them and this account's id, so "named by hand" means a
+// hand-chosen SUFFIX, not any bucket in the account. Offering every bucket an
+// account holds would bury three answers in fifty.
 func backendOptions(found []infra.StateBackend, environment, account string) []option {
 	choices := make([]option, 0, len(found)+1)
 
