@@ -741,6 +741,51 @@ would trade a small risk for a certain stoppage. With no terminal, nothing is
 looked up at all; adopting is a decision, and CI would be paying for an API call
 to print something nobody asked for.
 
+### Pointing kubectl at the cluster
+
+After an `apply` that produced a cluster, the post-run menu offers it:
+
+```
+  What now?
+❯ point kubectl at the cluster   runs aws eks update-kubeconfig
+  ...
+```
+
+The cluster's name comes from the EKS stack's own outputs, not from rebuilding
+the templates' naming convention here — that would be a second implementation of
+somebody else's rule, correct right up until they rename something.
+
+It checks the kubeconfig first and asks before overwriting:
+
+```
+==> kubectl
+  cluster   example-dev-eks
+  file      /Users/you/.kube/config
+  an entry for this cluster is already there, pointing elsewhere:
+    now   https://OLD.gr7.us-east-2.eks.amazonaws.com
+    after https://NEW.gr7.us-east-2.eks.amazonaws.com
+
+  Replace it? [type yes to continue · ctrl-c cancels]:
+```
+
+That case is worth the question because it reads two ways. A cluster destroyed
+and recreated keeps its name and gets a new endpoint — the entry is stale and
+replacing it is the fix, and the symptom is a `kubectl` that fails with `no such
+host` rather than with a permission error. But an entry pointing elsewhere can
+also be a different cluster of the same name in another account, and overwriting
+that one silently moves `kubectl` off something somebody is working against.
+
+Pointing at the endpoint already there asks nothing: re-running
+`update-kubeconfig` is how a broken context gets repaired, and confirming a
+no-op teaches people to say yes without reading. A kubeconfig that cannot be
+parsed is an error rather than "nothing will be overwritten" — that sentence
+would be a guess about a file whose contents are unknown.
+
+The file itself is written by the AWS CLI. Its format — contexts, users, the
+exec credential plugin and the arguments that plugin wants from this version of
+the CLI — is not this tool's to author. Reading it to see what is there is one
+thing; writing it is another.
+
 ### Which environment an account is
 
 Setting an account up asks which of `dev`, `stg` and `prd` it is:

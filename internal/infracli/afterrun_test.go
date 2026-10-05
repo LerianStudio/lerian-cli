@@ -13,7 +13,7 @@ import (
 // used to mean walking the account, backend, target and action questions again to
 // arrive back where they already were.
 func TestAfterAPlanTheNextActionsAreOffered(t *testing.T) {
-	rows := afterOptions(infra.ActionPlan)
+	rows := afterOptions(infra.ActionPlan, false)
 
 	offered := make([]string, 0, len(rows))
 	for _, opt := range rows {
@@ -35,7 +35,7 @@ func TestAfterAPlanTheNextActionsAreOffered(t *testing.T) {
 // With no plan there is nothing to detail, and a row that opens an empty report
 // is an answer to a question nobody has.
 func TestTheDetailIsNotOfferedWithoutAPlan(t *testing.T) {
-	for _, opt := range afterOptions(infra.ActionApply) {
+	for _, opt := range afterOptions(infra.ActionApply, false) {
 		if opt.value == afterDetail {
 			t.Error("the plan detail is offered after an apply")
 		}
@@ -87,7 +87,7 @@ func TestNothingIsOfferedWithoutATerminal(t *testing.T) {
 		func(infra.Action) error {
 			t.Error("an action ran with nobody to ask")
 			return nil
-		})
+		}, nil)
 
 	if err != nil {
 		t.Errorf("afterRun = %v", err)

@@ -389,9 +389,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := perform(action); err != nil {
 		return err
 	}
+
+	// Resolved after the run, because an apply is what makes the cluster exist and
+	// its outputs readable. nil when there is none, which is what keeps the row out
+	// of the menu rather than a row that fails when picked.
+	ask := newPrompter(progressOut)
+	var kubectl func() error
+	if facts, found := readClusterFacts(ctx, runner, allUnits); found {
+		kubectl = func() error {
+			return pointKubectl(ctx, ask, progressOut, facts, config.Region, config.Profile)
+		}
+	}
+
 	// Inside the run, not after it: the saved plans are removed when this function
 	// returns, and they are what the detail is read from.
-	return afterRun(ctx, newPrompter(progressOut), runner, terraform, stages, action, progressOut, perform)
+	return afterRun(ctx, ask, runner, terraform, stages, action, progressOut, perform, kubectl)
 }
 
 // checkoutSource says which of the four ways of finding a checkout was the one

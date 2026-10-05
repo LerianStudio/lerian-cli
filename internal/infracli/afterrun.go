@@ -12,8 +12,9 @@ import (
 
 // Sentinel rows for the menu that follows a run.
 const (
-	afterDetail = "\x00detail"
-	afterDone   = "\x00done"
+	afterDetail  = "\x00detail"
+	afterKubectl = "\x00kubectl"
+	afterDone    = "\x00done"
 )
 
 // afterRun is what happens when a run finishes and somebody is still sitting
@@ -36,13 +37,14 @@ func afterRun(
 	done infra.Action,
 	out io.Writer,
 	again func(infra.Action) error,
+	kubectl func() error,
 ) error {
 	if !ask.interactive {
 		return nil
 	}
 
 	for {
-		picked, err := ask.pick("What now?", afterPurpose(done), "", afterOptions(done), "")
+		picked, err := ask.pick("What now?", afterPurpose(done), "", afterOptions(done, kubectl != nil), "")
 		switch {
 		//nolint:nilerr // Leaving is leaving: q, r and ctrl-c all arrive as an
 		// error here, and so does a selector that could not draw. The run already
@@ -55,6 +57,14 @@ func afterRun(
 			return nil
 		case picked == afterDetail:
 			printPlanDetail(ctx, terraform, runner, stages, out)
+			continue
+		case picked == afterKubectl:
+			if err := kubectl(); err != nil {
+				// Said and carried on. Nothing was deployed differently because
+				// kubectl could not be pointed, and the menu is still the right
+				// place to be.
+				fmt.Fprintf(out, "\n  %v\n\n", err)
+			}
 			continue
 		}
 
@@ -76,8 +86,8 @@ func afterPurpose(done infra.Action) string {
 
 // afterOptions is the menu, with the detail row only where there is a plan to
 // detail.
-func afterOptions(done infra.Action) []option {
-	options := make([]option, 0, 5)
+func afterOptions(done infra.Action, cluster bool) []option {
+	options := make([]option, 0, 6)
 	if done == infra.ActionPlan {
 		options = append(options,
 			option{value: afterDetail, label: "show what the plan would change",
@@ -88,6 +98,13 @@ func afterOptions(done infra.Action) []option {
 	} else {
 		options = append(options, option{value: string(infra.ActionPlan), label: "plan again",
 			note: "changes nothing"})
+	}
+	// Only after an apply, and only when the run produced a cluster. After a plan
+	// there is nothing new to point at, and offering it would suggest the plan
+	// changed something.
+	if cluster && done == infra.ActionApply {
+		options = append(options, option{value: afterKubectl, label: "point kubectl at the cluster",
+			note: "runs aws eks update-kubeconfig"})
 	}
 	options = append(options,
 		option{value: string(infra.ActionOutput), label: "output", note: "reads terraform output"},
