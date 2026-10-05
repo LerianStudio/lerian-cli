@@ -224,9 +224,9 @@ func TestGuidedRunWithThreeEntersReproducesTheDefaultRun(t *testing.T) {
 		Names:    []string{"midaz"},
 		Products: map[string][]string{"midaz": {"postgres", "valkey"}},
 	}
-	// env: Enter on the first row (dev). target: Enter takes the preselected
-	// infra-base. action: Enter takes the preselected plan.
-	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	// account: Enter on the first row. environment: Enter on dev. target: Enter
+	// takes the preselected infra-base. action: Enter takes the preselected plan.
+	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 
 	opts := options{target: "infra-base", action: "plan"}
 	if err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), nil); err != nil {
@@ -251,7 +251,10 @@ func TestGuidedRunReachesACompositeTargetAndAnotherAction(t *testing.T) {
 	// REMOVE it; the way to add a second target is to move and toggle that one.
 	// down to midaz, space adds it, Enter.
 	// action: down once to apply, Enter.
+	// account: down to stg-profile, Enter. environment: Enter — dev and prd belong
+	// to other accounts in this fixture, so stg is where the cursor starts.
 	keys := keyDownSeq + keyEnterSeq +
+		keyEnterSeq +
 		keyDownSeq + " " + keyEnterSeq +
 		keyDownSeq + keyEnterSeq
 	ask, _ := selectorFor(t, keys)

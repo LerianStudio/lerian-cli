@@ -95,28 +95,30 @@ func TestListingTargetsNeedsNoTools(t *testing.T) {
 	}
 }
 
-// The credential is checked as soon as the environment names the profile, not
-// after every question has been answered.
+// The credential is checked as soon as the account names the profile, not after
+// every question has been answered.
 //
-// This is the failure an operator actually hits: the environment picks the AWS
-// account, the account picks the profile, and an expired SSO session for that
-// profile is only discovered at the point the first stage tries to run. By then
-// the target and the action have been answered too, and all three answers are
-// lost to a run that could never have started.
-func TestTheCredentialIsCheckedAsSoonAsTheEnvironmentIsKnown(t *testing.T) {
-	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+// This is the failure an operator actually hits: an expired SSO session for the
+// chosen profile is otherwise discovered at the point the first stage tries to
+// run. By then the environment, the target and the action have been answered
+// too, and all of them are lost to a run that could never have started.
+func TestTheCredentialIsCheckedAsSoonAsTheAccountIsKnown(t *testing.T) {
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	expired := errors.New("the SSO session for profile \"acme-sandbox\" has expired")
-	err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), func(string, string, bool) error { return expired })
+	err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), func(string, bool) error { return expired })
 
 	if !errors.Is(err, expired) {
 		t.Fatalf("guidedRun = %v, want the credential failure", err)
 	}
-	// The environment was answered; nothing after it was asked.
-	if opts.environment == "" {
-		t.Error("the run failed before the environment was even chosen")
+	// The account was answered; nothing after it was asked.
+	if opts.account == "" {
+		t.Error("the run failed before the account was even chosen")
+	}
+	if strings.Contains(painted.String(), "Which environment is this account?") {
+		t.Errorf("the environment was asked after the credential had already failed:\n%s", painted.String())
 	}
 	if strings.Contains(painted.String(), "operate on") {
 		t.Errorf("the target was asked after the credential had already failed:\n%s", painted.String())
@@ -128,17 +130,20 @@ func TestTheCredentialIsCheckedAsSoonAsTheEnvironmentIsKnown(t *testing.T) {
 
 // With a working credential the questions carry on as before.
 func TestAWorkingCredentialAsksTheRestOfTheQuestions(t *testing.T) {
-	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	var checked string
-	if err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), func(env string, _ string, _ bool) error { checked = env; return nil }); err != nil {
+	check := func(profile string, _ bool) error { checked = profile; return nil }
+	if err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), check); err != nil {
 		t.Fatalf("guidedRun = %v", err)
 	}
 
-	if checked != opts.environment {
-		t.Errorf("the credential was checked for %q, the environment chosen was %q", checked, opts.environment)
+	// The profile, because that is what a credential belongs to — and because at
+	// that point the environment has not been chosen yet.
+	if checked != opts.profile {
+		t.Errorf("the credential was checked for %q, the profile chosen was %q", checked, opts.profile)
 	}
 	if !strings.Contains(painted.String(), "operate on") {
 		t.Errorf("the questions stopped at the environment:\n%s", painted.String())
@@ -337,7 +342,7 @@ func TestTheGuidedRunAsksForTheAccount(t *testing.T) {
 		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
 	}
 
-	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
@@ -348,12 +353,20 @@ func TestTheGuidedRunAsksForTheAccount(t *testing.T) {
 	if !strings.Contains(painted.String(), "account") {
 		t.Errorf("the account was never mentioned:\n%s", painted.String())
 	}
-	if strings.Contains(painted.String(), "Which environment") {
-		t.Errorf("the operator was asked for one of our environment names:\n%s", painted.String())
+	// The account comes first, and it is what the first question is about. The
+	// environment is a question of its own after it — deriving it from the account
+	// meant an account could only ever be one environment, and it also decided the
+	// sizing without saying so.
+	account := strings.Index(painted.String(), "Which AWS account?")
+	environment := strings.Index(painted.String(), "Which environment is this account?")
+	if account < 0 || environment < 0 {
+		t.Fatalf("both questions were not asked:\n%s", painted.String())
 	}
-	// And the environment still reaches the rest of the run, derived.
+	if account > environment {
+		t.Errorf("the environment was asked before the account:\n%s", painted.String())
+	}
 	if opts.environment != "dev" {
-		t.Errorf("environment = %q, want dev derived from the account", opts.environment)
+		t.Errorf("environment = %q", opts.environment)
 	}
 }
 
@@ -364,7 +377,7 @@ func TestNoConfiguredAccountSendsTheOperatorToInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ask, painted := selectorFor(t, keyEnterSeq)
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
 
 	// No profiles and no sections: nothing to offer from either side. A usable
@@ -426,7 +439,7 @@ func TestChoosingAnExpiredProfileLogsIntoThatOne(t *testing.T) {
 	t.Cleanup(func() { checkIdentity = previousIdentity })
 
 	// Enter picks sandbox, Enter accepts the login, then the remaining questions.
-	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
@@ -500,7 +513,7 @@ func TestNothingReadyStillAsks(t *testing.T) {
 	checkIdentity = stubIdentity{usable: map[string]bool{"sandbox": true}}
 	t.Cleanup(func() { checkIdentity = previousIdentity })
 
-	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
@@ -531,7 +544,7 @@ func TestTheAccountIsAlwaysAsked(t *testing.T) {
 		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
 	}
 
-	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
@@ -625,8 +638,10 @@ func TestSigningOutLogsBackIn(t *testing.T) {
 	if len(order) != 2 || order[0] != "logout" || order[1] != "login:acme" {
 		t.Errorf("did %v, want a logout followed by a login", order)
 	}
-	if choice.environment != "dev" {
-		t.Errorf("environment = %q after signing back in", choice.environment)
+	// The account, not the environment: which environment it is deployed as is a
+	// separate question now.
+	if choice.account != "111122223333" {
+		t.Errorf("account = %q after signing back in", choice.account)
 	}
 }
 
@@ -694,13 +709,16 @@ func TestChoosingAnUnsetAccountConfiguresIt(t *testing.T) {
 		{Profile: infra.AWSProfile{Name: "other", Region: "sa-east-1"}, Caller: infra.Caller{Account: "999988887777"}},
 	}
 
-	var out bytes.Buffer
-	// Two answers now: the account, then which environment it is being set up as.
-	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq)
+	// The account, then enter on the environment menu: dev belongs to another
+	// account and cannot be chosen, so the cursor starts on stg.
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq)
+	opts := options{}
 
-	choice, err := askForAccount(context.Background(), ask, &out, infra.Catalog{}, layout, resolved)
-	if err != nil {
-		t.Fatalf("askForAccount = %v\n%s", err, out.String())
+	if _, err := askAccountStep(context.Background(), ask, infra.Catalog{}, layout, resolved, &opts, nil); err != nil {
+		t.Fatalf("askAccountStep = %v\n%s", err, painted.String())
+	}
+	if _, err := askEnvironmentStep(context.Background(), ask, infra.Catalog{}, layout, &opts); err != nil {
+		t.Fatalf("askEnvironmentStep = %v\n%s", err, painted.String())
 	}
 
 	// Everything already known is filled in — but not the region: init asks for
@@ -715,8 +733,8 @@ func TestChoosingAnUnsetAccountConfiguresIt(t *testing.T) {
 	if strings.Contains(joined, "--region") {
 		t.Errorf("init was given a region instead of asking for one: %q", joined)
 	}
-	if choice.environment != "stg" {
-		t.Errorf("environment = %q, want the slot it was configured into", choice.environment)
+	if opts.environment != "stg" {
+		t.Errorf("environment = %q, want the one that was chosen", opts.environment)
 	}
 }
 
@@ -737,8 +755,8 @@ func TestAFourthAccountSaysWhatIsInTheWay(t *testing.T) {
 	}
 
 	noAnswers, _ := selectorFor(t, "")
-	_, err = configureAccount(context.Background(), noAnswers, &bytes.Buffer{}, layout,
-		infra.ResolvedProfile{Profile: infra.AWSProfile{Name: "four"}, Caller: infra.Caller{Account: "444444444444"}})
+	opts := options{account: "444444444444", profile: "four"}
+	_, err = askEnvironmentStep(context.Background(), noAnswers, infra.Catalog{}, layout, &opts)
 
 	if err == nil {
 		t.Fatal("a fourth account was configured into a checkout that holds three")
@@ -798,7 +816,7 @@ func TestADryRunOffersTheConfiguredAccounts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{dryRun: true}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
@@ -823,7 +841,7 @@ func TestNothingConfiguredAndNothingResolvedSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ask, _ := selectorFor(t, keyEnterSeq)
+	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
 
 	err = guidedRun(context.Background(), infra.Catalog{}, &opts, ask, layout, nil, nil)
@@ -903,7 +921,7 @@ func TestTheChosenProfileIsTheOneTheRunUses(t *testing.T) {
 		{Profile: infra.AWSProfile{Name: "the-one-chosen"}, Caller: infra.Caller{Account: "111122223333"}},
 	}
 
-	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
@@ -1009,12 +1027,12 @@ func TestTheChoiceReachesTheEarlyCheck(t *testing.T) {
 	}
 
 	var handed []string
-	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	err = guidedRun(context.Background(), catalog, &opts, ask, layout, resolved,
-		func(_ string, profile string, _ bool) error {
+		func(profile string, _ bool) error {
 			handed = append(handed, profile)
 			return nil
 		})
@@ -1074,12 +1092,12 @@ func TestADryRunChoosesNoProfile(t *testing.T) {
 	}
 
 	var handed []bool
-	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{dryRun: true}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	err = guidedRun(context.Background(), catalog, &opts, ask, layout, nil,
-		func(_, _ string, chosen bool) error {
+		func(_ string, chosen bool) error {
 			handed = append(handed, chosen)
 			return nil
 		})
@@ -1185,7 +1203,8 @@ func TestSettingUpAnAccountAsksForTheRegion(t *testing.T) {
 	// Enter takes dev, the first environment, which is all this test needs: it is
 	// about the region not being decided from the profile.
 	ask, _ := selectorFor(t, keyEnterSeq)
-	if _, err := configureAccount(context.Background(), ask, &bytes.Buffer{}, layout, chosen); err != nil {
+	opts := options{account: chosen.Caller.Account, profile: chosen.Profile.Name}
+	if _, err := askEnvironmentStep(context.Background(), ask, infra.Catalog{}, layout, &opts); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1356,6 +1375,17 @@ func TestAfterBootstrapEverythingIsOffered(t *testing.T) {
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
 	for _, opt := range runTargetOptions(catalog, layout, "dev") {
+		// bootstrap is the exception: with the backend there it has nothing to
+		// create, and the row says which bucket is already in use.
+		if opt.value == "bootstrap" {
+			if !opt.disabled {
+				t.Error("bootstrap is still selectable with the backend already there")
+			}
+			if !strings.Contains(opt.note, "already there") {
+				t.Errorf("the bootstrap row does not say why: %q", opt.note)
+			}
+			continue
+		}
 		if opt.disabled {
 			t.Errorf("%s is not offered although the backend exists: %q", opt.value, opt.note)
 		}
@@ -1458,8 +1488,10 @@ func TestGoingBackReAsksThePreviousQuestion(t *testing.T) {
 	layout := configuredLayout(t)
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
-	// account, then back from the targets, then account again, then on through.
-	ask, painted := selectorFor(t, keyEnterSeq+"r"+keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	// account, environment, then r twice — back to the environment and back to the
+	// account — then the four answers again on the way forward.
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq+"rr"+
+		keyEnterSeq+keyEnterSeq+keyEnterSeq+keyEnterSeq)
 	opts := options{}
 
 	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, configuredProfiles(), nil); err != nil {
@@ -1685,16 +1717,18 @@ func TestSettingUpAnAccountDecidesTheTargets(t *testing.T) {
 	resolved := []infra.ResolvedProfile{
 		{Profile: infra.AWSProfile{Name: "sandbox", Region: "us-east-1"}, Caller: infra.Caller{Account: "111122223333"}},
 	}
-	// The account, then the environment it is set up as.
 	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq)
 	opts := options{}
 
-	asked, err := askAccountStep(context.Background(), ask, catalog, layout, resolved, &opts, nil)
-	if err != nil {
+	if _, err := askAccountStep(context.Background(), ask, catalog, layout, resolved, &opts, nil); err != nil {
 		t.Fatalf("askAccountStep = %v\n%s", err, painted.String())
 	}
+	asked, err := askEnvironmentStep(context.Background(), ask, catalog, layout, &opts)
+	if err != nil {
+		t.Fatalf("askEnvironmentStep = %v\n%s", err, painted.String())
+	}
 	if !asked {
-		t.Error("the account question reported that it asked nothing")
+		t.Error("the environment question reported that it asked nothing")
 	}
 
 	if !opts.targetsFromSetup {

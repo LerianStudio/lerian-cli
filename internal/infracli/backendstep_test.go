@@ -278,6 +278,10 @@ func TestAdoptingABackendUnlocksTheTargetList(t *testing.T) {
 		t.Fatalf("the backend was not adopted:\n%s", painted.String())
 	}
 	for _, opt := range runTargetOptions(catalog, layout, "dev") {
+		// Except bootstrap, which now has nothing to create.
+		if opt.value == "bootstrap" {
+			continue
+		}
 		if opt.disabled {
 			t.Errorf("%q is still disabled after adopting a backend", opt.value)
 		}

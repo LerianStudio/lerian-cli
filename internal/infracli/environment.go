@@ -20,51 +20,41 @@ var environmentNotes = map[string]string{
 	"prd": "largest classes, multi-AZ, long backups, deletion protection",
 }
 
-// askForEnvironment asks which environment an account is being set up as.
+// environmentChoices is the three, each saying what it is FOR THIS ACCOUNT:
+// already configured here, free, or held by somebody else.
 //
-// It used to be taken rather than asked: the first free slot, in order, silently.
-// That is a decision about capacity and cost dressed as an implementation detail
-// — set a production account up first in a fresh checkout and it got dev, which
-// is db.t4g.micro, single-AZ, one day of backups and no deletion protection.
-//
-// Asked here, before init, because the answer decides three things at once: which
-// envs/<env>.tfvars is written, which backend/<env>.hcl, and the name of the state
-// bucket. After init they are all settled.
-func askForEnvironment(ask *prompter, layout infra.Layout, account string) (string, error) {
-	options := freeEnvironmentOptions(layout)
-	if firstEnabled(options) < 0 || !options[firstEnabled(options)].selectable() {
-		return "", errCheckoutFull(layout, account)
-	}
-
-	return ask.pick(
-		"Which environment is this account?",
-		"It picks the sizing the templates ship, and the name of the state bucket.",
-		"--env", options, "")
-}
-
-// freeEnvironmentOptions lists the three, with the taken ones shown rather than
-// hidden and not selectable.
-//
-// Distinct from init's own environmentOptions, which offers all three as valid:
-// there, picking one that is already configured means reconfiguring that same
-// account, which is a thing to do. Here a taken slot belongs to a DIFFERENT
-// account, and a checkout holds one account per environment.
-//
-// Shown because their absence is the question somebody would ask next: a menu
-// that silently offers two of three reads as a tool with opinions, while a row
-// saying "taken by 905418424496" says a checkout holds one account per
-// environment and that this one is spoken for.
-func freeEnvironmentOptions(layout infra.Layout) []option {
+// The state is on the row because it decides what happens next. "configured
+// here" means the run goes straight to what to operate on; "free" means init
+// runs first; "held by" means not this checkout, and a row that said only
+// "production" would leave somebody picking it and then being refused.
+func environmentChoices(layout infra.Layout, account string) []option {
 	options := make([]option, 0, len(infra.Environments))
 	for _, name := range infra.Environments {
 		row := option{value: name, label: name, note: environmentNotes[name]}
-		if config, err := infra.LoadEnvConfig(layout, name); err == nil {
+
+		config, err := infra.LoadEnvConfig(layout, name)
+		switch {
+		case err != nil:
+			row.note += "  ·  not set up here yet"
+		case config.AccountID == account:
+			row.note = "configured here" + backendNote(layout, name)
+		default:
 			row.disabled = true
-			row.note = "taken by account " + config.AccountID
+			row.note = "another account holds it: " + config.AccountID
 		}
 		options = append(options, row)
 	}
 	return options
+}
+
+// backendNote says whether this environment has somewhere to keep state, which
+// is the difference between a run that can do anything and one that can only
+// bootstrap.
+func backendNote(layout infra.Layout, environment string) string {
+	if backendExists(layout, environment) {
+		return "  ·  state backend ready"
+	}
+	return "  ·  no state backend yet"
 }
 
 // errCheckoutFull is the error for a checkout whose three environments are all

@@ -788,35 +788,50 @@ thing; writing it is another.
 
 ### Which environment an account is
 
-Setting an account up asks which of `dev`, `stg` and `prd` it is:
+The account and the environment are two questions, in that order:
 
 ```
   Which environment is this account?
-  It picks the sizing the templates ship, and the name of the state bucket.
-❯ dev   smallest classes, single-AZ, short backups — cheapest
-  stg   production's shape, smaller
-  prd   largest classes, multi-AZ, long backups, deletion protection
+  It picks the sizing the templates ship, and the state backend to use.
+❯ dev   configured here  ·  state backend ready
+  stg   production's shape, smaller  ·  not set up here yet
+  prd   another account holds it: 905418424496
 ```
 
-It used to be taken rather than asked — the first free slot, in order, in
-silence. That is a decision about capacity and cost dressed as an implementation
-detail: a production account set up first in a fresh checkout got `dev`, which
-in the templates is `db.t4g.micro`, single-AZ, one day of backups and no
-deletion protection.
+The environment used to be derived from the account — the first section whose
+`account_id` matched. That made an account permanently one environment: a
+sandbox configured as `dev` could never also be `stg` in the same checkout,
+because the lookup found `dev` and stopped. Worse, on a fresh checkout it was
+the first *free* slot, so a production account set up first got `dev`, which in
+these templates is `db.t4g.micro`, single-AZ, one day of backups and no deletion
+protection.
 
-The answer settles three things at once, which is why it comes before `init` and
-not after: which `envs/<env>.tfvars` is written (the sizing), which
-`backend/<env>.hcl`, and the name of the state bucket — `lerian-tfstate-<env>-<account>`.
-They cannot disagree, because one answer produces all three.
+Each row says where that environment stands **for this account**, because that
+decides what happens next:
 
-An environment another account already holds is shown and cannot be chosen: a
-checkout holds one account per environment, and its absence from the list would
-be the next question you'd ask. With all three taken, the error says so rather
-than offering three refusals.
+| row says | what follows |
+|---|---|
+| `configured here · state backend ready` | straight on to what to operate on |
+| `configured here · no state backend yet` | `bootstrap` is the only thing that can run |
+| `not set up here yet` | `init` runs first, then the backend is settled |
+| `another account holds it: …` | not selectable — one account per environment |
 
-The sizing on each row is written in the CLI, not parsed out of the templates in
-front of you — but a test reads the examples and fails when the description
-stops being true, so it cannot quietly drift.
+The answer settles three things at once, which is why it comes before `init`:
+which `envs/<env>.tfvars` is written (the sizing), which `backend/<env>.hcl`, and
+the name of the state bucket — `lerian-tfstate-<env>-<account>`. One answer
+produces all three, so they cannot disagree.
+
+And `bootstrap` stops being offered once there is a backend:
+
+```
+  [ ] bootstrap  already there — lerian-tfstate-dev-524121347244
+```
+
+It is the one row with nothing to do at that point, and leaving it selectable
+invites a run whose entire output is "no changes". The question somebody
+actually has — is my state backend set up? — is answered by the row saying so.
+(`--target bootstrap` still works from the command line, for changing the
+bucket's own settings.)
 
 ### The targets are asked once
 

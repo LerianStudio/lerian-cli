@@ -62,6 +62,11 @@ type options struct {
 	profile       string
 	profileChosen bool
 
+	// account is who the chosen profile resolves to, carried from the account
+	// question to the environment one: which environments are available depends on
+	// it, since a checkout holds one account per environment.
+	account string
+
 	// targetsFromSetup records that init just chose the targets, so the question
 	// that would ask for them again is skipped.
 	targetsFromSetup bool
@@ -1076,14 +1081,13 @@ func printDryRun(
 //
 // The questions go to stderr: the action is one of the things being chosen, and
 // helm-values needs stdout to carry nothing but the document.
-// afterEnvironment is called as soon as the account is chosen, with the
-// environment it maps to and the profile that was picked. Its error stops the
-// remaining questions.
+// afterAccount is called as soon as the account is chosen, with the profile that
+// was picked. Its error stops the remaining questions.
 //
 // It exists for one check: an expired credential makes every later answer
-// worthless. The profile is passed because the check has to use the one that was
-// chosen — the section may name a different profile reaching the same account,
-// and checking that one would fail on credentials nobody selected.
+// worthless. The profile is what it needs, not the environment — the credential
+// belongs to the profile, and which environment the account is deployed as is
+// still three questions away at that point.
 func guidedRun(
 	ctx context.Context,
 	catalog infra.Catalog,
@@ -1091,7 +1095,7 @@ func guidedRun(
 	ask *prompter,
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
-	afterEnvironment func(environment, profile string, chosen bool) error,
+	afterAccount func(profile string, chosen bool) error,
 ) error {
 	if !ask.interactive {
 		return nil
@@ -1108,8 +1112,9 @@ func guidedRun(
 	// key would appear to do nothing.
 	steps := []func() (bool, error){
 		func() (bool, error) {
-			return askAccountStep(ctx, ask, catalog, layout, resolved, opts, afterEnvironment)
+			return askAccountStep(ctx, ask, catalog, layout, resolved, opts, afterAccount)
 		},
+		func() (bool, error) { return askEnvironmentStep(ctx, ask, catalog, layout, opts) },
 		func() (bool, error) { return askTargetStep(ctx, ask, catalog, layout, opts) },
 		func() (bool, error) { return askActionStep(ask, opts) },
 	}
@@ -1154,7 +1159,7 @@ func askAccountStep(
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
 	opts *options,
-	afterEnvironment func(environment, profile string, chosen bool) error,
+	afterAccount func(profile string, chosen bool) error,
 ) (bool, error) {
 	choice, err := askForAccount(ctx, ask, ask.out, catalog, layout, resolved)
 	if err != nil {
@@ -1162,22 +1167,11 @@ func askAccountStep(
 	}
 	opts.environment = choice.environment
 	opts.profile = choice.profile
+	opts.account = choice.account
 	opts.profileChosen = choice.chosen
-	// What init just wrote tfvars for is the answer to the next question, so the
-	// next question does not get asked. Choosing an account that needed setting up
-	// means answering "what do you want to configure?" seconds earlier; asking
-	// "what do you want to operate on?" straight after reads as the same list
-	// twice, and the only sensible second answer is the first one.
-	if len(choice.configured) > 0 {
-		opts.target = strings.Join(choice.configured, ",")
-		opts.targetsFromSetup = true
-	}
 
-	// Before the next question rather than after the last one: this is the point
-	// at which the profile is known, and asking two more questions to then report
-	// a login failure throws both answers away.
-	if afterEnvironment != nil {
-		return true, afterEnvironment(choice.environment, choice.profile, choice.chosen)
+	if afterAccount != nil {
+		return true, afterAccount(choice.profile, choice.chosen)
 	}
 	return true, nil
 }
@@ -1227,6 +1221,59 @@ func askAboutBackend(ctx context.Context, ask *prompter, layout infra.Layout, op
 
 	return resolveBackend(ctx, ask, ask.out, opts.backendLister(), layout,
 		opts.environment, opts.profile, config.Region, config.AccountID)
+}
+
+// askEnvironmentStep asks which environment the chosen account is deployed as,
+// and sets it up when that is the first time.
+//
+// A step of its own because an account is not an environment. Deriving one from
+// the other meant an account could only ever be one: a sandbox configured as dev
+// could never also be stg in the same checkout, because the lookup found dev and
+// stopped. It is also where the sizing is decided, and that is not a thing to
+// inherit from whichever section happened to name this account first.
+func askEnvironmentStep(
+	ctx context.Context,
+	ask *prompter,
+	catalog infra.Catalog,
+	layout infra.Layout,
+	opts *options,
+) (bool, error) {
+	// The dry-run path already asked, from the file, because that is all it can
+	// read. Nothing to do here.
+	if opts.environment != "" {
+		return false, nil
+	}
+
+	choices := environmentChoices(layout, opts.account)
+	if firstEnabled(choices) < 0 || !choices[firstEnabled(choices)].selectable() {
+		return false, errCheckoutFull(layout, opts.account)
+	}
+
+	chosen, err := ask.pick(
+		"Which environment is this account?",
+		"It picks the sizing the templates ship, and the state backend to use.",
+		"--env", choices, "")
+	if err != nil {
+		return false, err
+	}
+	opts.environment = chosen
+
+	// Already configured for this account: the files are there and the run can go
+	// straight on to what to operate on.
+	if config, loadErr := infra.LoadEnvConfig(layout, chosen); loadErr == nil && config.AccountID == opts.account {
+		return true, nil
+	}
+
+	if err := setUpEnvironment(ctx, ask.out, layout, opts); err != nil {
+		return true, err
+	}
+	// What init just wrote variables for is the answer to the targets question, so
+	// that question does not get asked.
+	if configured := configuredTargets(catalog, layout, chosen); len(configured) > 0 {
+		opts.target = strings.Join(configured, ",")
+		opts.targetsFromSetup = true
+	}
+	return true, nil
 }
 
 func askTargetStep(
@@ -1294,13 +1341,17 @@ func askActionStep(ask *prompter, opts *options) (bool, error) {
 // path asked from the file instead. Only the code that asked can tell those apart,
 // so it says which.
 type accountChoice struct {
+	// environment is set only on the dry-run path, where the file is the only
+	// thing that can be read and the question is which section to use. Every other
+	// path leaves it empty: which environment an account is deployed as is a
+	// question of its own, asked after this one.
 	environment string
 	profile     string
-	chosen      bool
-	// configured is what the setup just wrote variables for, when this choice ran
-	// one. Empty for an account that was already set up — then the targets are a
-	// question, because nothing was decided a moment ago.
-	configured []string
+	// account is who the chosen profile resolves to. It is what decides which
+	// environments are available, since a checkout holds one account per
+	// environment.
+	account string
+	chosen  bool
 }
 
 func askForAccount(
@@ -1368,23 +1419,11 @@ func askForAccount(
 		picked.Caller = refreshed
 	}
 
-	environment, ok := environmentForProfile(layout, picked.Profile.Name, picked.Caller.Account)
-	if ok {
-		return accountChoice{environment: environment, profile: picked.Profile.Name, chosen: true}, nil
-	}
-
-	// Chosen but not set up. Telling somebody to leave and run a second command —
-	// and to know which of three names to give it — is asking them to do the part
-	// this already knows how to do.
-	environment, err = configureAccount(ctx, ask, out, layout, *picked)
-	choice := accountChoice{environment: environment, profile: picked.Profile.Name, chosen: true}
-	if err == nil {
-		// Read back from the disk rather than returned by init: init decides what
-		// to write by asking, and the files it left are the only record of the
-		// answer that both this and a later run can agree on.
-		choice.configured = configuredTargets(catalog, layout, environment)
-	}
-	return choice, err
+	// Which environment this account is deployed as is the next question, not this
+	// one's to answer. Deriving it from the account meant an account could only
+	// ever be one environment: a sandbox configured as dev could never be set up
+	// as stg in the same checkout, because the lookup found dev and stopped.
+	return accountChoice{profile: picked.Profile.Name, account: picked.Caller.Account, chosen: true}, nil
 }
 
 // runInitCommand is a variable so the chaining can be exercised without writing
@@ -1401,45 +1440,41 @@ var runInitCommand = runInit
 // There are three names, and that is a real ceiling: a checkout already holding
 // three accounts cannot take a fourth. Better said here than discovered later as
 // a missing file.
-func configureAccount(
+// setUpEnvironment runs init for an account that has no section for this
+// environment yet.
+//
+// Telling somebody to leave and run a second command — and to know which of
+// three names to give it — is asking them to do the part this already knows how
+// to do.
+func setUpEnvironment(
 	ctx context.Context,
-	ask *prompter,
 	out io.Writer,
 	layout infra.Layout,
-	chosen infra.ResolvedProfile,
-) (string, error) {
+	opts *options,
+) error {
 	theme := newStyle(out)
-	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Setting up account "+chosen.Caller.Account))
-	fmt.Fprintf(out, "  %s\n", theme.dim("first time for this account in this checkout"))
-
-	// Asked, not taken. The first free slot in order is a decision about capacity
-	// and cost wearing the clothes of an implementation detail: a production
-	// account set up first in a fresh checkout got dev, which is db.t4g.micro,
-	// single-AZ, one day of backups and no deletion protection.
-	slot, err := askForEnvironment(ask, layout, chosen.Caller.Account)
-	if err != nil {
-		return "", err
-	}
+	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Setting up "+opts.environment+" in account "+opts.account))
+	fmt.Fprintf(out, "  %s\n", theme.dim("first time for this pair in this checkout"))
 
 	// No --region. init asks for it, always, and the profile's own region is the
 	// suggestion it offers — passing it here would answer the question on somebody's
 	// behalf, and where every resource is created is not a thing to inherit from a
 	// profile they may have configured for something else.
 	args := []string{
-		"--env", slot,
-		"--profile", chosen.Profile.Name,
-		"--account", chosen.Caller.Account,
+		"--env", opts.environment,
+		"--profile", opts.profile,
+		"--account", opts.account,
 	}
 	if err := runInitCommand(ctx, args, out, out); err != nil {
-		return "", err
+		return err
 	}
 
 	// Read back rather than assumed: init is what decides what was written, and a
 	// run against a section that is not there fails later with a missing file.
-	if _, err := infra.LoadEnvConfig(layout, slot); err != nil {
-		return "", fmt.Errorf("account %s was not set up: %w", chosen.Caller.Account, err)
+	if _, err := infra.LoadEnvConfig(layout, opts.environment); err != nil {
+		return fmt.Errorf("account %s was not set up as %s: %w", opts.account, opts.environment, err)
 	}
-	return slot, nil
+	return nil
 }
 
 // applyChosenProfile puts the interactively chosen profile into the configuration
@@ -1802,7 +1837,18 @@ func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment st
 	// is what creates it — so on an account nobody has bootstrapped yet, it is the
 	// only thing that can run. Offering the rest lets somebody spend two answers on
 	// a stack that fails at terraform init, reporting a bucket that does not exist.
+	//
+	// And when the backend IS there, bootstrap is the one row with nothing to do.
+	// Leaving it selectable invites a run whose entire output is "no changes", and
+	// the question somebody actually has — is my state backend set up? — is
+	// answered by the row saying so.
 	if backendExists(layout, environment) {
+		for index, opt := range options {
+			if opt.value == "bootstrap" {
+				options[index].disabled = true
+				options[index].note = "already there — " + backendName(layout, environment)
+			}
+		}
 		return options
 	}
 	for index, opt := range options {
@@ -1863,6 +1909,16 @@ func rankTarget(opt option, configured map[string]bool) int {
 	default:
 		return 3
 	}
+}
+
+// backendName is the bucket this environment keeps its state in, for a row that
+// has to say why there is nothing to create.
+func backendName(layout infra.Layout, environment string) string {
+	backend, err := infra.LoadBackend(layout, environment)
+	if err != nil || backend.Bucket == "" {
+		return "the state backend is configured"
+	}
+	return backend.Bucket
 }
 
 // backendExists reports whether this environment has a state backend to write to.
@@ -2233,12 +2289,12 @@ func credentialCheck(
 	ctx context.Context,
 	layout infra.Layout,
 	dryRun bool,
-) func(environment, profile string, chosen bool) error {
+) func(profile string, chosen bool) error {
 	if dryRun {
 		return nil
 	}
-	return func(environment, profile string, chosen bool) error {
-		resolve := credentialProfile(layout, environment, profile, chosen)
+	return func(profile string, chosen bool) error {
+		resolve := credentialProfile(layout, "", profile, chosen)
 		if resolve == "" {
 			return nil
 		}
@@ -2259,6 +2315,14 @@ func credentialCheck(
 // the only problem; or the credentials are ambient, and whether they work is
 // answered by the account guard a moment later.
 func credentialProfile(layout infra.Layout, environment, profile string, chosen bool) string {
+	// A chosen profile is the one the run will use whatever any section says, and
+	// at the point this runs there may be no environment yet: which one an account
+	// is deployed as is a later question. Reading the config here would return
+	// nothing and skip the check entirely — the check whose whole purpose is to
+	// fail before three more questions are answered.
+	if chosen {
+		return profile
+	}
 	config, err := infra.LoadEnvConfig(layout, environment)
 	if err != nil {
 		return ""
