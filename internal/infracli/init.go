@@ -106,9 +106,11 @@ THE TEMPLATES
                         and the error lists the tags that exist. v1.6.0 is the
                         oldest with the AWS layout this tool drives.
   --clone               Clone the templates into the managed checkout, which lives
-                        at ~/lerian/lerian-terraform-foundation. Not hidden, and
-                        named after the repository, because it is an ordinary git
-                        checkout you are meant to be able to open and use by hand.
+                        at ~/.lerian/lerian-terraform-foundation — alongside the
+                        configuration, so everything this tool manages is in one
+                        place. It is an ordinary git checkout: open it, read it and
+                        run terraform in it by hand. --templates-dir puts it
+                        elsewhere.
   --no-clone            Fail instead of cloning when no checkout is found.
   --sync                Move the managed checkout to --templates-ref, then exit.
                         Your environments.conf and every envs/*.tfvars survive it:
@@ -198,7 +200,7 @@ func runInit(ctx context.Context, args []string, stdout, stderr io.Writer) error
 
 	flags.StringVar(&opts.repo, "repo", "", "path to the checkout")
 	flags.StringVar(&opts.templatesDir, "templates-dir", "",
-		"where the managed checkout lives (default ~/lerian/lerian-terraform-foundation)")
+		"where the managed checkout lives (default ~/.lerian/lerian-terraform-foundation)")
 	flags.StringVar(&opts.templatesRef, "templates-ref", "",
 		"templates tag to clone or sync to, e.g. v1.6.0 (required by --clone and --sync)")
 	flags.StringVar(&opts.environment, "env", "", "dev, stg or prd")
@@ -287,7 +289,7 @@ func runInit(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	}
 
 	if !opts.autoApprove {
-		if err := ask.confirm(stderr, fmt.Sprintf("Write %d file(s)?", len(plan.writes))); err != nil {
+		if err := ask.confirm(ctx, stderr, fmt.Sprintf("Write %d file(s)?", len(plan.writes))); err != nil {
 			return err
 		}
 	}
@@ -1225,7 +1227,20 @@ func profileOptions(resolved []infra.ResolvedProfile) []option {
 // carries its services as the note, which is what makes "midaz" decidable without
 // leaving the question to go and look.
 func targetOptions(catalog infra.Catalog) []option {
-	options := make([]option, 0, 1+len(catalog.Names))
+	options := make([]option, 0, 2+len(catalog.Names))
+	// Shown rather than left to the line above the list. bootstrap is configured
+	// whatever else is chosen, and a list of everything else reads as an oversight
+	// — or as a choice somebody made wrong — until the row is there with a tick in
+	// it. Fixed, not merely preticked: unticking it has no effect, and a box that
+	// moves without changing anything is worse than one that does not move.
+	options = append(options, option{
+		value: "bootstrap",
+		label: "bootstrap",
+		// Short enough to survive 80 columns beside the label and the box: the
+		// previous wording lost its end, and the end was the word "configured".
+		note:  "always configured — it makes the state backend",
+		fixed: true,
+	})
 	options = append(options, option{
 		value: "infra-base",
 		label: "infra-base",

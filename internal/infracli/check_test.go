@@ -535,9 +535,9 @@ func TestNoLoginIsOfferedForProfilesWithoutASession(t *testing.T) {
 // command, not by a dozen identical ones.
 func TestProfilesSharingASessionShareOneLogin(t *testing.T) {
 	resolved := []infra.ResolvedProfile{
-		{Profile: infra.AWSProfile{Name: "dev", SSOSession: "acme"}, Err: errors.New("expired")},
-		{Profile: infra.AWSProfile{Name: "stg", SSOSession: "acme"}, Err: errors.New("expired")},
-		{Profile: infra.AWSProfile{Name: "other", SSOSession: "second"}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "dev", SSOSession: "acme", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "stg", SSOSession: "acme", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "other", SSOSession: "second", CanSignIn: true}, Err: errors.New("expired")},
 	}
 
 	targets := loginTargets(resolved)
@@ -865,5 +865,43 @@ func TestCredentialsInTheEnvironmentCount(t *testing.T) {
 	}
 	if !strings.Contains(result.summary, "environment") {
 		t.Errorf("the row does not say where the credentials came from: %q", result.summary)
+	}
+}
+
+// Two different failures shared one message. With nothing to log into — static
+// keys, or a [default] carrying only a region — "an expired SSO session is the
+// usual cause, this revives them" names a cause that does not exist and then
+// offers a sentence where a command should be. A client who has never used SSO
+// was told to renew a session they never had.
+func TestProfilesThatCannotSignInAreNotToldToLogIn(t *testing.T) {
+	resolved := []infra.ResolvedProfile{{
+		Profile: infra.AWSProfile{Name: "default"}, // no SSO of any kind
+		Err:     errors.New("no credentials"),
+	}}
+
+	detail := sessionAdvice(resolved)
+
+	if strings.Contains(detail, "expired SSO session") {
+		t.Errorf("a profile that cannot sign in is told its SSO session expired:\n%s", detail)
+	}
+	for _, want := range []string{"aws configure sso", "aws configure --profile"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the way out does not mention %q:\n%s", want, detail)
+		}
+	}
+}
+
+// And a profile that CAN sign in still gets the login, which is the common case
+// and the reason the SSO wording exists.
+func TestAnSSOProfileIsStillOfferedTheLogin(t *testing.T) {
+	resolved := []infra.ResolvedProfile{{
+		Profile: infra.AWSProfile{Name: "somewhere", SSOSession: "some-session", CanSignIn: true},
+		Err:     errors.New("expired"),
+	}}
+
+	detail := sessionAdvice(resolved)
+
+	if !strings.Contains(detail, "aws sso login") {
+		t.Errorf("an expired SSO profile is not offered the login:\n%s", detail)
 	}
 }

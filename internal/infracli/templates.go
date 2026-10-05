@@ -45,7 +45,7 @@ func (o initOptions) validateTemplateFlags() error {
 	if o.sync && o.repo != "" {
 		return errors.New("--sync cannot be used with --repo\n" +
 			"A checkout you pointed at is yours: this command does not move it. Sync\n" +
-			"only applies to the managed checkout at ~/lerian/lerian-terraform-foundation.")
+			"only applies to the managed checkout at ~/.lerian/lerian-terraform-foundation.")
 	}
 	return nil
 }
@@ -129,7 +129,7 @@ func acquireTemplates(
 
 	// An operator at a terminal still confirms: they named a tag, not a download.
 	if !opts.clone {
-		if err := ask.confirm(out, "Clone the templates there now?"); err != nil {
+		if err := ask.confirm(ctx, out, "Clone the templates there now?"); err != nil {
 			return infra.Layout{}, err
 		}
 	}

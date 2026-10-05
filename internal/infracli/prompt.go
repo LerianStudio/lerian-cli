@@ -10,6 +10,8 @@ package infracli
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -79,17 +81,19 @@ func (p *prompter) ask(question, purpose, fallback, flagName string) (string, er
 		fmt.Fprintf(p.out, "  %s\n", theme.dim(purpose))
 	}
 	// The same line the selector shows, for the same reason: a prompt that does
-	// not say how to leave it is one the operator escapes with ctrl-c, which
-	// stops the command mid-step rather than declining the question.
-	hint := "q cancel"
+	// not say how to leave it is one somebody stares at wondering whether the
+	// command has hung. Both ways out are named — q declines this question, ctrl-c
+	// ends the run — because the keys mean different things and only one of them
+	// is a habit everybody already has.
+	hint := "q cancel · ctrl-c quit"
 	if fallback != "" {
-		hint = "enter takes " + fallback + " · q cancel"
+		hint = "enter takes " + fallback + " · q cancel · ctrl-c quit"
 	}
 	fmt.Fprintf(p.out, "  %s\n", theme.dim(hint))
 
 	answer, edited, err := p.editableLine(p.out, "  > ")
 	if err != nil {
-		return "", fmt.Errorf("cannot read the answer to %q: %w", question, err)
+		return "", p.leftTheQuestion(question, err)
 	}
 	if !edited {
 		// No terminal to edit on: read the line the plain way. The prompt is
@@ -97,7 +101,7 @@ func (p *prompter) ask(question, purpose, fallback, flagName string) (string, er
 		fmt.Fprint(p.out, "  > ")
 		line, readErr := p.in.ReadString('\n')
 		if readErr != nil && strings.TrimSpace(line) == "" {
-			return "", fmt.Errorf("cannot read the answer to %q: %w", question, readErr)
+			return "", p.leftTheQuestion(question, readErr)
 		}
 		answer = strings.TrimSpace(line)
 	}
@@ -117,8 +121,77 @@ func (p *prompter) ask(question, purpose, fallback, flagName string) (string, er
 	return answer, nil
 }
 
+// leftTheQuestion turns the end of input into leaving, and anything else into
+// an error.
+//
+// ctrl-c arrives here as io.EOF rather than as a signal: the line editor runs in
+// raw mode, where the terminal generates none, so x/term reports the keypress
+// instead. ctrl-d on an empty line arrives the same way, and so does a pipe that
+// ran out. All three mean the same thing — there is no answer coming — and all
+// three used to be reported as "cannot read the answer: EOF", which reads as a
+// malfunction when somebody has just pressed the key every terminal program has
+// taught them means stop.
+func (p *prompter) leftTheQuestion(question string, err error) error {
+	if errors.Is(err, io.EOF) {
+		// The keypress leaves the cursor mid-line, and whatever is printed next
+		// would start there.
+		fmt.Fprintln(p.out)
+		return infra.ErrAborted
+	}
+	return fmt.Errorf("cannot read the answer to %q: %w", question, err)
+}
+
+// drain discards anything queued on the terminal and hands back a reader
+// positioned after the flush.
+//
+// Behind a variable for the same reason rawMode is one: a test has no terminal
+// to flush, and the ioctl fails on anything that is not one — so without this
+// the confirmation could only ever be exercised by hand.
+//
+// The reader is returned rather than the flush happening in place because the
+// two are one operation: bytes already pulled into the old buffer are beyond the
+// reach of an ioctl, so a flush that does not rebuild the reader does not
+// actually discard them. A stub returns nil and the caller keeps its own input.
+var drain = func() (*bufio.Reader, error) {
+	if err := drainStdin(); err != nil {
+		return nil, err
+	}
+	return bufio.NewReader(os.Stdin), nil
+}
+
+// readLineOrCancel reads one line and gives up when ctx is canceled.
+//
+// This is what ctrl-c at a confirmation needs. The run installs a signal handler
+// — it exists so an interrupt can stop terraform cleanly rather than orphaning a
+// lock — and that handler consumes SIGINT and cancels ctx. A blocking Read does
+// not notice a canceled context, so the prompt sat there: the key that ends
+// every other program did nothing at all, at the one prompt standing in front of
+// writing files.
+//
+// The goroutine is left parked in Read when ctx wins. There is no way to
+// interrupt a blocking read on stdin portably, and the process is on its way out;
+// the channel is buffered so the send cannot block forever when it does return.
+func readLineOrCancel(ctx context.Context, in *bufio.Reader) (string, error) {
+	type result struct {
+		line string
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		line, err := in.ReadString('\n')
+		done <- result{line: line, err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return "", infra.ErrAborted
+	case got := <-done:
+		return got.line, got.err
+	}
+}
+
 // confirm requires the word "yes", the same bar the apply confirmation uses.
-func (p *prompter) confirm(errOut io.Writer, question string) error {
+func (p *prompter) confirm(ctx context.Context, errOut io.Writer, question string) error {
 	if !p.interactive {
 		return fmt.Errorf("this needs a confirmation but stdin is not a terminal\n"+
 			"Pending: %s\n\n"+
@@ -135,16 +208,29 @@ func (p *prompter) confirm(errOut io.Writer, question string) error {
 	// an apply or a destroy, and the queue is exactly where a stray Enter typed
 	// during a long-running stage is waiting. --auto-approve remains available: an
 	// explicit decision rather than an accident of typing.
-	if err := drainStdin(); err != nil {
+	fresh, err := drain()
+	if err != nil {
 		return fmt.Errorf("cannot make sure the confirmation is answered deliberately: %w\n"+
 			"Anything typed while the previous stage ran may still be queued, and would\n"+
 			"answer this prompt. Re-run with --auto-approve if you mean to skip it.", err)
 	}
-	p.in = bufio.NewReader(os.Stdin)
+	if fresh != nil {
+		p.in = fresh
+	}
 
-	fmt.Fprintf(p.out, "\n  %s [type yes to continue]: ", question)
-	line, err := p.in.ReadString('\n')
-	if err != nil && strings.TrimSpace(line) == "" {
+	fmt.Fprintf(p.out, "\n  %s [type yes to continue · ctrl-c cancels]: ", question)
+	line, readErr := readLineOrCancel(ctx, p.in)
+	err = readErr
+	switch {
+	case errors.Is(err, infra.ErrAborted):
+		fmt.Fprintln(errOut)
+		return infra.ErrAborted
+	// End of input is not a malfunction either: ctrl-d, or a pipe that ran out,
+	// both mean no answer is coming — and no answer is not yes.
+	case errors.Is(err, io.EOF) && strings.TrimSpace(line) == "":
+		fmt.Fprintln(errOut)
+		return infra.ErrAborted
+	case err != nil && strings.TrimSpace(line) == "":
 		return fmt.Errorf("cannot read the confirmation: %w", err)
 	}
 	if strings.TrimSpace(line) != "yes" {

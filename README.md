@@ -173,7 +173,7 @@ one you pick, and asks again when that command is done. `q` closes it.
   ─────────────────────────────────────────────────────────────  v1.7.0
 
   What do you want to do?
-  ↑↓ move · enter choose · q cancel
+  ↑↓ move · enter choose · r back · q cancel
   ❯ auth     Authentication commands
     infra    Deploy the AWS stacks of lerian-terraform-foundation
     version  Print version information
@@ -192,6 +192,12 @@ The menu is a shorter list than the command set. `midaz` is reached with ledger
 ids, regions and sizes a menu has no way to ask for, so picking it from a list
 would land you on a help page rather than on anything you chose to do — it stays
 a command (`lerian midaz ledger list` is unaffected) and stays out of the menu.
+
+`r` goes back one question; `q` leaves. The questions come in a sequence, and a
+wrong turn on the first one used to cost the whole run — the only way to correct
+it was ctrl-c, which throws away the answers that were right along with the one
+that was not. On the first question, and on the main menu, there is nothing
+before: `r` there backs out of the run, and out of nothing, respectively.
 
 The session exists because these commands come in sequences — check the machine,
 then init; init fails, read what it says, run it again — and each of those used
@@ -281,7 +287,7 @@ checks the machine before it asks anything:
   ==> Environment check
   ok       terraform    /opt/homebrew/bin/terraform
   ok       aws          /opt/homebrew/bin/aws
-  ok       templates    ~/lerian/lerian-terraform-foundation @ v1.6.0
+  ok       templates    ~/.lerian/lerian-terraform-foundation @ v1.6.0
   ok       aws session  8 of 9 profiles resolve: dev, stg, prd and 5 more
 
   4 checks, all ok.
@@ -637,14 +643,38 @@ templates checkout is, and the profiles `lerian auth login` creates. `reset`
 removes that file, so the next run asks what it asked the first time.
 
 ```
-  file      ~/.lerian/config.yaml
-  templates ~/lerian/lerian-terraform-foundation
-  profile   default   (Lerian platform, not AWS)
-  logins    none — lerian auth login creates one
+  ==> This tool
+  config     ~/.lerian/config.yaml
+  profile    default   (Lerian platform, not AWS)
+  logins     none — lerian auth login creates one
 
-  AWS credentials are not here. lerian infra reads them the way every AWS tool
-  does: a profile in ~/.aws, or the credentials already in the environment.
+  ==> Templates
+  checkout   ~/.lerian/lerian-terraform-foundation
+  found by   the managed path — found by convention, not recorded
+  version    v1.11.0
+
+  ==> AWS
+  config     ~/.aws/config
+  profiles   7: default, acme-dev, acme-production and 4 more
+  sessions   acme-sso
+  whether they work is an AWS call: lerian infra check makes it
+
+  ==> Tools
+  terraform  /opt/homebrew/bin/terraform
+  aws        /opt/homebrew/bin/aws
+  git        /usr/bin/git
 ```
+
+Grouped by who owns each thing, because the same word means different things in
+different groups: a profile under **This tool** is a Lerian platform login, a
+profile under **AWS** is a credential in `~/.aws`. Side by side with no headings
+they read as one kind of thing.
+
+It reads files and makes no AWS call — it has to work on a machine with no
+network, and nobody opening a "where are things" page wants a round trip per
+profile. What that costs is knowing whether the credentials work, so the page
+names the command that answers it.
+
 
 **"profile" means two different things in this CLI**, and both have a flag:
 `lerian --profile` is a Lerian platform login kept in the file above, while
@@ -658,58 +688,168 @@ possibly with work in it. Neither is this command's to delete, and a "reset" tha
 took them would be an expensive surprise. `lerian infra cleanup` is the one that
 removes caches and run logs, and it says the same thing about AWS.
 
-It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
-refuses rather than guessing.
-
-From the menu, picking `config` offers what it can do:
-
-```
-  Which config command?
-  ❯ show   Print the configuration and where it lives
-    reset  Forget everything, as if the CLI had never run here
-```
-
-`reset` is last on purpose: the cursor starts on the first row, and a list that
-opens on the command that removes things makes the most likely keypress the
-destructive one.
-
-## Configuration
-
-### What the CLI remembers, and how to forget it
+### Pointing it at a checkout
 
 ```bash
-lerian config          # what it has written down, and where
-lerian config reset    # forget it, as if the CLI had never run here
+lerian config templates /path/to/lerian-terraform-foundation   # record it
+lerian config templates --clear                                # forget it
 ```
 
-There is one file — `~/.lerian/config.yaml` — and it holds two things: where the
-templates checkout is, and the profiles `lerian auth login` creates. `reset`
-removes that file, so the next run asks what it asked the first time.
+### Knowing whether bootstrap has run
+
+`backend/<env>.hcl` is written by `bootstrap`, never committed, and its absence
+is how a checkout looks when nobody has bootstrapped. But that is a fact about
+the **checkout**, not about the account — a fresh clone, or a colleague who ran
+bootstrap from their own machine, produces a missing file over a bucket that has
+existed for months. Acting on the file alone sends somebody to create a second
+state backend beside the one their infrastructure's state is already in.
+
+So when the file is missing, the CLI asks the account:
 
 ```
-  file      ~/.lerian/config.yaml
-  templates ~/lerian/lerian-terraform-foundation
-  profile   default   (Lerian platform, not AWS)
-  logins    none — lerian auth login creates one
+==> State backend
+  no examples/aws/backend/dev.hcl here — asking the account
 
-  AWS credentials are not here. lerian infra reads them the way every AWS tool
-  does: a profile in ~/.aws, or the credentials already in the environment.
+  A state backend already exists in this account. Use it?
+  Adopting writes examples/aws/backend/dev.hcl from what is in the account.
+❯ lerian-tfstate-dev-524121347244  this environment's own backend · us-east-2
+  lerian-tfstate-stg-524121347244  made for stg · us-east-2
+  create a new one                 bootstrap makes lerian-tfstate-dev-524121347244
 ```
 
-**"profile" means two different things in this CLI**, and both have a flag:
-`lerian --profile` is a Lerian platform login kept in the file above, while
-`lerian infra --profile` is an AWS profile from `~/.aws`. Two flags with one name
-is a surface inherited from the `lerian-infra` binary; every place the word
-appears now says which one it means.
+That is `aws s3api list-buckets` filtered by the account suffix, plus
+`get-bucket-location` and a `describe-table` for the lock table — fact, read off
+the account, not inferred. Adopting writes the four lines `bootstrap` would have
+written, which is what the old error told you to do by hand.
 
-It takes that file and **nothing else**. `~/.aws` belongs to the AWS CLI and every
-tool on this machine reads it; a templates checkout is a git clone you made,
-possibly with work in it. Neither is this command's to delete, and a "reset" that
-took them would be an expensive surprise. `lerian infra cleanup` is the one that
-removes caches and run logs, and it says the same thing about AWS.
+Every state bucket the account holds is offered, not only the one whose name
+matches this environment — including the ones made for other environments, and
+ones whose suffix is not an environment this tool knows (`lerian-tfstate-sandbox-…`
+shows as *named by hand*). The search is bounded: a bucket has to carry the
+`lerian-tfstate-` prefix the templates give it and end with this account's id, so
+an account's unrelated buckets never appear. The note carries what decides
+whether adopting is safe — the region (adopting one in the wrong region fails at
+`terraform init` with a redirect that reads like anything but a region problem)
+and whether a lock table exists (without one, concurrent runs are unprotected).
+
+It never overwrites an existing `backend/<env>.hcl`: that file is the bucket the
+state is under, and replacing it points a stack at state it has never seen. An
+empty account says so plainly and `bootstrap` is the answer. A lookup that fails
+— no permission, no network — is reported and the run continues: unknown is not
+no, and blocking a run over a question that only prevents a duplicate bucket
+would trade a small risk for a certain stoppage. With no terminal, nothing is
+looked up at all; adopting is a decision, and CI would be paying for an API call
+to print something nobody asked for.
+
+### Getting a checkout in the first place
+
+With none on the machine, `infra` offers to fetch one instead of asking where
+something that is not there is:
+
+```
+  There is no templates checkout on this machine. Get one?
+  The Terraform templates every stack is rendered from. About 30 MB, cloned with git.
+❯ Clone it into ~/.lerian/lerian-terraform-foundation  this tool's own directory
+  Clone it somewhere else                              you choose the directory
+  I already have a clone                               give the path to it
+```
+
+Then it asks which release, from the tags that exist and that this binary can
+read, newest first — rather than making you go and look one up for a flag.
+
+Every prompt names both ways out. In a menu, `r` goes back one question and `q`
+leaves; where you type an answer, the line reads `q cancel · ctrl-c quit`; at a
+confirmation, `[type yes to continue · ctrl-c cancels]`.
+ctrl-c works at any of them — the line editor runs in raw mode, where the
+keypress is delivered to the CLI rather than as a signal, and it is read as
+"stop", not as a broken read. Leaving prints `canceled.`, never an error; the
+exit status is still non-zero, so `lerian infra apply && deploy` cannot mistake
+a confirmation nobody gave for a successful apply.
+
+The confirmations deserve their own note, because ctrl-c there used to do
+nothing at all. The run installs a signal handler — it exists so an interrupt
+stops `terraform` cleanly instead of orphaning a state lock — and that handler
+consumes SIGINT and cancels the run's context. A blocking read does not notice a
+canceled context, so the prompt simply sat there, at the one question standing
+in front of writing files. The read now watches the context, so the key works.
+
+The default lives under `~/.lerian`, beside the configuration, so everything the
+CLI manages on a machine is in one directory. It is a perfectly ordinary git
+checkout: open it, read it, run `terraform` in it by hand. **Clone it somewhere
+else** takes any directory you like and records it, so later runs find it
+without a flag; `--templates-dir` does the same for a single run.
+
+A clone made before the move, at `~/lerian/lerian-terraform-foundation`, is
+still found. That location is read and never written to: a checkout already on a
+machine — with `environments.conf` and `tfvars` inside it that were never
+committed — must not be silently abandoned for an empty directory next door.
+
+### Pointing at a clone you already have
+
+Picked off the menu instead, with no path to give, it asks — offering the
+checkouts this machine already has, plus a line to type one and, when there is
+something recorded, a row to forget it.
+
+There are five ways to say where the templates are, and this is the one that
+sticks. In order of precedence:
+
+| | |
+|---|---|
+| `--repo <path>` | this run only |
+| `$LERIAN_TF_REPO` | this shell only |
+| the working directory, or one above it | the checkout you are standing in |
+| **recorded** — `config templates` | **every run, until cleared** |
+| the managed path `~/.lerian/lerian-terraform-foundation` | where `init --clone` puts one |
+| the old managed path `~/lerian/lerian-terraform-foundation` | read, never written — a clone made before the move |
+
+A recorded path beats the managed one: that is a decision, this is a directory
+that happens to exist somewhere conventional. It loses to the working directory,
+because the checkout you are inside is the one you mean.
+
+`--clear` forgets the path and leaves the directory alone — it is a clone you
+made, possibly with work in it.
+
+### Forgetting everything
 
 It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it
 refuses rather than guessing.
+
+Then it offers to delete the templates checkouts themselves — **one question per
+directory**, answered separately from the first one:
+
+```
+  /Users/you/lerian/lerian-terraform-foundation
+  cloned by this tool · 1 file changed and not committed · 412 MB
+  Everything in it goes, committed or not, and no later run can bring it back.
+
+  Delete this templates checkout?
+  Deletes the directory and everything in it. This cannot be undone.
+  ❯ keep the directory  nothing is deleted
+    delete it           the directory and all its contents
+```
+
+Separate because the two answers undo differently: forgetting a path is undone
+by the next run asking again, and deleting a git clone is undone by nothing. The
+line above the question is the part worth reading — whose directory it is, and
+whether anything in it was never committed. Uncommitted work and commits that
+were never pushed are the parts a fresh clone cannot bring back; the count
+covers the first, so check `git log` against the remote before deleting a
+checkout you have worked in. The cursor starts on the row that deletes nothing.
+
+Only the checkouts this tool would use are in scope: the recorded one and the
+managed path. **Not the directory you are standing in** — `reset` is run from
+wherever you happen to be, and deleting the repository you are sitting in
+because you were sitting in it is not a reset. Before anything is removed it
+refuses any path that is not a checkout, so a config holding a stale or mistyped
+directory cannot turn this into a recursive delete of whatever lives there now.
+
+`--yes` alone never deletes a directory: it has meant "forget the configuration"
+on every machine that already runs it, and widening that silently would change
+what those invocations do. `--delete-templates` is the flag that says it, and
+the only way to reach the deletion with no terminal to ask at.
+
+`~/.aws` is never touched. It belongs to the AWS CLI, and every tool on the
+machine reads it.
 
 From the menu, picking `config` offers what it can do:
 

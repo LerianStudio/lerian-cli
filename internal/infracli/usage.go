@@ -59,7 +59,7 @@ FLAGS
                             3. walk up from the working directory until a
                                directory holding examples/aws/_modules and
                                examples/aws/backend is found.
-                            4. the managed checkout, ~/lerian/lerian-terraform-foundation
+                            4. the managed checkout, ~/.lerian/lerian-terraform-foundation
                           The managed checkout is LAST on purpose: an operator
                           working inside a development checkout must keep driving
                           that one, not the managed tree that also happens to

@@ -272,14 +272,82 @@ func TestManagedCheckoutPathHonoursTheOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Three properties at once: not hidden, so the operator can use the checkout
-	// directly; the repository's own name, so disk matches the clone URL; and no
-	// version, so an upgrade does not orphan the configuration inside it.
-	if !strings.HasSuffix(def, filepath.Join("lerian", "lerian-terraform-foundation")) {
+	// Three properties at once: under ~/.lerian, so everything this tool manages
+	// is in one place; the repository's own name, so disk matches the clone URL;
+	// and no version, so an upgrade does not orphan the configuration inside it.
+	if !strings.HasSuffix(def, filepath.Join(".lerian", "lerian-terraform-foundation")) {
 		t.Errorf("default path = %q", def)
 	}
-	if strings.Contains(def, "/.lerian") {
-		t.Errorf("the directory must not be hidden: %q", def)
+}
+
+// A machine that cloned before the move keeps working. The old location is
+// searched after the new one and never written to — somebody with a checkout in
+// it, holding tfvars that were never committed, must not be silently handed an
+// empty directory next door instead.
+func TestTheOldManagedLocationIsStillFound(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	legacy := filepath.Join(home, "lerian", "lerian-terraform-foundation")
+	for _, marker := range []string{"examples/aws/_modules", "examples/aws/backend"} {
+		if err := os.MkdirAll(filepath.Join(legacy, filepath.FromSlash(marker)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := FirstManagedCheckout(""); got != legacy {
+		t.Errorf("FirstManagedCheckout = %q, want the checkout already on the machine %q", got, legacy)
+	}
+
+	paths := ManagedCheckoutPaths("")
+	if len(paths) < 2 || !strings.Contains(paths[0], ".lerian") {
+		t.Errorf("ManagedCheckoutPaths = %v, want the new location first", paths)
+	}
+}
+
+// The new location wins when both hold one: that is where a clone goes now, and
+// the older copy is whatever was there before.
+func TestTheNewLocationIsPreferredWhenBothExist(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	for _, root := range []string{
+		filepath.Join(home, ".lerian", "lerian-terraform-foundation"),
+		filepath.Join(home, "lerian", "lerian-terraform-foundation"),
+	} {
+		for _, marker := range []string{"examples/aws/_modules", "examples/aws/backend"} {
+			if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(marker)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	want := filepath.Join(home, ".lerian", "lerian-terraform-foundation")
+	if got := FirstManagedCheckout(""); got != want {
+		t.Errorf("FirstManagedCheckout = %q, want %q", got, want)
+	}
+}
+
+// An override is somebody saying where the checkout is. They have not asked for
+// a search, and quietly falling back to a different directory would deploy from
+// templates they did not name.
+func TestAnOverrideIsNotSearchedPast(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	legacy := filepath.Join(home, "lerian", "lerian-terraform-foundation")
+	for _, marker := range []string{"examples/aws/_modules", "examples/aws/backend"} {
+		if err := os.MkdirAll(filepath.Join(legacy, filepath.FromSlash(marker)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	elsewhere := t.TempDir()
+	if got := ManagedCheckoutPaths(elsewhere); len(got) != 1 || got[0] != elsewhere {
+		t.Errorf("ManagedCheckoutPaths(%q) = %v", elsewhere, got)
+	}
+	if got := FirstManagedCheckout(elsewhere); got != "" {
+		t.Errorf("FirstManagedCheckout fell back to %q", got)
 	}
 }
 

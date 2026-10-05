@@ -59,8 +59,13 @@ type options struct {
 	// string is an answer — the credentials already in this environment, which have
 	// no profile name — and it is indistinguishable from the absence of one. A
 	// scripted run leaves both zero and the file decides, exactly as before.
-	profile               string
-	profileChosen         bool
+	profile       string
+	profileChosen bool
+
+	// backends lists the state backends an account holds. It is here so a test can
+	// answer the question without credentials; a run leaves it nil and gets the
+	// AWS CLI.
+	backends              infra.BackendLister
 	jobs                  int
 	minCredentialLifetime time.Duration
 	autoApprove           bool
@@ -90,7 +95,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags.Usage = func() { fmt.Fprint(stderr, usage) }
 
 	flags.StringVar(&opts.templatesDir, "templates-dir", "",
-		"where the managed checkout lives (default ~/lerian/lerian-terraform-foundation)")
+		"where the managed checkout lives (default ~/.lerian/lerian-terraform-foundation)")
 	flags.StringVar(&opts.repo, "repo", "",
 		"path to the lerian-terraform-foundation checkout "+
 			"(default: $LERIAN_TF_REPO, else discovered by walking up from the working directory)")
@@ -147,7 +152,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		// could give right now. The answer is written down, so it is asked once per
 		// machine rather than once per shell.
 		if ask := newPrompter(stderr); ask.interactive && errors.Is(err, errNoCheckoutAnywhere) {
-			answered, askErr := askForCheckout(ask, stderr, opts.templatesDir)
+			answered, askErr := obtainCheckout(ctx, ask, stderr, opts.templatesDir)
 			if askErr != nil {
 				return askErr
 			}
@@ -420,19 +425,23 @@ func resolveLayout(flagRepo, envRepo, templatesDir string) (infra.Layout, checko
 		}
 	}
 	if root == "" {
-		managed, err := infra.ManagedCheckoutPath(templatesDir)
-		if err != nil {
-			return infra.Layout{}, "", err
-		}
-		if infra.IsCheckout(managed) {
-			root, source = managed, sourceManaged
+		// A recorded answer before the managed path: one is somebody saying which
+		// checkout to use, the other is a directory happening to exist at a
+		// conventional location. With the convention first, a client who cloned the
+		// templates somewhere of their own could not make this use it — the question
+		// was never asked, because the managed path had already answered.
+		//
+		// It still loses to the working directory: standing inside a checkout means
+		// that one, whatever was written down on a previous run.
+		if remembered := rememberedCheckout(); remembered != "" {
+			root, source = remembered, sourceRemembered
 		}
 	}
 	if root == "" {
-		// A remembered answer is a default, not an override: standing inside a
-		// checkout still wins over one written down on a previous run.
-		if remembered := rememberedCheckout(); remembered != "" {
-			root, source = remembered, sourceRemembered
+		// Both locations: the one under ~/.lerian and the one managed checkouts
+		// used to go to. A machine that cloned before the move keeps working.
+		if managed := infra.FirstManagedCheckout(templatesDir); managed != "" {
+			root, source = managed, sourceManaged
 		}
 	}
 	if root == "" {
@@ -548,7 +557,8 @@ func pointingOptions() string {
 		"  3. run it from inside the checkout — any directory in it will do, the root\n" +
 		"     is found by walking up.\n" +
 		"  4. lerian infra init --clone — clones the templates matching this binary\n" +
-		"     into ~/lerian/lerian-terraform-foundation and uses that from then on."
+		"     into ~/.lerian/lerian-terraform-foundation and uses that from then on.\n" +
+		"     --templates-dir puts the clone somewhere else."
 }
 
 // loadBackend reads backend/<env>.hcl and runs the two offline guards. A run made
@@ -675,7 +685,7 @@ func execute(
 		fmt.Fprintf(out, "    %s\n", changeSummary(create, update, destroy))
 		fmt.Fprintf(out, "    %s\n\n", destinationLine(config))
 
-		return confirmOnStdin(out, "  type yes to continue: ")
+		return confirmOnStdin(ctx, out, "  type yes to continue · ctrl-c cancels: ")
 	}
 	if action == infra.ActionPlan {
 		confirm = nil
@@ -779,7 +789,7 @@ func writeOutputs(ctx context.Context, runner *infra.Runner, units []infra.Unit,
 }
 
 // confirmOnStdin asks once, and only accepts the whole word.
-func confirmOnStdin(out io.Writer, prompt string) error {
+func confirmOnStdin(ctx context.Context, out io.Writer, prompt string) error {
 	// A real isatty, not a character-device check: /dev/null is a character device
 	// too, and a CI run redirecting stdin from it would be mistaken for a human.
 	if !isTerminal(os.Stdin) {
@@ -793,14 +803,21 @@ func confirmOnStdin(out io.Writer, prompt string) error {
 	// Only what is typed after the question counts as the answer. Stages here take
 	// minutes, and anything pressed while waiting is still queued when the prompt
 	// finally appears.
-	if err := drainStdin(); err != nil {
+	reader, err := drain()
+	if err != nil {
 		return fmt.Errorf("cannot make sure the confirmation is answered deliberately: %w\n"+
 			"Re-run with --auto-approve if you mean to skip it.", err)
 	}
+	if reader == nil {
+		reader = bufio.NewReader(os.Stdin)
+	}
 
 	fmt.Fprint(out, prompt)
-	reader := bufio.NewReader(os.Stdin)
-	answer, err := reader.ReadString('\n')
+	answer, err := readLineOrCancel(ctx, reader)
+	if errors.Is(err, infra.ErrAborted) {
+		fmt.Fprintln(out)
+		return infra.ErrAborted
+	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("cannot read the confirmation: %w", err)
 	}
@@ -1053,6 +1070,43 @@ func guidedRun(
 		return nil
 	}
 
+	// A list of steps rather than three calls in a row, so r can walk back through
+	// them. The questions are a sequence and a wrong turn on the first one used to
+	// cost the whole run: the only way to correct it was ctrl-c, which throws away
+	// the answers that were right along with the one that was not.
+	steps := []func() error{
+		func() error { return askAccountStep(ctx, ask, layout, resolved, opts, afterEnvironment) },
+		func() error { return askTargetStep(ctx, ask, catalog, layout, opts) },
+		func() error { return askActionStep(ask, opts) },
+	}
+
+	for at := 0; at < len(steps); {
+		err := steps[at]()
+		switch {
+		case errors.Is(err, errBack):
+			if at == 0 {
+				// Nothing before the first question, so back out of the run — which is
+				// where the operator came from.
+				return infra.ErrAborted
+			}
+			at--
+		case err != nil:
+			return err
+		default:
+			at++
+		}
+	}
+	return nil
+}
+
+func askAccountStep(
+	ctx context.Context,
+	ask *prompter,
+	layout infra.Layout,
+	resolved []infra.ResolvedProfile,
+	opts *options,
+	afterEnvironment func(environment, profile string, chosen bool) error,
+) error {
 	choice, err := askForAccount(ctx, ask, ask.out, layout, resolved)
 	if err != nil {
 		return err
@@ -1065,11 +1119,68 @@ func guidedRun(
 	// at which the profile is known, and asking two more questions to then report
 	// a login failure throws both answers away.
 	if afterEnvironment != nil {
-		if err := afterEnvironment(choice.environment, choice.profile, choice.chosen); err != nil {
-			return err
-		}
+		return afterEnvironment(choice.environment, choice.profile, choice.chosen)
+	}
+	return nil
+}
+
+// askAboutBackend settles what the state backend is, by asking the account
+// rather than inferring it from a file that may simply never have been written
+// in this checkout.
+//
+// Called from inside the targets step rather than standing as a step of its own.
+// It needs the account, and it changes the list that follows — with a backend
+// adopted, every target becomes runnable instead of one. As a separate step it
+// would also swallow r whenever it had nothing to ask: a step that returns
+// without a question cannot tell "going back" from "done", so the cursor would
+// bounce off it and never reach the account question.
+// backendLister is the AWS CLI unless a caller supplied something else.
+func (o *options) backendLister() infra.BackendLister {
+	if o.backends != nil {
+		return o.backends
+	}
+	return infra.CLIBackends{}
+}
+
+func askAboutBackend(ctx context.Context, ask *prompter, layout infra.Layout, opts *options) error {
+	if backendExists(layout, opts.environment) {
+		return nil
+	}
+	// Nobody to answer means nothing to do with the answer. Adopting a backend is
+	// a decision, so without a terminal the scan would spend an AWS call to print
+	// something no one asked for — in CI, on every run.
+	if !ask.interactive {
+		return nil
 	}
 
+	// The account comes from environments.conf rather than from the credentials:
+	// it is the account this environment is ALLOWED to touch, and the bucket name
+	// is built from it. A mismatch between the two is a separate guard's job, and
+	// it runs before anything is applied.
+	config, err := infra.LoadEnvConfig(layout, opts.environment)
+	//nolint:nilerr // There is no account to look a bucket up for, so the question
+	// has no subject and is skipped. The error is not swallowed: every path that
+	// needs this config loads it again and reports it properly. Returning it here
+	// would turn a missing environments.conf into a failure at the one question
+	// that exists only to offer a shortcut.
+	if err != nil {
+		return nil
+	}
+
+	return resolveBackend(ctx, ask, ask.out, opts.backendLister(), layout,
+		opts.environment, opts.profile, config.Region, config.AccountID)
+}
+
+func askTargetStep(
+	ctx context.Context,
+	ask *prompter,
+	catalog infra.Catalog,
+	layout infra.Layout,
+	opts *options,
+) error {
+	if err := askAboutBackend(ctx, ask, layout, opts); err != nil {
+		return err
+	}
 	targets, err := ask.pickMany(
 		"What do you want to operate on?",
 		"Several can be combined; they are reordered into dependency order either way.",
@@ -1080,7 +1191,10 @@ func guidedRun(
 	if len(targets) > 0 {
 		opts.target = strings.Join(targets, ",")
 	}
+	return nil
+}
 
+func askActionStep(ask *prompter, opts *options) error {
 	action, err := ask.pick(
 		"What should it do?",
 		"plan changes nothing. apply and destroy ask for a confirmation before writing.",
@@ -1504,9 +1618,22 @@ func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []opt
 		rank := ready
 
 		switch {
-		case !entry.Usable():
+		case !entry.Usable() && entry.Profile.CanSignIn:
 			rank = needsLogin
 			opt.note = "session expired — choose to log in"
+		case !entry.Usable() && entry.Profile.Source == "credentials":
+			// An access key that does not work. Choosing it reports what AWS said,
+			// which is more use than a login that cannot apply to it.
+			rank = needsLogin
+			opt.note = "the access key does not work — choose it to see why"
+		case !entry.Usable():
+			// Nothing to revive and nothing to fix: ~/.aws commonly holds a [default]
+			// with a region and nothing else. Calling that an expired session sends
+			// somebody to a login that fails with "Unable to locate credentials",
+			// which names neither the problem nor the fix.
+			rank = unconfigured
+			opt.disabled = true
+			opt.note = "no credentials configured — aws configure --profile " + entry.Profile.Name
 		default:
 			if environment, ok := environmentForProfile(layout, entry.Profile.Name, entry.Caller.Account); ok {
 				// The account and the region, which is the whole of what is being

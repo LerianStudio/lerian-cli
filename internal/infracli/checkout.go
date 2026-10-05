@@ -1,6 +1,7 @@
 package infracli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -93,6 +94,21 @@ func shellQuote(value string) string {
 // command over to correct one line is the round trip this question exists to
 // remove.
 func askForCheckout(ask *prompter, out io.Writer, templatesDir string) (string, error) {
+	answered, err := promptCheckoutPath(ask, out, templatesDir)
+	if err != nil {
+		return "", err
+	}
+	rememberCheckout(out, answered)
+	return answered, nil
+}
+
+// promptCheckoutPath is the question and the retrying, without the writing down.
+//
+// Split out because the two callers disagree about who saves. The run above has
+// nowhere else to put the answer, so it records it on the way past; `config
+// templates` has a command whose whole job is to record it, and saving here too
+// would print the confirmation twice and say it in two voices.
+func promptCheckoutPath(ask *prompter, out io.Writer, templatesDir string) (string, error) {
 	const attempts = 3
 
 	var lastErr error
@@ -102,6 +118,13 @@ func askForCheckout(ask *prompter, out io.Writer, templatesDir string) (string, 
 			checkoutPurpose(templatesDir),
 			defaultCheckout(templatesDir), "--repo")
 		if err != nil {
+			// Leaving outranks the last wrong answer. q and ctrl-c both arrive here,
+			// and reporting "that path is not a checkout" to somebody who just asked
+			// to stop answers a question they withdrew — and turns a clean exit into
+			// a failure the caller prints in red.
+			if errors.Is(err, infra.ErrAborted) || errors.Is(err, errBack) {
+				return "", err
+			}
 			if lastErr != nil {
 				return "", lastErr
 			}
@@ -113,7 +136,6 @@ func askForCheckout(ask *prompter, out io.Writer, templatesDir string) (string, 
 			return "", fmt.Errorf("cannot resolve %q: %w", answer, err)
 		}
 		if infra.IsCheckout(absolute) {
-			rememberCheckout(out, absolute)
 			return absolute, nil
 		}
 
@@ -136,7 +158,7 @@ func defaultCheckout(templatesDir string) string {
 	if working, err := os.Getwd(); err == nil && infra.IsCheckout(working) {
 		return working
 	}
-	if managed, err := infra.ManagedCheckoutPath(templatesDir); err == nil && infra.IsCheckout(managed) {
+	if managed := infra.FirstManagedCheckout(templatesDir); managed != "" {
 		return managed
 	}
 	return ""
@@ -151,4 +173,94 @@ func checkoutPurpose(templatesDir string) string {
 	}
 	return base + " No clone found here; git clone it and give the path, or leave" +
 		" this and run: lerian infra init --clone --templates-ref <tag>"
+}
+
+// TemplatesAnswer is what somebody decided at the templates prompt.
+type TemplatesAnswer struct {
+	// Path is the checkout to record. Empty when Forget is set.
+	Path string
+	// Forget asks for the recorded path to be dropped.
+	Forget bool
+}
+
+// Sentinel rows. Values a filesystem path cannot collide with, because every
+// other row in the menu is one.
+const (
+	templatesTypeAPath = "\x00type"
+	templatesForget    = "\x00forget"
+)
+
+// AskForTemplates asks which checkout to record, for the menu row that arrives
+// with no path to give.
+//
+// The row exists because somebody picked `config templates` off a list, where
+// there is no command line to put an argument on. Answering that with the usage
+// text of a command they did not type leaves them where they started: the
+// question has an answer they know, and this is where to ask it.
+//
+// The machine's own checkouts are offered rather than only a blank line. There
+// are at most three, they are the likely answer, and a path typed by hand is a
+// typo waiting to be rejected.
+func AskForTemplates(out io.Writer) (TemplatesAnswer, error) {
+	recorded := recordedCheckout()
+
+	picked, err := Choose(out, "Which lerian-terraform-foundation checkout?",
+		"Written to ~/.lerian/config.yaml, so later runs find it without a flag.",
+		templatesChoices(recorded))
+	if err != nil {
+		return TemplatesAnswer{}, err
+	}
+
+	switch picked {
+	case templatesForget:
+		return TemplatesAnswer{Forget: true}, nil
+	case templatesTypeAPath:
+		path, err := promptCheckoutPath(newPrompter(out), out, "")
+		if err != nil {
+			return TemplatesAnswer{}, err
+		}
+		return TemplatesAnswer{Path: path}, nil
+	default:
+		return TemplatesAnswer{Path: picked}, nil
+	}
+}
+
+// templatesChoices lists the checkouts this machine has, each said to be a
+// checkout by the same test the command would apply anyway.
+//
+// Deduplicated, because the recorded path is very often also the one being stood
+// in, and a menu offering the same directory three times reads as three answers.
+func templatesChoices(recorded string) []Choice {
+	choices := make([]Choice, 0, 5)
+	seen := map[string]bool{}
+
+	add := func(path, note string) {
+		if path == "" || seen[path] || !infra.IsCheckout(path) {
+			return
+		}
+		seen[path] = true
+		choices = append(choices, Choice{Value: path, Label: path, Note: note})
+	}
+
+	add(recorded, "recorded now")
+	if working, err := os.Getwd(); err == nil {
+		add(working, "the directory you are in")
+	}
+	for _, managed := range infra.ManagedCheckoutPaths("") {
+		add(managed, "cloned by infra init --clone")
+	}
+
+	choices = append(choices, Choice{
+		Value: templatesTypeAPath,
+		Label: "Type a path",
+		Note:  "a clone somewhere else",
+	})
+	if recorded != "" {
+		choices = append(choices, Choice{
+			Value: templatesForget,
+			Label: "Forget the recorded path",
+			Note:  "the directory stays; later runs discover one again",
+		})
+	}
+	return choices
 }

@@ -3,13 +3,16 @@ package infracli
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/lerian-studio/lerian-cli/internal/config"
+	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
 // isolatedHome points the config at a temporary directory. Without it these
@@ -278,5 +281,141 @@ func TestItGivesUpAfterEnoughWrongAnswers(t *testing.T) {
 
 	if _, err := askForCheckout(ask, &bytes.Buffer{}, t.TempDir()); err == nil {
 		t.Error("askForCheckout accepted a directory that is not a checkout")
+	}
+}
+
+// Picking the row and then being asked to type the path by hand would be the
+// menu asking a question it already knows the answers to. The machine has at
+// most three checkouts and they are the likely one.
+func TestTheCheckoutsThisMachineHasAreOffered(t *testing.T) {
+	working := fakeCheckout(t, "", "")
+	t.Chdir(working)
+	recorded := fakeCheckout(t, "", "")
+
+	choices := templatesChoices(recorded)
+
+	offered := make([]string, 0, len(choices))
+	for _, choice := range choices {
+		offered = append(offered, choice.Value)
+	}
+
+	for _, want := range []string{recorded, working, templatesTypeAPath, templatesForget} {
+		if !slices.Contains(offered, want) {
+			t.Errorf("%q is not offered; the menu has %v", want, offered)
+		}
+	}
+}
+
+// The recorded path is very often also the one being stood in, and the same
+// directory on three rows reads as three answers.
+func TestTheSameCheckoutIsOfferedOnce(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	t.Chdir(checkout)
+
+	seen := 0
+	for _, choice := range templatesChoices(checkout) {
+		if choice.Value == checkout {
+			seen++
+		}
+	}
+
+	if seen != 1 {
+		t.Errorf("the same checkout is offered %d times", seen)
+	}
+}
+
+// With nothing recorded there is nothing to forget, and a row that clears what
+// was never set is an answer to a question nobody has.
+func TestForgettingIsNotOfferedWhenNothingIsRecorded(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	for _, choice := range templatesChoices("") {
+		if choice.Value == templatesForget {
+			t.Error("forgetting is offered with nothing recorded")
+		}
+	}
+}
+
+// A path that is not a checkout is not offered, by the same test the command
+// would apply to it anyway. Offering one guarantees the rejection two keypresses
+// later.
+func TestARecordedPathThatWentAwayIsNotOffered(t *testing.T) {
+	t.Chdir(t.TempDir())
+	gone := filepath.Join(t.TempDir(), "gone")
+
+	for _, choice := range templatesChoices(gone) {
+		if choice.Value == gone {
+			t.Error("a path with no checkout at it is offered")
+		}
+	}
+	// Forgetting still is: a recorded path that no longer exists is precisely
+	// when somebody wants it dropped.
+	found := false
+	for _, choice := range templatesChoices(gone) {
+		if choice.Value == templatesForget {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the path that went away cannot be forgotten")
+	}
+}
+
+// Who writes the answer down differs between the two callers, so the question
+// does not. `config templates` records it itself, and saving here too would
+// print the confirmation twice.
+func TestAskingForThePathDoesNotRecordIt(t *testing.T) {
+	isolatedHome(t)
+	checkout := fakeCheckout(t, "", "")
+	t.Chdir(t.TempDir())
+
+	var out bytes.Buffer
+	answered, err := promptCheckoutPath(answering(checkout), &out, t.TempDir())
+	if err != nil {
+		t.Fatalf("promptCheckoutPath = %v", err)
+	}
+	if answered != checkout {
+		t.Fatalf("answered %q, want %q", answered, checkout)
+	}
+
+	if got := recordedCheckout(); got != "" {
+		t.Errorf("the config holds %q; the prompt wrote it down", got)
+	}
+}
+
+// Leaving outranks the last wrong answer. Typing a path that is not a checkout
+// and then deciding not to continue reported the validation error — answering a
+// question that was withdrawn, and turning a clean exit into a red line.
+func TestLeavingAfterAWrongAnswerIsStillLeaving(t *testing.T) {
+	isolatedHome(t)
+	t.Chdir(t.TempDir())
+
+	wrong := t.TempDir()
+	ask := &prompter{
+		interactive: true,
+		in:          bufio.NewReader(strings.NewReader(wrong + "\nq\n")),
+		out:         &bytes.Buffer{},
+	}
+
+	_, err := promptCheckoutPath(ask, &bytes.Buffer{}, t.TempDir())
+
+	if !errors.Is(err, infra.ErrAborted) {
+		t.Errorf("promptCheckoutPath = %v, want ErrAborted", err)
+	}
+}
+
+// And with no wrong answer before it, which is the path that already worked.
+func TestLeavingStraightAwayIsLeaving(t *testing.T) {
+	isolatedHome(t)
+	t.Chdir(t.TempDir())
+
+	ask := &prompter{
+		interactive: true,
+		in:          bufio.NewReader(strings.NewReader("q\n")),
+		out:         &bytes.Buffer{},
+	}
+
+	if _, err := promptCheckoutPath(ask, &bytes.Buffer{}, t.TempDir()); !errors.Is(err, infra.ErrAborted) {
+		t.Errorf("promptCheckoutPath = %v, want ErrAborted", err)
 	}
 }

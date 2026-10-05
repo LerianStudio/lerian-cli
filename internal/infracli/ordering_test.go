@@ -108,7 +108,7 @@ func TestTheCredentialIsCheckedAsSoonAsTheEnvironmentIsKnown(t *testing.T) {
 	opts := options{}
 	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
 
-	expired := errors.New("the SSO session for profile \"lerian-sandbox\" has expired")
+	expired := errors.New("the SSO session for profile \"acme-sandbox\" has expired")
 	err := guidedRun(context.Background(), catalog, &opts, ask, configuredLayout(t), configuredProfiles(), func(string, string, bool) error { return expired })
 
 	if !errors.Is(err, expired) {
@@ -261,7 +261,7 @@ func TestTheQuestionIsWhichAccount(t *testing.T) {
 	resolved := []infra.ResolvedProfile{
 		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
 		{Profile: infra.AWSProfile{Name: "elsewhere"}, Caller: infra.Caller{Account: "999988887777"}},
-		{Profile: infra.AWSProfile{Name: "stale", SSOSession: "acme"}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "stale", SSOSession: "acme", CanSignIn: true}, Err: errors.New("expired")},
 	}
 
 	options := accountOptions(layout, resolved)
@@ -410,7 +410,7 @@ func TestChoosingAnExpiredProfileLogsIntoThatOne(t *testing.T) {
 	}
 
 	resolved := []infra.ResolvedProfile{
-		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme"}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme", CanSignIn: true}, Err: errors.New("expired")},
 	}
 
 	var attempted []infra.SSOTarget
@@ -457,7 +457,7 @@ func TestTheUsableAccountsComeFirst(t *testing.T) {
 
 	resolved := []infra.ResolvedProfile{
 		{Profile: infra.AWSProfile{Name: "aaa-unconfigured"}, Caller: infra.Caller{Account: "999988887777"}},
-		{Profile: infra.AWSProfile{Name: "bbb-expired", SSOSession: "acme"}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "bbb-expired", SSOSession: "acme", CanSignIn: true}, Err: errors.New("expired")},
 		{Profile: infra.AWSProfile{Name: "sandbox"}, Caller: infra.Caller{Account: "111122223333"}},
 	}
 
@@ -490,7 +490,7 @@ func TestNothingReadyStillAsks(t *testing.T) {
 	}
 
 	resolved := []infra.ResolvedProfile{
-		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme"}, Err: errors.New("expired")},
+		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme", CanSignIn: true}, Err: errors.New("expired")},
 	}
 
 	previousLogin := ssoLogin
@@ -560,7 +560,7 @@ func TestSigningOutIsOfferedAsAChoice(t *testing.T) {
 	}
 
 	resolved := []infra.ResolvedProfile{
-		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme"}, Caller: infra.Caller{Account: "111122223333"}},
+		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme", CanSignIn: true}, Caller: infra.Caller{Account: "111122223333"}},
 	}
 
 	for _, opt := range accountOptions(layout, resolved) {
@@ -608,7 +608,7 @@ func TestSigningOutLogsBackIn(t *testing.T) {
 	t.Cleanup(func() { checkIdentity = previousIdentity })
 
 	resolved := []infra.ResolvedProfile{
-		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme"}, Caller: infra.Caller{Account: "111122223333"}},
+		{Profile: infra.AWSProfile{Name: "sandbox", SSOSession: "acme", CanSignIn: true}, Caller: infra.Caller{Account: "111122223333"}},
 	}
 
 	var out bytes.Buffer
@@ -1441,5 +1441,83 @@ func TestTheDryRunListDisambiguatesWhenItMust(t *testing.T) {
 		if !strings.Contains(painted.String(), name) {
 			t.Errorf("two identical rows and %q is not shown to tell them apart:\n%s", name, painted.String())
 		}
+	}
+}
+
+// Going back re-asks the previous question rather than ending the run.
+//
+// The questions are a sequence, and the only way to correct the first one used to
+// be ctrl-c — which throws away the ones answered correctly along with the
+// mistake.
+func TestGoingBackReAsksThePreviousQuestion(t *testing.T) {
+	layout := configuredLayout(t)
+	catalog := infra.Catalog{Names: []string{"midaz"}, Products: map[string][]string{"midaz": {"postgres"}}}
+
+	// account, then back from the targets, then account again, then on through.
+	ask, painted := selectorFor(t, keyEnterSeq+"r"+keyEnterSeq+keyEnterSeq+keyEnterSeq)
+	opts := options{}
+
+	if err := guidedRun(context.Background(), catalog, &opts, ask, layout, configuredProfiles(), nil); err != nil {
+		t.Fatalf("guidedRun = %v\n%s", err, painted.String())
+	}
+
+	// The account question was painted twice: once, and once more on the way back.
+	if asked := strings.Count(painted.String(), "Which AWS account?"); asked != 2 {
+		t.Errorf("the account question was asked %d times, want 2 — once, then again on the way back", asked)
+	}
+	if opts.action == "" {
+		t.Errorf("the run did not reach the end:\n%s", painted.String())
+	}
+}
+
+// Back from the first question leaves the guided run, the way it would if there
+// were nothing before it — because there is nothing before it.
+func TestBackFromTheFirstQuestionLeaves(t *testing.T) {
+	layout := configuredLayout(t)
+
+	ask, _ := selectorFor(t, "r")
+	opts := options{}
+
+	err := guidedRun(context.Background(), infra.Catalog{}, &opts, ask, layout, configuredProfiles(), nil)
+
+	if !errors.Is(err, infra.ErrAborted) {
+		t.Errorf("guidedRun = %v, want the run to end", err)
+	}
+}
+
+// Three reasons a profile does not resolve, and they need three different
+// sentences: a session to revive, a key to replace, or nothing configured at all.
+// Calling the third one "session expired" sends somebody to a login that fails
+// with "Unable to locate credentials".
+func TestAProfileWithNothingConfiguredSaysSo(t *testing.T) {
+	layout, err := infra.NewLayout(fakeCheckout(t, "", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := []infra.ResolvedProfile{
+		{Profile: infra.AWSProfile{Name: "empty", Source: "config"}, Err: errors.New("no credentials")},
+		{Profile: infra.AWSProfile{Name: "stale", Source: "config", SSOSession: "acme", CanSignIn: true},
+			Err: errors.New("expired")},
+	}
+
+	byValue := map[string]option{}
+	for _, opt := range accountOptions(layout, resolved) {
+		byValue[opt.value] = opt
+	}
+
+	if strings.Contains(byValue["empty"].note, "log in") {
+		t.Errorf("a profile with nothing configured is offered a login: %q", byValue["empty"].note)
+	}
+	if !strings.Contains(byValue["empty"].note, "aws configure") {
+		t.Errorf("the row does not say how to give it credentials: %q", byValue["empty"].note)
+	}
+	if byValue["empty"].disabled == false {
+		t.Errorf("a profile nothing can be done with here is choosable: %+v", byValue["empty"])
+	}
+
+	// The one that can be revived still offers it.
+	if !strings.Contains(byValue["stale"].note, "log in") {
+		t.Errorf("an expired session is not offered a login: %q", byValue["stale"].note)
 	}
 }

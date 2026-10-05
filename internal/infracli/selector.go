@@ -28,11 +28,21 @@ type option struct {
 	label    string
 	note     string
 	disabled bool
+	// fixed marks a row that is part of the answer whatever else is chosen. It
+	// paints as ticked and cannot be focused or toggled, which is the difference
+	// from disabled: disabled means "not available to you", fixed means "already
+	// decided, and here is what was decided".
+	fixed bool
 	// environment is the name this row deploys as, when it has one. It is not
 	// shown unless two rows would otherwise read identically — see
 	// nameTheAmbiguous.
 	environment string
 }
+
+// selectable reports whether the cursor may land on this row. Both states are
+// unreachable, for opposite reasons, and every piece of navigation has to skip
+// both or the cursor lands on a row that cannot answer anything.
+func (o option) selectable() bool { return !o.disabled && !o.fixed }
 
 // rawMode switches the terminal to raw and returns the restore func. It is a
 // field rather than a direct call so a test can replace it: the key sequences are
@@ -53,6 +63,16 @@ var rawMode = func() (func(), error) {
 func plainSelection() bool { return os.Getenv("LERIAN_SELECT") == "plain" }
 
 // pick asks for one value from a known set.
+// errBack is a question answered with "take me back", which is a different
+// answer from "stop". A caller that treats them alike turns r into q, which is
+// the one thing somebody pressing r is trying to avoid.
+var errBack = errors.New("infracli: back to the previous question")
+
+// ErrBack is errBack for callers outside this package — the root menu, which has
+// to know the difference between "back" and "leave" even though it has nowhere to
+// go back to.
+var ErrBack = errBack
+
 func (p *prompter) pick(question, purpose, flagName string, options []option, preset string) (string, error) {
 	values, err := p.selectFrom(question, purpose, flagName, options, []string{preset}, false)
 	if err != nil {
@@ -165,12 +185,12 @@ func (p *prompter) runSelector(
 
 	cursor := 0
 	for i, opt := range options {
-		if !opt.disabled && chosen[opt.value] {
+		if opt.selectable() && chosen[opt.value] {
 			cursor = i
 			break
 		}
 	}
-	if options[cursor].disabled {
+	if !options[cursor].selectable() {
 		cursor = firstEnabled(options)
 	}
 
@@ -191,14 +211,17 @@ func (p *prompter) runSelector(
 		case keyAbort:
 			fmt.Fprint(p.out, "\r\n")
 			return nil, infra.ErrAborted
+		case keyBack:
+			fmt.Fprint(p.out, "\r\n")
+			return nil, errBack
 		case keySpace:
-			if multiple && !options[cursor].disabled {
+			if multiple && options[cursor].selectable() {
 				value := options[cursor].value
 				chosen[value] = !chosen[value]
 			}
 		case keyEnter:
 			if !multiple {
-				if options[cursor].disabled {
+				if !options[cursor].selectable() {
 					continue
 				}
 				fmt.Fprint(p.out, "\r\n")
@@ -208,7 +231,7 @@ func (p *prompter) runSelector(
 			if len(selected) == 0 {
 				// Enter on an empty multi-selection takes the row under the cursor,
 				// so the obvious gesture works without having to press space first.
-				if options[cursor].disabled {
+				if !options[cursor].selectable() {
 					continue
 				}
 				selected = []string{options[cursor].value}
@@ -265,9 +288,9 @@ func (p *prompter) paintOptions(
 	if purpose != "" {
 		write("  " + theme.dim(fit(purpose, width-2)))
 	}
-	hint := "↑↓ move · enter choose · q cancel"
+	hint := "↑↓ move · enter choose · r back · q cancel"
 	if multiple {
-		hint = "↑↓ move · space toggle · enter confirm · q cancel"
+		hint = "↑↓ move · space toggle · enter confirm · r back · q cancel"
 	}
 	write("  " + theme.dim(fit(hint, width-2)))
 
@@ -275,7 +298,7 @@ func (p *prompter) paintOptions(
 		pointer, mark := "  ", ""
 		if multiple {
 			box := " "
-			if chosen[opt.value] {
+			if chosen[opt.value] || opt.fixed {
 				box = "x"
 			}
 			mark = "[" + box + "] "
@@ -286,6 +309,8 @@ func (p *prompter) paintOptions(
 		// styled string would both measure wrong and risk cutting an escape in half.
 		label := opt.label
 		if opt.disabled {
+			// Only disabled. A fixed row is the opposite of unavailable — it is in
+			// the answer already — and its note is what says so.
 			label += "  (unavailable)"
 		}
 
@@ -305,7 +330,7 @@ func (p *prompter) paintOptions(
 			pointer = theme.bold("❯ ")
 		}
 		switch {
-		case opt.disabled:
+		case opt.disabled, opt.fixed:
 			label = theme.dim(label)
 		case i == cursor:
 			label = theme.bold(label)
@@ -416,7 +441,10 @@ func capForLayout(width int) int {
 func selectedValues(options []option, chosen map[string]bool) []string {
 	var out []string
 	for _, opt := range options {
-		if !opt.disabled && chosen[opt.value] {
+		// A fixed row is excluded on purpose. It is not something the operator
+		// picked, and the caller that drew it is the one that already handles it —
+		// returning it would have that caller add it twice.
+		if opt.selectable() && chosen[opt.value] {
 			out = append(out, opt.value)
 		}
 	}
@@ -428,7 +456,7 @@ func step(options []option, from, delta int) int {
 	next := from
 	for i := 0; i < len(options); i++ {
 		next = (next + delta + len(options)) % len(options)
-		if !options[next].disabled {
+		if options[next].selectable() {
 			return next
 		}
 	}
@@ -437,7 +465,7 @@ func step(options []option, from, delta int) int {
 
 func firstEnabled(options []option) int {
 	for i, opt := range options {
-		if !opt.disabled {
+		if opt.selectable() {
 			return i
 		}
 	}
@@ -450,7 +478,7 @@ func jumpTo(options []option, r rune, cursor int) int {
 	want := strings.ToLower(string(r))
 	for i := 1; i <= len(options); i++ {
 		at := (cursor + i) % len(options)
-		if options[at].disabled {
+		if !options[at].selectable() {
 			continue
 		}
 		if strings.HasPrefix(strings.ToLower(options[at].label), want) {
@@ -468,6 +496,8 @@ const (
 	keyEnter
 	keySpace
 	keyAbort
+	// keyBack is one question back, not out: r, next to q on the keys line.
+	keyBack
 	keyRune
 	keyOther
 )
@@ -502,6 +532,8 @@ func readKey(in io.RuneScanner) (keyPress, error) {
 		return keyPress{kind: keyAbort}, nil
 	case 'q':
 		return keyPress{kind: keyAbort}, nil
+	case 'r', 'R':
+		return keyPress{kind: keyBack}, nil
 	case 'k':
 		return keyPress{kind: keyUp}, nil
 	case 'j':

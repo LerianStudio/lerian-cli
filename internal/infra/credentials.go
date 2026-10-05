@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -109,14 +110,13 @@ func RequireAWSCLI(ctx context.Context) error {
 	path, err := exec.LookPath("aws")
 	if err != nil {
 		return fmt.Errorf("%w\n"+
-			"Install the AWS CLI v2, then configure one profile per AWS account you\n"+
-			"deploy into:\n"+
+			"Install it:\n%s\n"+
+			"Then configure one profile per AWS account you deploy into:\n"+
 			"  aws configure sso --profile <name>      # IAM Identity Center\n"+
 			"  aws configure --profile <name>          # access key and secret\n"+
 			"Either works. Ambient credentials in the environment work too: pass\n"+
-			"--profile '' with --account to say which account they reach.\n"+
-			"  https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html",
-			ErrNoAWSCLI)
+			"--profile '' with --account to say which account they reach.",
+			ErrNoAWSCLI, installAWSCLI())
 	}
 	if major, ok := awsCLIMajor(ctx, path); ok && major < 2 {
 		return fmt.Errorf("%w, and this tool needs v2\n"+
@@ -128,6 +128,54 @@ func RequireAWSCLI(ctx context.Context) error {
 			ErrOldAWSCLI, path)
 	}
 	return nil
+}
+
+// installAWSCLI is how to get the AWS CLI on the machine this is running on.
+//
+// The command rather than only the page: a link is something to read, and the
+// line for the machine in front of somebody is something to run. Installing it
+// here is not on offer — that needs a package manager and usually a password, and
+// a tool that installs other tools without being asked is a tool nobody trusts.
+//
+// The page stays for the platforms with no line here.
+func installAWSCLI() string {
+	const page = "  https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+
+	switch runtime.GOOS {
+	case "darwin":
+		return "  brew install awscli\n" + page
+	case "linux":
+		archive := linuxArchive(runtime.GOARCH)
+		if archive == "" {
+			return page
+		}
+		return "  curl -s 'https://awscli.amazonaws.com/awscli-exe-linux-" + archive + ".zip' -o awscliv2.zip\n" +
+			"  unzip -q awscliv2.zip && sudo ./aws/install\n" + page
+	default:
+		return page
+	}
+}
+
+// linuxArchive names the AWS CLI archive for a Go architecture, or returns the
+// empty string when there is no archive to name.
+//
+// AWS publishes one per architecture and no generic one, so handing an ARM
+// machine the x86_64 zip produces a binary that cannot run — reported as "cannot
+// execute binary file", which reads as a broken download rather than the wrong
+// download. Anything else gets the documentation page instead: guessing a URL
+// for an architecture AWS may not publish is worse than linking the list.
+//
+// A function of its own so the mapping can be tested for every architecture
+// rather than only for the one the test happens to run on.
+func linuxArchive(goarch string) string {
+	switch goarch {
+	case "amd64":
+		return "x86_64"
+	case "arm64":
+		return "aarch64"
+	default:
+		return ""
+	}
 }
 
 // awsCLIMajor reads the major version from `aws --version`, whose first field is

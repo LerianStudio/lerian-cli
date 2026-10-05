@@ -29,6 +29,12 @@ func session(ask func() (string, error), dispatch func(string) error) int {
 	code := 0
 	for {
 		chosen, err := ask()
+		if errors.Is(err, infracli.ErrBack) {
+			// Nowhere to go back to from the first menu, and it is not a way out:
+			// ending the session on the key that means "the previous thing" is the
+			// opposite of what was asked for.
+			continue
+		}
 		if errors.Is(err, infrapkg.ErrAborted) {
 			return code
 		}
@@ -72,6 +78,10 @@ func menuAsk(root *cobra.Command) func() (string, error) {
 
 		child, err := infracli.Choose(root.OutOrStdout(),
 			"Which "+chosen+" command?", "", childChoices(root, chosen))
+		if errors.Is(err, infracli.ErrBack) {
+			// Back out of the submenu and into the menu it came from.
+			return "", err
+		}
 		if err != nil {
 			return "", err
 		}

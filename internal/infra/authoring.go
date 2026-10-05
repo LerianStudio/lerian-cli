@@ -87,6 +87,14 @@ type AWSProfile struct {
 	// dozen account profiles behind one SSO session needs one command to revive all
 	// of them, not one per profile.
 	SSOSession string
+	// CanSignIn reports whether `aws sso login` has anything to do for this
+	// profile — it names a session, or carries the older per-profile SSO settings.
+	//
+	// A profile with neither cannot be logged into at all. ~/.aws/config commonly
+	// holds a [default] section with nothing but a region in it, and calling that
+	// an expired session sends somebody to a login that fails with "Unable to
+	// locate credentials", which names neither the problem nor the fix.
+	CanSignIn bool
 }
 
 // ListAWSProfiles reads ~/.aws/config and ~/.aws/credentials and returns every
@@ -155,6 +163,7 @@ func listAWSProfilesIn(dir string) ([]AWSProfile, error) {
 				Region:     values["region"],
 				Source:     kind,
 				SSOSession: values["sso_session"],
+				CanSignIn:  values["sso_session"] != "" || values["sso_start_url"] != "",
 			}
 		}
 	}
@@ -192,6 +201,12 @@ func LoginHint(resolved []ResolvedProfile) string {
 	var profiles []string
 	for _, entry := range resolved {
 		if entry.Usable() {
+			continue
+		}
+		// A profile with no SSO of any kind cannot be logged into, and a command
+		// that fails is worse than no command: the operator runs the list and has no
+		// way to tell which line was the pointless one.
+		if !entry.Profile.CanSignIn {
 			continue
 		}
 		if entry.Profile.SSOSession != "" {

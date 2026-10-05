@@ -1,0 +1,181 @@
+package infracli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+
+	"github.com/lerian-studio/lerian-cli/internal/config"
+	"github.com/lerian-studio/lerian-cli/internal/infra"
+)
+
+// DescribeMachine prints what this machine has, grouped by who owns it.
+//
+// Four things live in four places, and finding out meant four commands and
+// knowing which. Grouped rather than listed flat because the same word means
+// different things in different groups: a profile under "This tool" is a Lerian
+// platform login, a profile under "AWS" is a credential in ~/.aws, and side by
+// side with no headings they read as one kind of thing.
+//
+// It reads files and makes no AWS call. Somebody opening this wants to know where
+// things are, not to wait for a round trip per profile — and it has to work on a
+// machine with no network. What that costs is knowing whether the credentials
+// work, so the page says which command answers that.
+func DescribeMachine(ctx context.Context, out io.Writer) {
+	theme := newStyle(out)
+	section := func(name string) { fmt.Fprintf(out, "\n%s\n", theme.bold("==> "+name)) }
+	line := func(label, value string) { fmt.Fprintf(out, "  %-10s %s\n", label, value) }
+
+	section("This tool")
+	describeTool(line)
+
+	section("Templates")
+	describeTemplates(ctx, line)
+
+	section("AWS")
+	describeAWS(line)
+	fmt.Fprintf(out, "  %s\n", theme.dim("whether they work is an AWS call: lerian infra check makes it"))
+
+	section("Tools")
+	for _, name := range []string{"terraform", "aws", "git"} {
+		line(name, binaryPath(name))
+	}
+	fmt.Fprintln(out)
+}
+
+// describeTool is the configuration this CLI writes, and nothing else writes.
+func describeTool(line func(label, value string)) {
+	path, err := config.GetConfigPath()
+	if err != nil {
+		line("config", "cannot resolve: "+err.Error())
+		return
+	}
+	line("config", path)
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		line("state", "nothing configured yet")
+		return
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		line("state", "cannot be read: "+err.Error())
+		return
+	}
+
+	profile := cfg.CurrentProfile
+	if profile == "" {
+		profile = "none"
+	}
+	line("profile", profile+"   (Lerian platform, not AWS)")
+
+	// Named, never printed: a profile holds an API key.
+	if len(cfg.Profiles) == 0 {
+		line("logins", "none — lerian auth login creates one")
+		return
+	}
+	names := make([]string, 0, len(cfg.Profiles))
+	for name := range cfg.Profiles {
+		names = append(names, name)
+	}
+	line("logins", nameAFew(sorted(names)))
+}
+
+// describeTemplates is the checkout a run would use, and which of the five ways
+// of pointing at one produced it.
+func describeTemplates(ctx context.Context, line func(label, value string)) {
+	layout, source, err := resolveLayout("", os.Getenv("LERIAN_TF_REPO"), "")
+	switch {
+	case errors.Is(err, errNoCheckoutAnywhere):
+		line("checkout", "none found — lerian infra init --clone")
+		return
+	case err != nil:
+		// Any other failure is a checkout that was POINTED AT and did not work —
+		// usually LERIAN_TF_REPO naming a directory that is not one. Telling that
+		// person to clone sends them to fix something that is not broken, while the
+		// variable they set stays wrong; this page exists to say where the answer
+		// came from, so it has to say when the answer is the problem.
+		line("checkout", "none usable — "+firstLine(err.Error()))
+		return
+	}
+
+	line("checkout", layout.Root)
+	line("found by", explainSource(source))
+
+	if git, gitErr := infra.NewGitCLI(); gitErr == nil {
+		state := infra.InspectCheckout(ctx, git, layout.Root, source == sourceManaged)
+		ref := state.Ref
+		if ref == "" {
+			ref = "untagged"
+		}
+		line("version", ref)
+	}
+}
+
+// describeAWS is what ~/.aws holds, read rather than exercised.
+func describeAWS(line func(label, value string)) {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		line("config", filepath.Join(home, ".aws", "config"))
+	}
+
+	profiles, err := infra.ListAWSProfiles()
+	if err != nil {
+		line("profiles", "cannot read: "+err.Error())
+		return
+	}
+	if len(profiles) == 0 {
+		line("profiles", "none — aws configure sso, or credentials in the environment")
+		return
+	}
+
+	names := make([]string, 0, len(profiles))
+	sessions := map[string]bool{}
+	for _, profile := range profiles {
+		names = append(names, profile.Name)
+		if profile.SSOSession != "" {
+			sessions[profile.SSOSession] = true
+		}
+	}
+	line("profiles", fmt.Sprintf("%d: %s", len(names), nameAFew(sorted(names))))
+
+	if len(sessions) == 0 {
+		return
+	}
+	named := make([]string, 0, len(sessions))
+	for session := range sessions {
+		named = append(named, session)
+	}
+	line("sessions", nameAFew(sorted(named)))
+}
+
+// explainSource turns the source constant into something somebody can act on:
+// knowing a checkout came from $LERIAN_TF_REPO tells you which variable to unset,
+// where "env" alone tells you to go and read the code.
+func explainSource(source checkoutSource) string {
+	switch source {
+	case sourceManaged:
+		return "the managed path — found by convention, not recorded"
+	case sourceRemembered:
+		return "remembered in the config above"
+	case sourceEnv:
+		return "$LERIAN_TF_REPO in this shell"
+	case sourceFlag:
+		return "the --repo flag"
+	case sourceWorkingIn:
+		return "the working directory, or one above it"
+	case sourceAsked:
+		return "answered during this run"
+	default:
+		return string(source)
+	}
+}
+
+func sorted(values []string) []string {
+	out := append([]string(nil), values...)
+	sort.Strings(out)
+	return out
+}
