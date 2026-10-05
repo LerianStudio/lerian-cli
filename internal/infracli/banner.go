@@ -59,11 +59,10 @@ func Banner(out io.Writer, release string) {
 		return
 	}
 
-	colored := newStyle(out).enabled
 	width := screenWidth(out)
-	painted := renderBanner(release, width, colored)
+	painted := renderBanner(release, width)
 	if animates(out) {
-		revealBanner(out, painted, revealStep, bannerShape(width, colored))
+		revealBanner(out, painted, revealStep, hasWordmark(width))
 		return
 	}
 	fmt.Fprint(out, painted)
@@ -75,7 +74,7 @@ func Banner(out io.Writer, release string) {
 // A wrapped wordmark is not a wordmark, it is six broken lines, and the terminal
 // decides where it wraps — so the narrow form is not a degraded banner, it is the
 // correct one at that width.
-func renderBanner(release string, width int, colored bool) string {
+func renderBanner(release string, width int) string {
 	// The wordmark says the name, so the line under it only has the release left
 	// to say. The narrow form has no wordmark, so it says both.
 	if width > 0 && width < wordmarkWidth() {
@@ -84,17 +83,10 @@ func renderBanner(release string, width int, colored bool) string {
 	subtitle := ruleWithRelease(describeRelease(release))
 
 	margin := strings.Repeat(" ", wordmarkIndent)
-	// The mascot only when there is room for all of it. Half a wizard is worse
-	// than none, and the wordmark is the part that has to survive.
-	withMascot := width <= 0 || width >= bannerWidthWithMascot()
 
 	var banner strings.Builder
 	banner.WriteString("\n")
-	for index, line := range wordmark {
-		if withMascot {
-			banner.WriteString(margin + besideWordmark(line, mascot[index], colored) + "\n")
-			continue
-		}
+	for _, line := range wordmark {
 		banner.WriteString(margin + line + "\n")
 	}
 	banner.WriteString("\n" + subtitle + "\n\n")
@@ -166,7 +158,7 @@ func describeRelease(release string) string {
 // Where it ends is exactly the static banner — the animation is a way of arriving
 // at it, not a second version of it. A test paints this onto a small terminal and
 // compares the screen.
-func revealBanner(out io.Writer, banner string, step time.Duration, shape *bannerArt) {
+func revealBanner(out io.Writer, banner string, step time.Duration, sweep bool) {
 	lines := strings.Split(banner, "\n")
 
 	drawn := 0
@@ -176,9 +168,9 @@ func revealBanner(out io.Writer, banner string, step time.Duration, shape *banne
 		// lines. After the rule it is not — there are blanks and a subtitle in
 		// between, and counting them from out here is the kind of arithmetic that
 		// silently paints a second banner when the shape changes.
-		if shape != nil && drawn == len(wordmark) {
-			sweepWordmark(out, *shape)
-			shape = nil
+		if sweep && drawn == len(wordmark) {
+			sweepWordmark(out)
+			sweep = false
 		}
 		if strings.TrimSpace(line) != "" && !strings.Contains(line, "─") {
 			drawn++
@@ -229,6 +221,39 @@ func drawAcross(out io.Writer, line string, step time.Duration) {
 	fmt.Fprint(out, "\n")
 }
 
+// bannerLine composes one row of the wordmark from the art, rather than from a
+// rendered string.
+//
+// Composing instead of slicing is what makes the sweep safe: a highlight that cut
+// a finished line by rune count would cut through any escape sequence already in
+// it, and half an escape on screen is a line of garbage that survives until the
+// next full redraw.
+func bannerLine(index int, highlight func(string) string) string {
+	if highlight == nil {
+		return wordmark[index]
+	}
+	return highlight(wordmark[index])
+}
+
+// litWindow brightens a run of columns and leaves the rest alone. It is the
+// moving part of the sweep.
+func litWindow(start, width int) func(string) string {
+	return func(line string) string {
+		runes := []rune(line)
+		from, to := start, start+width
+		if from < 0 {
+			from = 0
+		}
+		if to > len(runes) {
+			to = len(runes)
+		}
+		if from >= to {
+			return line
+		}
+		return string(runes[:from]) + "\x1b[1;97m" + string(runes[from:to]) + "\x1b[0m" + string(runes[to:])
+	}
+}
+
 // sweepWordmark runs a band of light across the finished wordmark, once.
 //
 // The reveal is a wave going DOWN, one line at a time; this is a wave going
@@ -238,22 +263,13 @@ func drawAcross(out io.Writer, line string, step time.Duration) {
 //
 // The margin is written on every frame because the cursor returns to column zero,
 // not to the margin.
-// bannerArt is which shape was drawn, so the sweep can recompose it. It is nil
-// when the banner has no wordmark to sweep — the narrow form.
-type bannerArt struct {
-	colored    bool
-	withMascot bool
-}
+// hasWordmark reports whether the banner at this width has a wordmark to sweep.
+// The narrow form has none, and moving the cursor back up over a banner that was
+// never drawn walks over whatever the terminal had on screen before the command
+// ran.
+func hasWordmark(width int) bool { return width <= 0 || width >= wordmarkWidth() }
 
-// bannerShape describes what renderBanner would draw at this width.
-func bannerShape(width int, colored bool) *bannerArt {
-	if width > 0 && width < wordmarkWidth() {
-		return nil
-	}
-	return &bannerArt{colored: colored, withMascot: width <= 0 || width >= bannerWidthWithMascot()}
-}
-
-func sweepWordmark(out io.Writer, shape bannerArt) {
+func sweepWordmark(out io.Writer) {
 	const (
 		band  = 10
 		steps = 12
@@ -272,7 +288,7 @@ func sweepWordmark(out io.Writer, shape bannerArt) {
 				// highlight leaves the screen in a state no static path produces.
 				light = nil
 			}
-			fmt.Fprint(out, "\r"+margin+bannerLine(index, shape.withMascot, shape.colored, light)+"\n")
+			fmt.Fprint(out, "\r"+margin+bannerLine(index, light)+"\n")
 		}
 		if step < steps {
 			time.Sleep(sweepStep)
