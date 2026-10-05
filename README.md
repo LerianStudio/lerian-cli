@@ -704,185 +704,44 @@ bootstrap from their own machine, produces a missing file over a bucket that has
 existed for months. Acting on the file alone sends somebody to create a second
 state backend beside the one their infrastructure's state is already in.
 
-So when the file is missing, the CLI asks the account:
+So when the file is missing, the CLI asks the account — for **this
+environment's** bucket, and only that one:
 
 ```
 ==> State backend
-  no examples/aws/backend/dev.hcl here — asking the account
+  no examples/aws/backend/prd.hcl here — asking the account
+  found     lerian-tfstate-prd-524121347244  (us-east-2)
+  this is prd's own backend; adopting writes examples/aws/backend/prd.hcl
 
-  A state backend already exists in this account. Use it?
-  Adopting writes examples/aws/backend/dev.hcl from what is in the account.
-❯ lerian-tfstate-dev-524121347244  this environment's own backend · us-east-2
-  lerian-tfstate-stg-524121347244  made for stg · us-east-2
-  create a new one                 bootstrap makes lerian-tfstate-dev-524121347244
+  Use it as prd's state backend? [type yes to continue · ctrl-c cancels]:
 ```
 
-That is `aws s3api list-buckets` filtered by the account suffix, plus
+The environment was chosen two questions earlier, so the other buckets in the
+account are not candidates: `lerian-tfstate-stg-<account>` is stg's state, and
+adopting it as prd's would point two environments at one state file. When the
+account holds buckets but none of them is this environment's, it says so and
+`bootstrap` is what runs:
+
+```
+  2 state bucket(s) here, none of them prd's. bootstrap creates it.
+```
+
+There is no "create a new one" beside an existing bucket either. If it is there,
+`bootstrap` stops at "bucket already exists" — adopting is the only thing that
+can work, and a second row would be offering a failure.
+
+That lookup is `aws s3api list-buckets` filtered by the account suffix, plus
 `get-bucket-location` and a `describe-table` for the lock table — fact, read off
 the account, not inferred. Adopting writes the four lines `bootstrap` would have
 written, which is what the old error told you to do by hand.
 
-Every state bucket the account holds is offered, not only the one whose name
-matches this environment — including the ones made for other environments, and
-ones whose suffix is not an environment this tool knows (`lerian-tfstate-sandbox-…`
-shows as *named by hand*). The search is bounded: a bucket has to carry the
-`lerian-tfstate-` prefix the templates give it and end with this account's id, so
-an account's unrelated buckets never appear. The note carries what decides
-whether adopting is safe — the region (adopting one in the wrong region fails at
-`terraform init` with a redirect that reads like anything but a region problem)
-and whether a lock table exists (without one, concurrent runs are unprotected).
-
 It never overwrites an existing `backend/<env>.hcl`: that file is the bucket the
-state is under, and replacing it points a stack at state it has never seen. An
-empty account says so plainly and `bootstrap` is the answer. A lookup that fails
-— no permission, no network — is reported and the run continues: unknown is not
-no, and blocking a run over a question that only prevents a duplicate bucket
-would trade a small risk for a certain stoppage. With no terminal, nothing is
-looked up at all; adopting is a decision, and CI would be paying for an API call
-to print something nobody asked for.
-
-### Pointing kubectl at the cluster
-
-After an `apply` that produced a cluster, the post-run menu offers it:
-
-```
-  What now?
-❯ point kubectl at the cluster   runs aws eks update-kubeconfig
-  ...
-```
-
-The cluster's name comes from the EKS stack's own outputs, not from rebuilding
-the templates' naming convention here — that would be a second implementation of
-somebody else's rule, correct right up until they rename something.
-
-It checks the kubeconfig first and asks before overwriting:
-
-```
-==> kubectl
-  cluster   example-dev-eks
-  file      /Users/you/.kube/config
-  an entry for this cluster is already there, pointing elsewhere:
-    now   https://OLD.gr7.us-east-2.eks.amazonaws.com
-    after https://NEW.gr7.us-east-2.eks.amazonaws.com
-
-  Replace it? [type yes to continue · ctrl-c cancels]:
-```
-
-That case is worth the question because it reads two ways. A cluster destroyed
-and recreated keeps its name and gets a new endpoint — the entry is stale and
-replacing it is the fix, and the symptom is a `kubectl` that fails with `no such
-host` rather than with a permission error. But an entry pointing elsewhere can
-also be a different cluster of the same name in another account, and overwriting
-that one silently moves `kubectl` off something somebody is working against.
-
-Pointing at the endpoint already there asks nothing: re-running
-`update-kubeconfig` is how a broken context gets repaired, and confirming a
-no-op teaches people to say yes without reading. A kubeconfig that cannot be
-parsed is an error rather than "nothing will be overwritten" — that sentence
-would be a guess about a file whose contents are unknown.
-
-The file itself is written by the AWS CLI. Its format — contexts, users, the
-exec credential plugin and the arguments that plugin wants from this version of
-the CLI — is not this tool's to author. Reading it to see what is there is one
-thing; writing it is another.
-
-### Which environment an account is
-
-The account and the environment are two questions, in that order:
-
-```
-  Which environment is this account?
-  It picks the sizing the templates ship, and the state backend to use.
-❯ dev   configured here  ·  state backend ready
-  stg   production's shape, smaller  ·  not set up here yet
-  prd   another account holds it: 905418424496
-```
-
-The environment used to be derived from the account — the first section whose
-`account_id` matched. That made an account permanently one environment: a
-sandbox configured as `dev` could never also be `stg` in the same checkout,
-because the lookup found `dev` and stopped. Worse, on a fresh checkout it was
-the first *free* slot, so a production account set up first got `dev`, which in
-these templates is `db.t4g.micro`, single-AZ, one day of backups and no deletion
-protection.
-
-Each row says where that environment stands **for this account**, because that
-decides what happens next:
-
-| row says | what follows |
-|---|---|
-| `configured here · state backend ready` | straight on to what to operate on |
-| `configured here · no state backend yet` | `bootstrap` is the only thing that can run |
-| `not set up here yet` | `init` runs first, then the backend is settled |
-| `another account holds it: …` | not selectable — one account per environment |
-
-The answer settles three things at once, which is why it comes before `init`:
-which `envs/<env>.tfvars` is written (the sizing), which `backend/<env>.hcl`, and
-the name of the state bucket — `lerian-tfstate-<env>-<account>`. One answer
-produces all three, so they cannot disagree.
-
-And `bootstrap` stops being offered once there is a backend:
-
-```
-  [ ] bootstrap  already there — lerian-tfstate-dev-524121347244
-```
-
-It is the one row with nothing to do at that point, and leaving it selectable
-invites a run whose entire output is "no changes". The question somebody
-actually has — is my state backend set up? — is answered by the row saying so.
-(`--target bootstrap` still works from the command line, for changing the
-bucket's own settings.)
-
-### The targets are asked once
-
-Choosing an account that is not set up yet runs `init`, and `init` asks what to
-configure. The run then used to ask what to operate on — a second list of thirty
-rows whose only sensible answer was the one given seconds earlier.
-
-It is now said rather than asked:
-
-```
-==> Target
-  infra-base  — what you just configured
-```
-
-Read back from the disk, not from memory: `init` decides what to write by
-asking, and the files it leaves are the only record both this run and a later
-one can agree on. An account that was already set up still gets the question,
-because nothing was decided a moment ago.
-
-`r` still reaches the account question from the action one. A step that decides
-without asking is invisible to it — going back to a screen that is not there
-would return immediately and move forward again, so the key would appear to do
-nothing.
-
-### After a run
-
-A run used to end by returning to the top menu, which threw away every answer
-that produced it. After a plan the next thing anybody wants is one of two things
-— to read what it would change, or to apply it — and both meant walking the
-account, backend, target and action questions again to arrive back where they
-already were.
-
-```
-  What now?
-  Same targets, same account. apply runs them for real, after one confirmation.
-❯ show what the plan would change  resource by resource, from the plan just made
-  apply                            writes, after one confirmation
-  output                           reads terraform output
-  helm-values                      merges helm_values onto stdout
-  back to the menu                 leaves this account and target
-```
-
-The detail is read back from the saved plan, not from a second one taken a
-minute later — it describes the exact plan an `apply` from this menu would run.
-Destructive actions come first within each stack, because "2 to destroy" is the
-line worth finding in forty; a replacement is reported as `replace` rather than
-as a delete and a create, since for a database that is the difference between a
-deploy and an outage.
-
-The offer only exists where the plans do: they are deleted when the run returns,
-so this question lives inside it.
+state is under, and replacing it points a stack at state it has never seen. A
+lookup that fails — no permission, no network — is reported and the run
+continues: unknown is not no, and blocking a run over a question that only
+prevents a duplicate bucket would trade a small risk for a certain stoppage.
+With no terminal, nothing is looked up at all; adopting is a decision, and CI
+would be paying for an API call to print something nobody asked for.
 
 ### Getting a checkout in the first place
 
