@@ -741,6 +741,38 @@ would trade a small risk for a certain stoppage. With no terminal, nothing is
 looked up at all; adopting is a decision, and CI would be paying for an API call
 to print something nobody asked for.
 
+### Which environment an account is
+
+Setting an account up asks which of `dev`, `stg` and `prd` it is:
+
+```
+  Which environment is this account?
+  It picks the sizing the templates ship, and the name of the state bucket.
+❯ dev   smallest classes, single-AZ, short backups — cheapest
+  stg   production's shape, smaller
+  prd   largest classes, multi-AZ, long backups, deletion protection
+```
+
+It used to be taken rather than asked — the first free slot, in order, in
+silence. That is a decision about capacity and cost dressed as an implementation
+detail: a production account set up first in a fresh checkout got `dev`, which
+in the templates is `db.t4g.micro`, single-AZ, one day of backups and no
+deletion protection.
+
+The answer settles three things at once, which is why it comes before `init` and
+not after: which `envs/<env>.tfvars` is written (the sizing), which
+`backend/<env>.hcl`, and the name of the state bucket — `lerian-tfstate-<env>-<account>`.
+They cannot disagree, because one answer produces all three.
+
+An environment another account already holds is shown and cannot be chosen: a
+checkout holds one account per environment, and its absence from the list would
+be the next question you'd ask. With all three taken, the error says so rather
+than offering three refusals.
+
+The sizing on each row is written in the CLI, not parsed out of the templates in
+front of you — but a test reads the examples and fails when the description
+stops being true, so it cannot quietly drift.
+
 ### The targets are asked once
 
 Choosing an account that is not set up yet runs `init`, and `init` asks what to

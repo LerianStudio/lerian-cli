@@ -1159,15 +1159,11 @@ func printModeDisclaimer(out io.Writer, plan initPlan) {
 // description: claiming an account that cannot be read would be worse than not
 // naming one.
 func environmentOptions(layout infra.Layout) []option {
-	notes := map[string]string{
-		"dev": "day to day, smallest sizing",
-		"stg": "pre-production",
-		"prd": "production",
-	}
-
 	options := make([]option, 0, len(infra.Environments))
 	for _, name := range infra.Environments {
-		note := notes[name]
+		// The same words the setup menu uses. Two descriptions of one thing drift,
+		// and the one somebody reads second is the one that would be wrong.
+		note := environmentNotes[name]
 		if config, err := infra.LoadEnvConfig(layout, name); err == nil && config.AccountID != "" {
 			note += "  ·  account " + config.AccountID
 			if config.Profile != "" {

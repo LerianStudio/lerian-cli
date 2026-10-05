@@ -695,7 +695,8 @@ func TestChoosingAnUnsetAccountConfiguresIt(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	ask, _ := selectorFor(t, keyEnterSeq)
+	// Two answers now: the account, then which environment it is being set up as.
+	ask, _ := selectorFor(t, keyEnterSeq+keyEnterSeq)
 
 	choice, err := askForAccount(context.Background(), ask, &out, infra.Catalog{}, layout, resolved)
 	if err != nil {
@@ -735,7 +736,8 @@ func TestAFourthAccountSaysWhatIsInTheWay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = configureAccount(context.Background(), &bytes.Buffer{}, layout,
+	noAnswers, _ := selectorFor(t, "")
+	_, err = configureAccount(context.Background(), noAnswers, &bytes.Buffer{}, layout,
 		infra.ResolvedProfile{Profile: infra.AWSProfile{Name: "four"}, Caller: infra.Caller{Account: "444444444444"}})
 
 	if err == nil {
@@ -1180,7 +1182,10 @@ func TestSettingUpAnAccountAsksForTheRegion(t *testing.T) {
 		Caller:  infra.Caller{Account: "999988887777"},
 	}
 
-	if _, err := configureAccount(context.Background(), &bytes.Buffer{}, layout, chosen); err != nil {
+	// Enter takes dev, the first environment, which is all this test needs: it is
+	// about the region not being decided from the profile.
+	ask, _ := selectorFor(t, keyEnterSeq)
+	if _, err := configureAccount(context.Background(), ask, &bytes.Buffer{}, layout, chosen); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1680,7 +1685,8 @@ func TestSettingUpAnAccountDecidesTheTargets(t *testing.T) {
 	resolved := []infra.ResolvedProfile{
 		{Profile: infra.AWSProfile{Name: "sandbox", Region: "us-east-1"}, Caller: infra.Caller{Account: "111122223333"}},
 	}
-	ask, painted := selectorFor(t, keyEnterSeq)
+	// The account, then the environment it is set up as.
+	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq)
 	opts := options{}
 
 	asked, err := askAccountStep(context.Background(), ask, catalog, layout, resolved, &opts, nil)

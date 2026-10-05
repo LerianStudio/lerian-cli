@@ -1364,7 +1364,7 @@ func askForAccount(
 	// Chosen but not set up. Telling somebody to leave and run a second command —
 	// and to know which of three names to give it — is asking them to do the part
 	// this already knows how to do.
-	environment, err = configureAccount(ctx, out, layout, *picked)
+	environment, err = configureAccount(ctx, ask, out, layout, *picked)
 	choice := accountChoice{environment: environment, profile: picked.Profile.Name, chosen: true}
 	if err == nil {
 		// Read back from the disk rather than returned by init: init decides what
@@ -1391,23 +1391,23 @@ var runInitCommand = runInit
 // a missing file.
 func configureAccount(
 	ctx context.Context,
+	ask *prompter,
 	out io.Writer,
 	layout infra.Layout,
 	chosen infra.ResolvedProfile,
 ) (string, error) {
-	slot, ok := freeEnvironment(layout)
-	if !ok {
-		return "", fmt.Errorf("this checkout already holds three accounts, which is all it can hold\n"+
-			"Each account occupies one of backend/<env>.hcl and envs/<env>.tfvars, and the\n"+
-			"templates provide three sets: %s.\n\n"+
-			"Use a separate checkout for account %s, or free one of the three in\n"+
-			"examples/aws/environments.conf.",
-			strings.Join(infra.Environments, ", "), chosen.Caller.Account)
-	}
-
 	theme := newStyle(out)
 	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Setting up account "+chosen.Caller.Account))
 	fmt.Fprintf(out, "  %s\n", theme.dim("first time for this account in this checkout"))
+
+	// Asked, not taken. The first free slot in order is a decision about capacity
+	// and cost wearing the clothes of an implementation detail: a production
+	// account set up first in a fresh checkout got dev, which is db.t4g.micro,
+	// single-AZ, one day of backups and no deletion protection.
+	slot, err := askForEnvironment(ask, layout, chosen.Caller.Account)
+	if err != nil {
+		return "", err
+	}
 
 	// No --region. init asks for it, always, and the profile's own region is the
 	// suggestion it offers — passing it here would answer the question on somebody's
@@ -1428,16 +1428,6 @@ func configureAccount(
 		return "", fmt.Errorf("account %s was not set up: %w", chosen.Caller.Account, err)
 	}
 	return slot, nil
-}
-
-// freeEnvironment is the first slot no account has taken.
-func freeEnvironment(layout infra.Layout) (string, bool) {
-	for _, name := range infra.Environments {
-		if _, err := infra.LoadEnvConfig(layout, name); err != nil {
-			return name, true
-		}
-	}
-	return "", false
 }
 
 // applyChosenProfile puts the interactively chosen profile into the configuration
