@@ -44,9 +44,12 @@ func afterRun(
 	for {
 		picked, err := ask.pick("What now?", afterPurpose(done), "", afterOptions(done), "")
 		switch {
+		//nolint:nilerr // Leaving is leaving: q, r and ctrl-c all arrive as an
+		// error here, and so does a selector that could not draw. The run already
+		// happened and was already reported — this question is an offer, not a
+		// step — so returning the error would turn declining an offer into a
+		// failed command.
 		case err != nil:
-			// Leaving is leaving. The run already happened and was already
-			// reported; this question is an offer, not a step.
 			return nil
 		case picked == afterDone:
 			return nil
