@@ -17,7 +17,7 @@ const (
 	// StatusFail finished with an error.
 	StatusFail Status = "fail"
 	// StatusWarn finished, but something the operator should read happened —
-	// a root that exposes no helm_values, for instance.
+	// a root with nothing to report, for instance.
 	StatusWarn Status = "warn"
 	// StatusSkipped was never attempted: an earlier stage failed, or the unit is
 	// bootstrap in a destroy run.

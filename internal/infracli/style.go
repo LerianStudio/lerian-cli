@@ -8,7 +8,7 @@ import (
 // style decides whether this run may emit ANSI.
 //
 // Three conditions, all of which must hold, because the same output is routinely
-// redirected: `--action helm-values > values.yaml` must produce a YAML file with
+// redirected: `--action output > outputs.json` must produce a file with
 // no escape sequences in it, and a CI log full of color codes is worse than a
 // plain one.
 //

@@ -13,7 +13,7 @@ var InfraCmd = &cobra.Command{
 	Short: "Deploy the AWS stacks of lerian-terraform-foundation",
 	Long: `Drive the Terraform roots of lerian-terraform-foundation: bootstrap the
 state backend, stand up the VPC and the cluster, apply the shared datastore tier
-and the per-product services, and read their helm values back.
+and the per-product services.
 
 This command takes flags rather than subcommands. Run 'lerian infra --help' for
 the full reference, 'lerian infra check' to verify this machine, and

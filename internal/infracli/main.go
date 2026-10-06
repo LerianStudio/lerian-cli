@@ -51,7 +51,6 @@ type options struct {
 	environment  string
 	target       string
 	action       string
-	format       string
 	// profile is the AWS profile chosen interactively, and profileChosen records
 	// that a choice was made at all.
 	//
@@ -110,8 +109,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			"(default: $LERIAN_TF_REPO, else discovered by walking up from the working directory)")
 	flags.StringVar(&opts.environment, "env", "", "dev, stg or prd")
 	flags.StringVar(&opts.target, "target", "infra-base", "what to operate on")
-	flags.StringVar(&opts.action, "action", "plan", "plan, apply, destroy, output or helm-values")
-	flags.StringVar(&opts.format, "format", "json", "json or yaml, for --action helm-values")
+	flags.StringVar(&opts.action, "action", "plan", "plan, apply, destroy or output")
 	flags.IntVar(&opts.jobs, "jobs", 4, "how many services of one product run at once")
 	flags.BoolVar(&opts.autoApprove, "auto-approve", false, "skip the confirmation before apply/destroy")
 	flags.DurationVar(&opts.minCredentialLifetime, "min-credential-lifetime", 0,
@@ -214,25 +212,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if opts.format != "json" && opts.format != "yaml" {
-		return fmt.Errorf("invalid --format %q\nValid values: json, yaml.", opts.format)
-	}
 	if opts.jobs < 1 {
 		return fmt.Errorf("invalid --jobs %d\nMust be at least 1. Default 4; use 1 to run sequentially.",
 			opts.jobs)
 	}
-	if action == infra.ActionHelmValues {
-		if err := requireProductTarget(opts.target); err != nil {
-			return err
-		}
-	}
 
-	// helm-values writes a document to stdout, so `> values.yaml` captures the
-	// document and nothing else. Everything else goes to stderr in that mode.
 	progressOut := stdout
-	if action == infra.ActionHelmValues {
-		progressOut = stderr
-	}
 
 	// Target resolution is pure filesystem work and reports the most common typo,
 	// so it runs before the config is even opened: "unknown product 'ledger'" is a
@@ -388,8 +373,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// another one without rebuilding the runner, the logs or the plans.
 	perform := func(action infra.Action) error {
 		switch action {
-		case infra.ActionHelmValues:
-			return writeHelmValues(ctx, runner, allUnits, opts.format, stdout)
 		case infra.ActionOutput:
 			return writeOutputs(ctx, runner, allUnits, stdout)
 		default:
@@ -648,10 +631,10 @@ func loadBackend(
 }
 
 func checkReadiness(out io.Writer, action infra.Action, units []infra.Unit, env string) []infra.Readiness {
-	if action == infra.ActionOutput || action == infra.ActionHelmValues {
-		// Read-only actions never pass -var-file, so the variables file is irrelevant
-		// to them, and demanding it would block reading the outputs of a stack
-		// somebody else applied.
+	if action == infra.ActionOutput {
+		// A read-only action never passes -var-file, so the variables file is
+		// irrelevant to it, and demanding it would block reading the outputs of a
+		// stack somebody else applied.
 		fmt.Fprintf(out, "  tfvars      not required for --action %s\n", action)
 		return nil
 	}
@@ -672,17 +655,6 @@ func failOnUnready(readiness []infra.Readiness) error {
 	return fmt.Errorf("%d stack(s) are not ready:\n%s\n\n"+
 		"Run with --dry-run to see the whole list without stopping at the first one.",
 		len(problems), strings.Join(problems, "\n"))
-}
-
-func requireProductTarget(target string) error {
-	switch {
-	case target == "bootstrap", target == "all",
-		target == "infra-base", strings.HasPrefix(target, "infra-base/"):
-		return fmt.Errorf("--action helm-values needs a product target\n"+
-			"%q has no helm_values output; the Helm handoff lives in products/<product>/<service>.\n"+
-			"  lerian infra --env dev --target midaz --action helm-values", target)
-	}
-	return nil
 }
 
 func execute(
@@ -787,31 +759,6 @@ func execute(
 		fmt.Fprint(out, "  Nothing was changed. Re-run with --action apply to execute this plan.\n\n")
 	}
 	return nil
-}
-
-func writeHelmValues(
-	ctx context.Context,
-	runner *infra.Runner,
-	units []infra.Unit,
-	format string,
-	stdout io.Writer,
-) error {
-	document, err := runner.HelmValues(ctx, units)
-	if err != nil {
-		return err
-	}
-
-	var rendered []byte
-	if format == "yaml" {
-		rendered, err = document.YAML()
-	} else {
-		rendered, err = document.JSON()
-	}
-	if err != nil {
-		return err
-	}
-	_, err = stdout.Write(rendered)
-	return err
 }
 
 func writeOutputs(ctx context.Context, runner *infra.Runner, units []infra.Unit, stdout io.Writer) error {
@@ -1094,7 +1041,7 @@ func printDryRun(
 // reproduce exactly the old default run.
 //
 // The questions go to stderr: the action is one of the things being chosen, and
-// helm-values needs stdout to carry nothing but the document.
+// the action is one of the things being chosen.
 // afterAccount is called as soon as the account is chosen, with the profile that
 // was picked. Its error stops the remaining questions.
 //
@@ -1957,7 +1904,6 @@ func actionOptions() []option {
 		{value: string(infra.ActionApply), label: "apply", note: "writes, after one confirmation"},
 		{value: string(infra.ActionDestroy), label: "destroy", note: "removes, after one confirmation"},
 		{value: string(infra.ActionOutput), label: "output", note: "reads terraform output"},
-		{value: string(infra.ActionHelmValues), label: "helm-values", note: "merges helm_values onto stdout"},
 	}
 }
 

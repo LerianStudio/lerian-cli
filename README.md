@@ -30,7 +30,6 @@ on AWS, from bootstrap to the per-product services.
 - **Target Resolution** - Products and services discovered from the checkout; combine with commas
 - **Account Guard** - Three checks before anything runs, with no flag to bypass them
 - **Dry Run** - Resolve and print the whole execution plan without a single AWS call
-- **Helm Values** - Read `helm_values` back out of the applied state
 
 Ported from `lerian-infra-cli`, which this CLI replaces.
 
@@ -497,9 +496,6 @@ lerian infra --env dev --target all --dry-run
 lerian infra --env dev --target bootstrap        --action apply
 lerian infra --env dev --target infra-base       --action apply
 lerian infra --env dev --target shared-resources --action apply
-
-# Read the helm values of a product back out
-lerian infra --env dev --target midaz --action helm-values --format yaml
 ```
 
 Run `lerian infra --help` for the full reference: every flag, the account guard,
@@ -928,7 +924,6 @@ already were.
 ❯ show what the plan would change  resource by resource, from the plan just made
   apply                            writes, after one confirmation
   output                           reads terraform output
-  helm-values                      merges helm_values onto stdout
   destroy                          removes what these targets created, after one confirmation
   back to the menu                 leaves this account and target
 ```

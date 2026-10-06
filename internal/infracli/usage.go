@@ -119,9 +119,6 @@ FLAGS
                             plan          terraform plan only. Changes nothing.
                             apply         plan, show the summary, confirm, apply.
                             destroy       the same, for -destroy plans.
-                            helm-values   read helm_values from every service of
-                                          the target and merge them into one
-                                          document on stdout.
                             output        terraform output for every unit.
 
   --auto-approve          Skip the single confirmation before apply/destroy.
@@ -153,8 +150,6 @@ FLAGS
   --jobs <n>              Services inside one product run in parallel. Default 4.
                           Ordered stages (bootstrap, vpc, eks) are always
                           sequential regardless of this.
-
-  --format <json|yaml>    Output shape for --action helm-values. Default json.
 
   --dry-run               Resolve and print the execution plan — units, order,
                           state keys, backend file, profile, expected account —
@@ -195,14 +190,6 @@ THE SHARED TIER IS OPT-IN PER ENGINE
   switch. Shared mode leaves them alone: they still create a real bucket, and they
   still need to be applied along with the product.
 
-WHERE helm-values READS FROM
-  A product in shared mode creates nothing: its roots resolve the tier that owns
-  the datastores. For products whose chart mapping has been ported into this
-  binary, helm-values reads the tier's state directly and never touches the
-  product root, so there is no apply of a root that would build nothing. For every
-  other product it reads the product root's own helm_values output, which requires
-  that root to have been applied.
-
 ORDER
   apply    bootstrap -> infra-base/vpc -> infra-base/eks
                      -> shared-resources/* -> products/*
@@ -242,14 +229,11 @@ EXAMPLES
   lerian infra --env stg --target infra-base/vpc --action plan
   lerian infra --env prd --target midaz --action apply --jobs 4
   lerian infra --env dev --target midaz/postgres --action destroy
-  lerian infra --env dev --target reporter --action helm-values --format yaml \
-    > reporter-dev-values.yaml
 
   A whole environment on shared datastores, from an empty account:
     lerian infra init --env dev                       # answer: shared
     lerian infra --env dev --target bootstrap        --action apply
     lerian infra --env dev --target infra-base       --action apply
     lerian infra --env dev --target shared-resources --action apply
-    lerian infra --env dev --target midaz --action helm-values --format yaml \
-      > midaz-dev-values.yaml
+    lerian infra --env dev --target midaz            --action apply
 `

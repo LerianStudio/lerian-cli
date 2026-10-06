@@ -44,7 +44,7 @@ func (c Changes) Empty() bool { return c.Create == 0 && c.Update == 0 && c.Delet
 
 // Terraform is the Terraform CLI, narrowed to what this package needs.
 //
-// It is an interface so the ordering, the guards and the helm_values merge can be
+// It is an interface so the ordering and the guards can be
 // tested without Terraform, credentials or an AWS account — the shell version could
 // only be tested by stubbing the binary and reading back the argv it recorded.
 type Terraform interface {

@@ -109,7 +109,6 @@ func afterOptions(done infra.Action, cluster bool) []option {
 	}
 	options = append(options,
 		option{value: string(infra.ActionOutput), label: "output", note: "reads terraform output"},
-		option{value: string(infra.ActionHelmValues), label: "helm-values", note: "merges helm_values onto stdout"},
 	)
 
 	// destroy last among the actions, and never beside apply. Everything above is

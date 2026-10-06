@@ -133,23 +133,6 @@ func TestUnknownTargetIsReportedBeforeTheConfiguration(t *testing.T) {
 	}
 }
 
-func TestHelmValuesRefusesANonProductTarget(t *testing.T) {
-	root := fakeCheckout(t, goodConfig, "")
-
-	for _, target := range []string{"infra-base", "infra-base/vpc", "bootstrap", "all"} {
-		t.Run(target, func(t *testing.T) {
-			_, _, err := runCLI(t, "--repo", root, "--env", "dev",
-				"--target", target, "--action", "helm-values")
-			if err == nil {
-				t.Fatalf("helm-values accepted %q", target)
-			}
-			if !strings.Contains(err.Error(), "needs a product target") {
-				t.Errorf("error = %q", err)
-			}
-		})
-	}
-}
-
 func TestDestroyRefusesBootstrap(t *testing.T) {
 	root := fakeCheckout(t, goodConfig, "")
 
@@ -267,7 +250,6 @@ func TestInvalidFlagValuesAreRejected(t *testing.T) {
 		wantIn string
 	}{
 		{"action", []string{"--action", "aplly"}, "invalid action"},
-		{"format", []string{"--format", "toml", "--action", "helm-values", "--target", "midaz"}, "invalid --format"},
 		{"jobs", []string{"--jobs", "0"}, "invalid --jobs"},
 		{"environment", []string{"--env", "prod"}, `invalid --env "prod"`},
 		// Not a provider name: aws/azure/gcp carry their own redirects, asserted
