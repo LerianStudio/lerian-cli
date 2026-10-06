@@ -23,7 +23,17 @@ type clusterFacts struct {
 // The name is built inside the templates from a naming module, so reconstructing
 // it here would be a second implementation of somebody else's convention — right
 // until they rename something.
-func readClusterFacts(ctx context.Context, runner *infra.Runner, units []infra.Unit) (clusterFacts, bool) {
+//
+// The second return is why there is nothing to offer. "No eks root in this run"
+// and "the outputs could not be read" are different things: the first is silence,
+// the second is worth a line. Swallowing both meant an apply whose credentials
+// expired during its twenty-three minutes simply had no kubectl row, with
+// nothing on screen to say so.
+func readClusterFacts(
+	ctx context.Context,
+	outputs outputReader,
+	units []infra.Unit,
+) (clusterFacts, bool, string) {
 	var eks []infra.Unit
 	for _, unit := range units {
 		if strings.HasSuffix(unit.Name, "/eks") {
@@ -31,27 +41,35 @@ func readClusterFacts(ctx context.Context, runner *infra.Runner, units []infra.U
 		}
 	}
 	if len(eks) == 0 {
-		return clusterFacts{}, false
+		return clusterFacts{}, false, ""
 	}
 
-	outputs, err := runner.Outputs(ctx, eks)
-	if err != nil {
-		// No outputs means no cluster to point at — a plan, or an apply that did
-		// not get that far. Not a failure: the offer simply is not made.
-		return clusterFacts{}, false
-	}
-
-	for _, values := range outputs {
+	// terraform.Output rather than runner.Outputs: the runner paints into the
+	// checklist, and "reading the outputs" under a finished apply is a second
+	// progress report for something nobody asked to watch. The directory was
+	// initialized by the run that just finished, so there is nothing to set up.
+	for _, unit := range eks {
+		values, err := outputs.Output(ctx, unit)
+		if err != nil {
+			return clusterFacts{}, false, err.Error()
+		}
 		facts := clusterFacts{
 			Name:     unquote(values["cluster_name"]),
 			ARN:      unquote(values["cluster_arn"]),
 			Endpoint: unquote(values["cluster_endpoint"]),
 		}
 		if facts.Name != "" {
-			return facts, true
+			return facts, true, ""
 		}
 	}
-	return clusterFacts{}, false
+	return clusterFacts{}, false, "the eks stack reported no cluster_name"
+}
+
+// outputReader is the half of terraform this needs: the outputs of one root.
+// An interface so the two reasons there is no cluster can be told apart in a
+// test, which needs no terraform and no AWS.
+type outputReader interface {
+	Output(ctx context.Context, unit infra.Unit) (map[string]json.RawMessage, error)
 }
 
 // unquote turns a JSON output value into the string it holds, or the empty

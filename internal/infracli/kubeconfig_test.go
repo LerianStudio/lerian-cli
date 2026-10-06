@@ -1,6 +1,9 @@
 package infracli
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,4 +158,92 @@ func writeKubeconfig(t *testing.T, name, server string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// fakeOutputs stands in for terraform, so the two reasons there is no kubectl
+// row can be told apart without a cluster.
+type fakeOutputs struct {
+	values map[string]json.RawMessage
+	err    error
+	asked  []string
+}
+
+func (f *fakeOutputs) Output(_ context.Context, unit infra.Unit) (map[string]json.RawMessage, error) {
+	f.asked = append(f.asked, unit.Name)
+	return f.values, f.err
+}
+
+// A run with no eks root has no cluster, and saying so would be noise.
+func TestNoEksRootIsSilent(t *testing.T) {
+	outputs := &fakeOutputs{}
+
+	_, found, why := readClusterFacts(context.Background(), outputs,
+		[]infra.Unit{{Name: "infra-base/vpc"}, {Name: "products/midaz/postgres"}})
+
+	if found {
+		t.Error("a cluster was reported for a run with no eks root")
+	}
+	if why != "" {
+		t.Errorf("it explained an absence that needs no explanation: %q", why)
+	}
+	if len(outputs.asked) != 0 {
+		t.Errorf("it read the outputs of %v", outputs.asked)
+	}
+}
+
+// An eks root whose outputs cannot be read is a different thing. A long apply
+// can outlive the credential that started it, and a row that quietly is not
+// there reads as a tool that forgot rather than one that could not.
+func TestAnUnreadableEksStackSaysWhy(t *testing.T) {
+	outputs := &fakeOutputs{err: errors.New("ExpiredToken: the security token included in the request is expired")}
+
+	_, found, why := readClusterFacts(context.Background(), outputs,
+		[]infra.Unit{{Name: "infra-base/vpc"}, {Name: "infra-base/eks"}})
+
+	if found {
+		t.Fatal("a cluster was reported from outputs that could not be read")
+	}
+	if !strings.Contains(why, "ExpiredToken") {
+		t.Errorf("why = %q, want what terraform said", why)
+	}
+	// Only the eks root is consulted: reading every root's outputs to find one
+	// name would be minutes of terraform for a menu row.
+	if len(outputs.asked) != 1 || outputs.asked[0] != "infra-base/eks" {
+		t.Errorf("it read %v", outputs.asked)
+	}
+}
+
+// And a stack that answers gives the three facts the kubeconfig needs.
+func TestTheClusterFactsComeFromTheOutputs(t *testing.T) {
+	outputs := &fakeOutputs{values: map[string]json.RawMessage{
+		"cluster_name":     json.RawMessage(`"example-prd-eks"`),
+		"cluster_arn":      json.RawMessage(`"arn:aws:eks:us-east-2:111122223333:cluster/example-prd-eks"`),
+		"cluster_endpoint": json.RawMessage(`"https://ABC.gr7.us-east-2.eks.amazonaws.com"`),
+	}}
+
+	facts, found, why := readClusterFacts(context.Background(), outputs,
+		[]infra.Unit{{Name: "infra-base/eks"}})
+
+	if !found || why != "" {
+		t.Fatalf("found=%v why=%q", found, why)
+	}
+	if facts.Name != "example-prd-eks" || facts.ARN == "" || facts.Endpoint == "" {
+		t.Errorf("facts = %+v", facts)
+	}
+}
+
+// A stack that answers without a name is not a cluster to point at, and the
+// reason is worth saying for the same reason a failed read is.
+func TestOutputsWithoutAClusterNameSayWhy(t *testing.T) {
+	outputs := &fakeOutputs{values: map[string]json.RawMessage{"something_else": json.RawMessage(`"x"`)}}
+
+	_, found, why := readClusterFacts(context.Background(), outputs,
+		[]infra.Unit{{Name: "infra-base/eks"}})
+
+	if found {
+		t.Fatal("a cluster with no name was reported")
+	}
+	if why == "" {
+		t.Error("nothing explains why there is no row")
+	}
 }

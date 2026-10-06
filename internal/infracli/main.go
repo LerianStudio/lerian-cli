@@ -406,10 +406,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// of the menu rather than a row that fails when picked.
 	ask := newPrompter(progressOut)
 	var kubectl func() error
-	if facts, found := readClusterFacts(ctx, runner, allUnits); found {
+	facts, found, why := readClusterFacts(ctx, terraform, allUnits)
+	switch {
+	case found:
 		kubectl = func() error {
 			return pointKubectl(ctx, ask, progressOut, facts, config.Region, config.Profile)
 		}
+	case why != "":
+		// Said rather than silently dropping the row. A long apply can outlive the
+		// credential that started it, and an offer that quietly is not there reads
+		// as a tool that forgot rather than one that could not.
+		fmt.Fprintf(progressOut, "\n  %s\n", newStyle(progressOut).dim(
+			"cannot offer to point kubectl at the cluster: "+why))
 	}
 
 	// Inside the run, not after it: the saved plans are removed when this function
