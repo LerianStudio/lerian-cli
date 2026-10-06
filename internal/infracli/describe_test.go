@@ -3,6 +3,7 @@ package infracli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,5 +132,112 @@ func TestWithNothingAnywhereCloningIsStillTheAdvice(t *testing.T) {
 
 	if !strings.Contains(out.String(), "none found — lerian infra init --clone") {
 		t.Errorf("an empty machine is not told how to get a checkout:\n%s", out.String())
+	}
+}
+
+// An EKS entry is named by its ARN — sixty characters of which the last few are
+// the only part anybody reads.
+func TestEksClusterNamesAreShortened(t *testing.T) {
+	short := shortKubeName("arn:aws:eks:us-east-2:524121347244:cluster/example-dev-eks")
+	if short != "example-dev-eks" {
+		t.Errorf("shortKubeName = %q", short)
+	}
+
+	// Anything else is already its own name: a kubeconfig holds clusters from
+	// anywhere, and a local one has nothing to shorten.
+	for _, name := range []string{"kind-local", "minikube", "some-cluster"} {
+		if got := shortKubeName(name); got != name {
+			t.Errorf("shortKubeName(%q) = %q, want it untouched", name, got)
+		}
+	}
+}
+
+// "Which cluster am I actually talking to" is what this line exists to answer,
+// and the region and account are what tell two same-named clusters apart.
+func TestTheCurrentContextSaysWhereItPoints(t *testing.T) {
+	described := describeKubeContext("arn:aws:eks:sa-east-1:905418424496:cluster/example-eks")
+
+	for _, want := range []string{"example-eks", "sa-east-1", "905418424496"} {
+		if !strings.Contains(described, want) {
+			t.Errorf("describeKubeContext does not mention %q: %q", want, described)
+		}
+	}
+}
+
+// A context that is not an EKS ARN is shown as it is.
+func TestANonEksContextIsShownAsItIs(t *testing.T) {
+	if got := describeKubeContext("kind-local"); got != "kind-local" {
+		t.Errorf("describeKubeContext = %q", got)
+	}
+}
+
+// The page says where things are. A machine that has never run kubectl has no
+// file, and saying so beats an empty group.
+func TestAMissingKubeconfigIsReportedAsMissing(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "nowhere", "config"))
+
+	var out bytes.Buffer
+	describeKubeconfig(func(label, value string) {
+		fmt.Fprintf(&out, "%s=%s\n", label, value)
+	})
+
+	if !strings.Contains(out.String(), "not there yet") {
+		t.Errorf("a missing kubeconfig is not reported:\n%s", out.String())
+	}
+}
+
+// A file that is there and cannot be read is a third thing, and reporting it as
+// empty would be a guess about contents nobody could see.
+func TestAnUnreadableKubeconfigIsReportedAsSuch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("clusters: [broken: ["), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", path)
+
+	var out bytes.Buffer
+	describeKubeconfig(func(label, value string) {
+		fmt.Fprintf(&out, "%s=%s\n", label, value)
+	})
+
+	if !strings.Contains(out.String(), "cannot be read") {
+		t.Errorf("an unparsable kubeconfig is not reported:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "clusters=0") {
+		t.Errorf("it reported an empty file it could not read:\n%s", out.String())
+	}
+}
+
+// Names only. A kubeconfig can carry client certificates and tokens, and a page
+// that exists to say where things are has no business printing them.
+func TestNoCredentialFromTheKubeconfigIsPrinted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	body := `apiVersion: v1
+kind: Config
+current-context: ctx
+clusters:
+- name: ctx
+  cluster:
+    server: https://example
+    certificate-authority-data: SECRETCADATA
+users:
+- name: ctx
+  user:
+    token: SECRETTOKEN
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", path)
+
+	var out bytes.Buffer
+	describeKubeconfig(func(label, value string) {
+		fmt.Fprintf(&out, "%s=%s\n", label, value)
+	})
+
+	for _, secret := range []string{"SECRETTOKEN", "SECRETCADATA", "https://example"} {
+		if strings.Contains(out.String(), secret) {
+			t.Errorf("the page printed %q:\n%s", secret, out.String())
+		}
 	}
 }

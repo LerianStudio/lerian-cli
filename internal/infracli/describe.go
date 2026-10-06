@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 
 	"github.com/lerian-studio/lerian-cli/internal/config"
@@ -40,8 +41,11 @@ func DescribeMachine(ctx context.Context, out io.Writer) {
 	describeAWS(line)
 	fmt.Fprintf(out, "  %s\n", theme.dim("whether they work is an AWS call: lerian infra check makes it"))
 
+	section("Kubernetes")
+	describeKubeconfig(line)
+
 	section("Tools")
-	for _, name := range []string{"terraform", "aws", "git"} {
+	for _, name := range []string{"terraform", "aws", "git", "kubectl"} {
 		line(name, binaryPath(name))
 	}
 	fmt.Fprintln(out)
@@ -113,6 +117,71 @@ func describeTemplates(ctx context.Context, line func(label, value string)) {
 		}
 		line("version", ref)
 	}
+}
+
+// describeKubeconfig is the file kubectl reads, which this tool writes into
+// after an apply and otherwise only looks at.
+//
+// Its own group rather than a line under AWS: the file belongs to kubectl, it
+// holds clusters from anywhere — a local kind, another cloud — and filing it
+// under AWS would say otherwise. Names only; a kubeconfig can carry client
+// certificates and tokens, and this page exists to say where things are.
+func describeKubeconfig(line func(label, value string)) {
+	summary := infra.DescribeKubeconfig()
+
+	switch {
+	case summary.Problem != "":
+		line("kubeconfig", summary.Path)
+		line("state", summary.Problem)
+		return
+	case !summary.Exists:
+		line("kubeconfig", summary.Path+" — not there yet")
+		return
+	}
+
+	line("kubeconfig", summary.Path)
+	if summary.Current == "" {
+		line("context", "none selected")
+	} else {
+		line("context", describeKubeContext(summary.Current))
+	}
+
+	short := make([]string, 0, len(summary.Clusters))
+	for _, cluster := range summary.Clusters {
+		short = append(short, shortKubeName(cluster))
+	}
+	line("clusters", fmt.Sprintf("%d: %s", len(short), nameAFew(short)))
+}
+
+// eksContext matches the name update-kubeconfig gives an entry, which is the
+// cluster's ARN.
+var eksContext = regexp.MustCompile(`^arn:aws[\w-]*:eks:([\w-]+):(\d+):cluster/(.+)$`)
+
+// shortKubeName is a cluster entry at the width a line has.
+//
+// An EKS entry is named by its ARN — 60 characters of which the last few are the
+// only part anybody reads. Anything else is left exactly as it is: a kubeconfig
+// holds clusters from anywhere, and a local kind cluster's name is already its
+// name.
+func shortKubeName(name string) string {
+	if parts := eksContext.FindStringSubmatch(name); parts != nil {
+		return parts[3]
+	}
+	return name
+}
+
+// describeKubeContext names the current context and, for an EKS one, where it
+// points.
+//
+// The region and the account are the two facts that tell two same-named clusters
+// apart, and "which cluster am I actually talking to" is the question this line
+// exists to answer.
+func describeKubeContext(name string) string {
+	parts := eksContext.FindStringSubmatch(name)
+	if parts == nil {
+		return name
+	}
+	return fmt.Sprintf("%s  ·  eks %s · account %s", parts[3], parts[1], parts[2])
 }
 
 // describeAWS is what ~/.aws holds, read rather than exercised.

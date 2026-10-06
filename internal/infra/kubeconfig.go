@@ -74,6 +74,62 @@ func ReadKubeconfig(path, name string) (KubeEntry, bool, error) {
 	return KubeEntry{}, false, nil
 }
 
+// KubeSummary is what a kubeconfig says, for a page that reports where things
+// are.
+type KubeSummary struct {
+	// Path is the file, whether or not it exists.
+	Path string
+	// Exists is false for a machine that has never pointed kubectl anywhere.
+	Exists bool
+	// Current is the context kubectl would use.
+	Current string
+	// Clusters is every cluster entry, in file order.
+	Clusters []string
+	// Problem is set when the file is there and cannot be read, which is worth
+	// saying rather than reporting an empty file.
+	Problem string
+}
+
+// DescribeKubeconfig reads the file kubectl would use.
+//
+// Names only — contexts and clusters. A kubeconfig can hold client certificates
+// and tokens, and a page that exists to say WHERE things are has no business
+// printing what is in them.
+func DescribeKubeconfig() KubeSummary {
+	path, err := KubeconfigPath()
+	if err != nil {
+		return KubeSummary{Problem: err.Error()}
+	}
+	summary := KubeSummary{Path: path}
+
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return summary
+	}
+	if err != nil {
+		summary.Problem = err.Error()
+		return summary
+	}
+	summary.Exists = true
+
+	var parsed struct {
+		CurrentContext string `yaml:"current-context"`
+		Clusters       []struct {
+			Name string `yaml:"name"`
+		} `yaml:"clusters"`
+	}
+	if err := yaml.Unmarshal(body, &parsed); err != nil {
+		summary.Problem = "cannot be read: " + err.Error()
+		return summary
+	}
+
+	summary.Current = parsed.CurrentContext
+	for _, cluster := range parsed.Clusters {
+		summary.Clusters = append(summary.Clusters, cluster.Name)
+	}
+	return summary
+}
+
 // UpdateKubeconfig points kubectl at a cluster, by running the AWS CLI rather
 // than writing the file.
 //

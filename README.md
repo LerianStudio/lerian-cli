@@ -659,10 +659,16 @@ removes that file, so the next run asks what it asked the first time.
   sessions   acme-sso
   whether they work is an AWS call: lerian infra check makes it
 
+  ==> Kubernetes
+  kubeconfig ~/.kube/config
+  context    example-dev-eks  ·  eks us-east-2 · account 524121347244
+  clusters   6: kind-local, example-dev-eks, example-prd-eks and 3 more
+
   ==> Tools
   terraform  /opt/homebrew/bin/terraform
   aws        /opt/homebrew/bin/aws
   git        /usr/bin/git
+  kubectl    /usr/local/bin/kubectl
 ```
 
 Grouped by who owns each thing, because the same word means different things in
