@@ -106,7 +106,7 @@ func refuseNonEmpty(path string) error {
 	if len(entries) > 0 {
 		return fmt.Errorf("%s is not empty\n"+
 			"An export writes a whole tree and a git history; landing it on top of\n"+
-			"something else mixes the two. Give a path that does not exist yet.", path)
+			"something else mixes the two. Give a path that does not exist yet", path)
 	}
 	return nil
 }
