@@ -137,7 +137,8 @@ func pointKubectl(
 	fmt.Fprintf(out, "  cluster   %s\n", facts.Name)
 	fmt.Fprintf(out, "  file      %s\n", plan.Path)
 
-	if plan.Replaces {
+	switch {
+	case plan.Replaces && facts.Endpoint != "":
 		fmt.Fprintf(out, "  %s\n", theme.dim("an entry for this cluster is already there, pointing elsewhere:"))
 		fmt.Fprintf(out, "    now   %s\n", plan.Current)
 		fmt.Fprintf(out, "    after %s\n\n", facts.Endpoint)
@@ -145,13 +146,48 @@ func pointKubectl(
 		if err := ask.confirm(ctx, out, "Replace it?"); err != nil {
 			return err
 		}
-	} else {
+	case plan.Replaces:
+		// No endpoint to compare against, so whether this changes anything is
+		// unknown. Saying "pointing elsewhere" would be a claim; saying it will be
+		// rewritten is what is actually true.
+		fmt.Fprintf(out, "  %s\n    %s\n\n", theme.dim("an entry for this cluster is already there:"),
+			plan.Current)
+		if err := ask.confirm(ctx, out, "Rewrite it?"); err != nil {
+			return err
+		}
+	default:
 		fmt.Fprintf(out, "  %s\n", theme.dim("nothing there to replace"))
 	}
 
 	if err := infra.UpdateKubeconfig(ctx, facts.Name, region, profile); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "\n  kubectl now talks to %s\n\n", facts.Name)
+	fmt.Fprintf(out, "\n  kubectl now talks to %s\n", facts.Name)
+
+	reportClusterProbe(out, infra.ProbeCluster(ctx, facts.ARN))
 	return nil
+}
+
+// reportClusterProbe says whether the context that was just written works.
+//
+// Written entries are easy to get right and easy to be wrong about: the file can
+// name a cluster that no longer exists, an identity the cluster does not accept,
+// or an endpoint this machine cannot reach — and all three look the same from
+// the outside, which is "kubectl does not work". One call tells them apart while
+// somebody is still here to act on it.
+func reportClusterProbe(out io.Writer, probe infra.ClusterProbe) {
+	theme := newStyle(out)
+
+	switch {
+	case probe.Missing:
+		fmt.Fprintf(out, "  %s\n\n", theme.dim("kubectl is not installed, so nothing was checked"))
+	case probe.Works():
+		fmt.Fprintf(out, "  %s\n\n", theme.dim("the cluster answered: "+probe.Version))
+	default:
+		fmt.Fprintf(out, "  %s\n", theme.dim("the cluster did not answer: "+probe.Problem))
+		if probe.Hint != "" {
+			fmt.Fprintf(out, "  %s\n", theme.dim(probe.Hint))
+		}
+		fmt.Fprintln(out)
+	}
 }

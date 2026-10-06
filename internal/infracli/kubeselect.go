@@ -34,14 +34,18 @@ func PointKubectlAtACluster(ctx context.Context, out io.Writer, clusters infra.C
 		return err
 	}
 
-	return pointKubectl(ctx, ask, out, clusterFacts{
-		Name: name,
-		ARN:  infra.ClusterARN("", region, account, name),
-		// No endpoint: it would take a describe-cluster call, and the only use for
-		// it here is comparing against the kubeconfig. An entry for this cluster
-		// that is already there is reported as a replacement either way, which is
-		// the careful side to be on.
-	}, region, profile)
+	facts := clusterFacts{Name: name, ARN: infra.ClusterARN("", region, account, name)}
+
+	// The endpoint costs one describe-cluster and is what makes the comparison
+	// mean anything: without it every existing entry looks like a replacement,
+	// so an entry that is already correct asks for a confirmation and shows an
+	// empty "after". A failure here is not fatal — pointKubectl falls back to
+	// treating it as a rewrite, which is the careful side.
+	if endpoint, err := infra.ClusterEndpoint(ctx, profile, region, name); err == nil {
+		facts.Endpoint = endpoint
+	}
+
+	return pointKubectl(ctx, ask, out, facts, region, profile)
 }
 
 // askWhichAccount offers the profiles in ~/.aws, with the account each one

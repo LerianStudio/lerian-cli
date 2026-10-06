@@ -1,6 +1,7 @@
 package infracli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -245,5 +246,56 @@ func TestOutputsWithoutAClusterNameSayWhy(t *testing.T) {
 	}
 	if why == "" {
 		t.Error("nothing explains why there is no row")
+	}
+}
+
+// The report has to tell the three outcomes apart, because they mean three
+// different things to the person reading them.
+func TestTheProbeIsReportedByOutcome(t *testing.T) {
+	tests := []struct {
+		name  string
+		probe infra.ClusterProbe
+		want  string
+	}{
+		{"answered", infra.ClusterProbe{Version: "v1.36.4"}, "the cluster answered: v1.36.4"},
+		{"refused", infra.ClusterProbe{Problem: "Unauthorized", Hint: "needs an access entry"},
+			"did not answer: Unauthorized"},
+		{"no kubectl", infra.ClusterProbe{Missing: true}, "kubectl is not installed"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var out bytes.Buffer
+			reportClusterProbe(&out, test.probe)
+
+			if !strings.Contains(out.String(), test.want) {
+				t.Errorf("report = %q, want %q", out.String(), test.want)
+			}
+		})
+	}
+}
+
+// The hint is the half that says what to do, so it has to survive into the
+// report.
+func TestTheHintIsPrinted(t *testing.T) {
+	var out bytes.Buffer
+	reportClusterProbe(&out, infra.ClusterProbe{
+		Problem: "no such host",
+		Hint:    "a cluster destroyed and recreated keeps its name",
+	})
+
+	if !strings.Contains(out.String(), "keeps its name") {
+		t.Errorf("the hint is missing:\n%s", out.String())
+	}
+}
+
+// A missing kubectl is not a problem with the cluster, and reporting it as one
+// would send somebody to debug infrastructure that is fine.
+func TestAMissingKubectlIsNotAClusterProblem(t *testing.T) {
+	var out bytes.Buffer
+	reportClusterProbe(&out, infra.ClusterProbe{Missing: true})
+
+	if strings.Contains(out.String(), "did not answer") {
+		t.Errorf("a missing kubectl was reported as a cluster failure:\n%s", out.String())
 	}
 }

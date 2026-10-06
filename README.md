@@ -769,7 +769,29 @@ account" is not a question the API answers — starting with the profile's own
 region, since that is where somebody's clusters usually are. If that region
 holds none, it offers to look in another rather than stopping.
 
-Overwriting an entry asks first, by the same rule as below.
+Overwriting an entry asks first, by the same rule as below — and only when it
+would actually change something. The cluster's endpoint is read with one
+`describe-cluster` so "the entry is already correct" and "the entry points at a
+cluster that no longer exists" stop looking the same.
+
+Then it checks the context it just wrote, with `kubectl get --raw /version`:
+
+```
+  kubectl now talks to example-dev-eks
+  the cluster answered: v1.36.4-eks-cfb47f5
+```
+
+One call, no RBAC beyond being authenticated, and it fails differently for each
+of the three things that actually go wrong — so the report says which:
+
+| what comes back | what it means |
+|---|---|
+| `no such host` | the entry points at an endpoint that no longer exists; a cluster destroyed and recreated keeps its name and gets a new one |
+| `Unauthorized` | the credential reached the cluster and was refused: this identity needs an EKS access entry |
+| nothing, for ten seconds | the endpoint may be reachable only from allowed addresses — check `allowed_api_access_cidrs` against this machine |
+
+That first row is the one worth having. It reads like broken DNS and is not, and
+it is exactly what cost an afternoon here before this existed.
 
 ### Pointing kubectl at the cluster
 
