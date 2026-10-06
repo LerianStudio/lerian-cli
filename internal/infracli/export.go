@@ -43,7 +43,7 @@ func ExportRepository(ctx context.Context, out io.Writer, destination string) er
 	if len(units) == 0 {
 		return fmt.Errorf("nothing is configured in %s yet\n"+
 			"A root is exported once it has an envs/<env>.tfvars — run lerian infra first,\n"+
-			"or point at the checkout that holds your configuration with --repo.",
+			"or point at the checkout that holds your configuration with --repo",
 			layout.RepoRel(layout.AWSDir()))
 	}
 
@@ -79,8 +79,8 @@ func ExportRepository(ctx context.Context, out io.Writer, destination string) er
 		fmt.Fprintf(out, "  %d file(s) written. git is not installed, so no repository was made.\n\n", written)
 		return nil
 	}
-	//nolint:nilerr // Same: the files are there either way, and what failed is
-	// said on the line above rather than swallowed.
+	// Same: the files are there either way, and what failed is printed rather
+	// than swallowed.
 	if err := infra.InitRepository(ctx, git, absolute, ref); err != nil {
 		fmt.Fprintf(out, "  %d file(s) written, but the repository was not initialized: %v\n\n", written, err)
 		return nil
@@ -126,6 +126,9 @@ func configuredUnits(layout infra.Layout, catalog infra.Catalog) []infra.Unit {
 	var configured []infra.Unit
 	for _, unit := range infra.Units(stages) {
 		for _, env := range infra.Environments {
+			// #nosec G304 G703 -- VarFile(unit, env): unit.Dir comes from walking
+			// the checkout for main.tf and env is one of Environments. Neither is
+			// operator input, and this only asks whether the file is there.
 			if _, statErr := os.Stat(infra.VarFile(unit, env)); statErr == nil {
 				configured = append(configured, unit)
 				break
