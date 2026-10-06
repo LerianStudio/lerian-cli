@@ -1012,6 +1012,58 @@ because the checkout you are inside is the one you mean.
 `--clear` forgets the path and leaves the directory alone — it is a clone you
 made, possibly with work in it.
 
+### Taking it with you
+
+```bash
+lerian config repo ~/work/my-infrastructure
+```
+
+The templates are another repository on another release cycle, and an estate
+that lives inside a checkout of them has to ask permission to change anything.
+This writes a copy that does not:
+
+```
+==> Exporting
+  from      ~/.lerian/lerian-terraform-foundation  (the managed path)
+  to        /Users/you/work/my-infrastructure
+  roots     examples/aws/bootstrap, examples/aws/infra-base/vpc, examples/aws/infra-base/eks
+  modules   naming
+  config    environments.conf, dev.hcl, stg.hcl and 1 more
+
+  45 file(s), one commit, branch main.
+
+  Next:
+    cd /Users/you/work/my-infrastructure
+    git remote add origin <url>
+    git push -u origin main
+```
+
+**What goes in.** The roots that have an `envs/<env>.tfvars` — what was
+configured, not all twenty-seven products, which would be directories of someone
+else's decisions. The modules those roots reach are **followed**, through each
+other, by reading the `source` lines: a list kept in Go would be a second copy of
+what the HCL says and would go stale the first time a root picks up a dependency.
+Registry and git sources are left alone — they are fetched, not copied.
+
+**What stays behind.** `.terraform` (a download cache: 1.5 GB against 6.5 MB of
+content), state, saved plans, and the `*.tfvars-example` files. The example is
+the question and the `.tfvars` beside it is the answer; shipping both invites
+editing the one Terraform does not read.
+
+**The `.gitignore` is not the templates'.** That one ignores `envs/*.tfvars`,
+`backend/*.hcl` and `environments.conf`, which is right in a repository of
+templates and exactly backwards here — in this repository those files are the
+content. What stays ignored is what no repository should carry.
+
+**It stops before the remote.** `git remote add` and `git push` are yours:
+pushing is irreversible in a way copying is not, and where your infrastructure
+gets published is not this tool's guess to make.
+
+The directory layout is kept as it was, `examples/aws/...` and all, so the
+modules' relative paths still resolve. The README it writes says so, along with
+the tag the copy was taken at — six months from now, "what changed in the
+templates since" has no answer without it.
+
 ### Forgetting everything
 
 It asks before removing, unless `--yes`. Outside a terminal, with no `--yes`, it

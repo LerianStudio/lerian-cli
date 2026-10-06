@@ -173,6 +173,26 @@ possibly a different cluster of the same name in another account.`,
 	SilenceUsage: true,
 }
 
+var configRepoCmd = &cobra.Command{
+	Use:   "repo <path>",
+	Short: "Copy what you configured into a repository of its own",
+	Long: `Writes the roots you configured, the modules they use and the configuration
+that makes them runnable into a new directory, and makes it a git repository
+with one commit.
+
+It is a copy, not a link. The templates are another repository on another
+release cycle; this one is yours to edit, and nothing reaches back.
+
+It stops before the remote: 'git remote add origin <url>' and 'git push' are
+yours, because where your infrastructure gets published is not this tool's
+guess to make.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return infracli.ExportRepository(cmd.Context(), cmd.OutOrStdout(), args[0])
+	},
+	SilenceUsage: true,
+}
+
 var configShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Print the configuration and where it lives",
@@ -364,6 +384,7 @@ func init() {
 	configResetCmd.Flags().BoolVar(&configResetTemplates, "delete-templates", false,
 		"also delete the templates checkouts, without asking")
 	configTemplatesCmd.Flags().BoolVar(&configTemplatesClear, "clear", false, "forget the recorded path")
-	configCmd.AddCommand(configShowCmd, configTemplatesCmd, configKubeconfigCmd, configResetCmd)
+	configCmd.AddCommand(configShowCmd, configTemplatesCmd, configKubeconfigCmd,
+		configRepoCmd, configResetCmd)
 	rootCmd.AddCommand(configCmd)
 }
