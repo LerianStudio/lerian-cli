@@ -167,10 +167,10 @@ func describeInitializedFor(line func(label, value string)) {
 // resolved — this is a report, and a checkout it cannot read has nothing to say.
 func mustResolve(layout infra.Layout, catalog infra.Catalog) []infra.Stage {
 	stages, err := infra.Resolve(layout, catalog, "all")
-	//nolint:nilerr // This is a report. A checkout whose roots cannot be resolved
-	// has nothing to say about which backend its directories point at, and the
-	// run that actually needs them resolved reports the failure properly. Turning
-	// `config show` into an error over one line of it would be the wrong trade.
+	// A checkout whose roots cannot be resolved has nothing to say about which
+	// backend its directories point at, and the run that actually needs them
+	// resolved reports the failure properly. (Not a swallowed error: this returns
+	// a slice, and the nil is an empty one.)
 	if err != nil {
 		return nil
 	}
