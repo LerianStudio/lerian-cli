@@ -37,14 +37,26 @@ func afterRun(
 	done infra.Action,
 	out io.Writer,
 	again func(infra.Action) error,
-	kubectl func() error,
+	// cluster reports whether there is a cluster to point kubectl at, right now,
+	// and why there is not. Called before every draw: an apply chosen from this
+	// menu is what creates one, so an answer taken once, before the first draw,
+	// is an answer about the world as it was.
+	cluster func() (func() error, string),
 ) error {
 	if !ask.interactive {
 		return nil
 	}
 
 	for {
-		picked, err := ask.pick("What now?", afterPurpose(done), "", afterOptions(done, kubectl != nil), "")
+		point, why := cluster()
+		if point == nil && why != "" && done == infra.ActionApply {
+			// An apply that made a cluster this cannot read is worth a line: the row
+			// being absent otherwise looks like the tool forgetting.
+			fmt.Fprintf(out, "  %s\n", newStyle(out).dim(
+				"cannot offer to point kubectl at the cluster: "+why))
+		}
+
+		picked, err := ask.pick("What now?", afterPurpose(done), "", afterOptions(done, point != nil), "")
 		switch {
 		//nolint:nilerr // Leaving is leaving: q, r and ctrl-c all arrive as an
 		// error here, and so does a selector that could not draw. The run already
@@ -59,7 +71,7 @@ func afterRun(
 			printPlanDetail(ctx, terraform, runner, stages, out)
 			continue
 		case picked == afterKubectl:
-			if err := kubectl(); err != nil {
+			if err := point(); err != nil {
 				// Said and carried on. Nothing was deployed differently because
 				// kubectl could not be pointed, and the menu is still the right
 				// place to be.
@@ -100,10 +112,11 @@ func afterOptions(done infra.Action, cluster bool) []option {
 			note: "changes nothing"})
 	}
 
-	// Only after an apply, and only when the run produced a cluster. After a plan
-	// there is nothing new to point at, and offering it would suggest the plan
-	// changed something.
-	if cluster && done == infra.ActionApply {
+	// Whenever there is a cluster, whatever the action was. It was once gated on
+	// apply, on the reasoning that a plan changes nothing — true, and beside the
+	// point: the cluster is there either way, and somebody who has just planned
+	// against it is exactly somebody who may want to look inside it.
+	if cluster {
 		options = append(options, option{value: afterKubectl, label: "point kubectl at the cluster",
 			note: "runs aws eks update-kubeconfig"})
 	}

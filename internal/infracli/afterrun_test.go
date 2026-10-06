@@ -87,7 +87,8 @@ func TestNothingIsOfferedWithoutATerminal(t *testing.T) {
 		func(infra.Action) error {
 			t.Error("an action ran with nobody to ask")
 			return nil
-		}, nil)
+		},
+		func() (func() error, string) { return nil, "" })
 
 	if err != nil {
 		t.Errorf("afterRun = %v", err)
@@ -181,4 +182,58 @@ func indexOf(values []string, want string) int {
 		}
 	}
 	return -1
+}
+
+// The apply that creates a cluster is chosen FROM this menu, so a decision taken
+// once before the first draw is a decision taken when there was nothing to point
+// at. That is exactly the run where the offer matters, and it was missing from
+// it.
+func TestTheClusterIsLookedUpAgainAfterEachAction(t *testing.T) {
+	var out bytes.Buffer
+
+	// There is no cluster until an apply runs, which is what the real sequence
+	// does.
+	applied := false
+	cluster := func() (func() error, string) {
+		if !applied {
+			return nil, ""
+		}
+		return func() error { return nil }, ""
+	}
+
+	// Enter on the first row, which is "apply" after a plan; then read what the
+	// second menu offers; then leave.
+	ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+keyEnterSeq+"q")
+	done := 0
+
+	_ = afterRun(context.Background(), ask, nil, nil, nil, infra.ActionPlan, &out,
+		func(action infra.Action) error {
+			done++
+			if action == infra.ActionApply {
+				applied = true
+			}
+			return nil
+		}, cluster)
+
+	if done == 0 {
+		t.Fatalf("no action ran:\n%s", painted.String())
+	}
+	if !strings.Contains(painted.String(), "point kubectl at the cluster") {
+		t.Errorf("the offer never appeared, though a cluster existed after the apply:\n%s",
+			painted.String())
+	}
+}
+
+// And before anything has run, there is nothing to offer.
+func TestNoOfferBeforeThereIsACluster(t *testing.T) {
+	var out bytes.Buffer
+	ask, painted := selectorFor(t, "q")
+
+	_ = afterRun(context.Background(), ask, nil, nil, nil, infra.ActionPlan, &out,
+		func(infra.Action) error { return nil },
+		func() (func() error, string) { return nil, "" })
+
+	if strings.Contains(painted.String(), "point kubectl at the cluster") {
+		t.Errorf("an offer was made with no cluster:\n%s", painted.String())
+	}
 }

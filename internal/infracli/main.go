@@ -384,23 +384,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	// Resolved after the run, because an apply is what makes the cluster exist and
-	// its outputs readable. nil when there is none, which is what keeps the row out
-	// of the menu rather than a row that fails when picked.
+	// Asked again before every draw of the menu, not once before the first. An
+	// apply chosen FROM that menu is what creates the cluster, so a decision taken
+	// beforehand is a decision taken when there was nothing to point at — which is
+	// exactly when somebody needs the offer most.
 	ask := newPrompter(progressOut)
-	var kubectl func() error
-	facts, found, why := readClusterFacts(ctx, terraform, allUnits)
-	switch {
-	case found:
-		kubectl = func() error {
-			return pointKubectl(ctx, ask, progressOut, facts, config.Region, config.Profile)
+	kubectl := func() (func() error, string) {
+		facts, found, why := readClusterFacts(ctx, terraform, allUnits)
+		if !found {
+			return nil, why
 		}
-	case why != "":
-		// Said rather than silently dropping the row. A long apply can outlive the
-		// credential that started it, and an offer that quietly is not there reads
-		// as a tool that forgot rather than one that could not.
-		fmt.Fprintf(progressOut, "\n  %s\n", newStyle(progressOut).dim(
-			"cannot offer to point kubectl at the cluster: "+why))
+		return func() error {
+			return pointKubectl(ctx, ask, progressOut, facts, config.Region, config.Profile)
+		}, ""
 	}
 
 	// Inside the run, not after it: the saved plans are removed when this function
@@ -737,7 +733,12 @@ func execute(
 		return reported{summary: summarize(err)}
 	}
 
-	printClusterHandoff(ctx, out, runner, results, action, config)
+	// Only where nobody can be offered the alternative. With a terminal the menu
+	// that follows offers to run this, and printing the command as well would be
+	// telling somebody to type what the next screen is about to do for them.
+	if !newPrompter(out).interactive {
+		printClusterHandoff(ctx, out, runner, results, action, config)
+	}
 
 	fmt.Fprintf(out, "\n%s\n", newStyle(out).bold(totalsLine(results, action, time.Since(started))))
 	fmt.Fprintf(out, "  logs %s\n\n", runDir)

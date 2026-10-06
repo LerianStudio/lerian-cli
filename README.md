@@ -803,6 +803,15 @@ The cluster's name comes from the EKS stack's own outputs, not from rebuilding
 the templates' naming convention here — that would be a second implementation of
 somebody else's rule, correct right up until they rename something.
 
+It is offered whenever there is a cluster, and the menu asks again before every
+draw rather than once before the first. The apply that creates a cluster is
+chosen *from* this menu, so an answer taken beforehand is an answer about the
+world as it was — and that is exactly the run where somebody needs the offer.
+
+The `aws eks update-kubeconfig` command is printed only where nobody can be
+offered the alternative: without a terminal, in CI. With one, telling somebody
+to type what the next screen is about to do for them is noise.
+
 When the row is missing, the reason is on screen. A run with no `eks` root
 simply has no cluster and says nothing; a run that has one whose outputs cannot
 be read says why — a twenty-three-minute apply can outlive the credential that

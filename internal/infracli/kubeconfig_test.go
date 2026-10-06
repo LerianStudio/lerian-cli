@@ -119,10 +119,9 @@ func TestTheFirstKubeconfigInTheListIsTheOneInspected(t *testing.T) {
 	}
 }
 
-// The row is offered after an apply that produced a cluster, and not after a
-// plan: there is nothing new to point at, and offering it would suggest the plan
-// changed something.
-func TestKubectlIsOfferedOnlyAfterAnApplyWithACluster(t *testing.T) {
+// The row is offered whenever there is a cluster to point at, and never when
+// there is not.
+func TestKubectlIsOfferedWheneverThereIsACluster(t *testing.T) {
 	cases := []struct {
 		name    string
 		done    infra.Action
@@ -131,7 +130,10 @@ func TestKubectlIsOfferedOnlyAfterAnApplyWithACluster(t *testing.T) {
 	}{
 		{"apply with a cluster", infra.ActionApply, true, true},
 		{"apply without one", infra.ActionApply, false, false},
-		{"plan with a cluster", infra.ActionPlan, true, false},
+		// A plan changes nothing, but the cluster is there either way, and
+		// somebody who has just planned against it may want to look inside it.
+		{"plan with a cluster", infra.ActionPlan, true, true},
+		{"plan without one", infra.ActionPlan, false, false},
 	}
 
 	for _, test := range cases {
