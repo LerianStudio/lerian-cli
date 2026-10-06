@@ -122,6 +122,11 @@ func askForHostedZones(
 	}
 
 	found, err := zones.ListHostedZones(ctx, profile)
+	//nolint:nilerr // Reported, then given up on: the lookup is a convenience, and
+	// the second return says "no answer from here". The caller falls through to
+	// asking for the value by hand, which is the behavior that existed before
+	// this menu did. Returning the error would fail a setup over a listing that
+	// was only ever meant to save typing.
 	if err != nil {
 		fmt.Fprintf(ask.out, "  %s\n", newStyle(ask.out).dim(
 			"could not list the hosted zones in this account: "+err.Error()))
@@ -200,12 +205,12 @@ func fillPendingVarFiles(
 
 	values := map[string]string{}
 	err := resolveWrittenPlaceholders(ctx, ask, zones, pending, environment, profile, values)
-	//nolint:nilerr // Declining is leaving the files as they were. q, r and ctrl-c
-	// all arrive as an error here, and so does a failure to read one of the files;
-	// either way nothing was filled in, and the run goes on to refuse with the
-	// same message it would have refused with. Returning the error instead would
-	// replace a precise "these lines still have tokens" with whatever went wrong
-	// in the offer to fix them.
+	// Declining is leaving the files as they were. q, r and ctrl-c all arrive as
+	// an error here, and so does a failure to read one of them; either way nothing
+	// was filled in, and the run goes on to refuse with the same message it would
+	// have refused with. Returning the error instead would replace a precise
+	// "these lines still have tokens" with whatever went wrong in the offer to fix
+	// them.
 	if err != nil {
 		return readiness
 	}

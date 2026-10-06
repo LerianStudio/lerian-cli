@@ -257,6 +257,11 @@ func FillPlaceholders(unit Unit, env string, values map[string]string) (int, err
 	// Mode 0o600 rather than the file's own: these files hold account ids and
 	// sizing, they are gitignored, and the write path everywhere else in this
 	// package uses the same.
+	//
+	// #nosec G304 G703 -- path is VarFile(unit, env): unit.Dir comes from walking
+	// the checkout for main.tf, and env is one of Environments. Neither is operator
+	// input, and the file was read from this same path a few lines above — a
+	// traversal here would have had to happen there first.
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
 		return 0, fmt.Errorf("infra: cannot write %s: %w", path, err)
 	}
