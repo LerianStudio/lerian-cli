@@ -2,6 +2,7 @@ package infra
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -155,4 +156,92 @@ func UpdateKubeconfig(ctx context.Context, cluster, region, profile string) erro
 		return fmt.Errorf("aws eks update-kubeconfig failed: %w\n%s", err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+// ClusterLister finds the EKS clusters an account holds in a region. An
+// interface so the menu that uses it can be tested without credentials.
+type ClusterLister interface {
+	ListClusters(ctx context.Context, profile, region string) ([]string, error)
+}
+
+// CLIClusters asks the AWS CLI.
+type CLIClusters struct {
+	// Binary is the aws executable. Empty means "aws" from PATH.
+	Binary string
+}
+
+// ListClusters returns the cluster names in one region.
+//
+// Per region because EKS is: a cluster belongs to a region, and "the clusters in
+// this account" is not a question the API answers. The caller decides which
+// region to ask about, and says so on screen — a menu that silently showed one
+// region's clusters would read as the whole account.
+func (c CLIClusters) ListClusters(ctx context.Context, profile, region string) ([]string, error) {
+	binary := c.Binary
+	if binary == "" {
+		binary = "aws"
+	}
+
+	args := []string{"eks", "list-clusters", "--query", "clusters[]", "--output", "text"}
+	if region != "" {
+		args = append(args, "--region", region)
+	}
+
+	command := exec.CommandContext(ctx, binary, args...)
+	command.Env = os.Environ()
+	if profile != "" {
+		command.Env = append(command.Env, "AWS_PROFILE="+profile)
+	}
+
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	out, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("aws eks list-clusters failed: %w\n%s", err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.Fields(string(out)), nil
+}
+
+// ClusterARN is what update-kubeconfig names the entry, built from the three
+// facts that identify a cluster.
+//
+// Built rather than read back from describe-cluster: this is used to work out
+// whether the kubeconfig already holds this cluster, which has to be answerable
+// before deciding to call AWS again.
+func ClusterARN(partition, region, account, name string) string {
+	if partition == "" {
+		partition = "aws"
+	}
+	return "arn:" + partition + ":eks:" + region + ":" + account + ":cluster/" + name
+}
+
+// InitializedFor reports the state bucket a root's working directory is
+// currently initialized against, and whether there is one at all.
+//
+// It exists because the answer outlives a run. This CLI passes -reconfigure on
+// every init, so what IT does is always right — but between runs the directory
+// keeps whatever the last environment left there, and a `terraform plan` typed
+// by hand reads that. Two environments in one checkout is the normal case here,
+// so the directory that says "stg" while somebody is thinking "prd" is not an
+// edge case; it is Tuesday.
+func InitializedFor(unit Unit) (string, bool) {
+	body, err := os.ReadFile(filepath.Join(unit.Dir, ".terraform", "terraform.tfstate"))
+	if err != nil {
+		return "", false
+	}
+
+	var parsed struct {
+		Backend struct {
+			Config struct {
+				Bucket string `json:"bucket"`
+			} `json:"config"`
+		} `json:"backend"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", false
+	}
+	if parsed.Backend.Config.Bucket == "" {
+		return "", false
+	}
+	return parsed.Backend.Config.Bucket, true
 }

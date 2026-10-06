@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/lerian-studio/lerian-cli/internal/config"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
@@ -36,6 +37,7 @@ func DescribeMachine(ctx context.Context, out io.Writer) {
 
 	section("Templates")
 	describeTemplates(ctx, line)
+	describeInitializedFor(line)
 
 	section("AWS")
 	describeAWS(line)
@@ -117,6 +119,62 @@ func describeTemplates(ctx context.Context, line func(label, value string)) {
 		}
 		line("version", ref)
 	}
+}
+
+// describeInitializedFor says which environment's state the checkout's working
+// directories are currently wired to.
+//
+// This CLI passes -reconfigure on every init, so a run is always pointed where
+// it says it is. What outlives the run is the directory: it keeps the last
+// environment's backend, and a `terraform plan` typed by hand in there reads
+// that one. With two environments in one checkout — the normal case — that is
+// how somebody ends up reading prd's infrastructure while thinking about stg.
+//
+// Reported under Templates because it is a fact about the checkout, and only
+// when something is initialized: a fresh clone has nothing to say here.
+func describeInitializedFor(line func(label, value string)) {
+	layout, _, err := resolveLayout("", os.Getenv("LERIAN_TF_REPO"), "")
+	if err != nil {
+		return
+	}
+	catalog, err := infra.Discover(layout)
+	if err != nil {
+		return
+	}
+
+	buckets := map[string]bool{}
+	for _, stage := range mustResolve(layout, catalog) {
+		for _, unit := range stage.Units {
+			if bucket, ok := infra.InitializedFor(unit); ok {
+				buckets[bucket] = true
+			}
+		}
+	}
+	if len(buckets) == 0 {
+		return
+	}
+
+	names := make([]string, 0, len(buckets))
+	for bucket := range buckets {
+		names = append(names, bucket)
+	}
+	sort.Strings(names)
+	line("terraform", "directories are initialized against "+strings.Join(names, ", "))
+	line("", "a terraform run by hand in them uses that, whatever --env says")
+}
+
+// mustResolve is every root the catalog knows, or nothing when it cannot be
+// resolved — this is a report, and a checkout it cannot read has nothing to say.
+func mustResolve(layout infra.Layout, catalog infra.Catalog) []infra.Stage {
+	stages, err := infra.Resolve(layout, catalog, "all")
+	//nolint:nilerr // This is a report. A checkout whose roots cannot be resolved
+	// has nothing to say about which backend its directories point at, and the
+	// run that actually needs them resolved reports the failure properly. Turning
+	// `config show` into an error over one line of it would be the wrong trade.
+	if err != nil {
+		return nil
+	}
+	return stages
 }
 
 // describeKubeconfig is the file kubectl reads, which this tool writes into

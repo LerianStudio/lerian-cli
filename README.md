@@ -652,6 +652,8 @@ removes that file, so the next run asks what it asked the first time.
   checkout   ~/.lerian/lerian-terraform-foundation
   found by   the managed path — found by convention, not recorded
   version    v1.11.0
+  terraform  directories are initialized against lerian-tfstate-prd-524121347244
+             a terraform run by hand in them uses that, whatever --env says
 
   ==> AWS
   config     ~/.aws/config
@@ -748,6 +750,26 @@ continues: unknown is not no, and blocking a run over a question that only
 prevents a duplicate bucket would trade a small risk for a certain stoppage.
 With no terminal, nothing is looked up at all; adopting is a decision, and CI
 would be paying for an API call to print something nobody asked for.
+
+### Pointing kubectl at a cluster that already exists
+
+```bash
+lerian config kubeconfig
+```
+
+Asks which account, then which cluster, then runs `aws eks update-kubeconfig`.
+The post-run menu covers the cluster an `apply` just made; this covers the rest
+of the time — a cluster a colleague created, or one from a run long finished, in
+an account this checkout may know nothing about.
+
+The profiles are resolved before being offered, because a profile name says
+nothing about which account it reaches, and the account is what is being chosen.
+Clusters are listed per region — EKS is per region, and "the clusters in this
+account" is not a question the API answers — starting with the profile's own
+region, since that is where somebody's clusters usually are. If that region
+holds none, it offers to look in another rather than stopping.
+
+Overwriting an entry asks first, by the same rule as below.
 
 ### Pointing kubectl at the cluster
 
