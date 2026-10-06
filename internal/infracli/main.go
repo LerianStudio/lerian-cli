@@ -346,6 +346,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return printDryRun(progressOut, stages, opts, backend, readiness)
 	}
 
+	// Offered before refusing: the refusal names the file and the exact lines, so
+	// it already knows everything needed to fix them, and somebody is sitting in
+	// front of it.
+	readiness = fillPendingVarFiles(ctx, newPrompter(progressOut), infra.CLIZones{},
+		readiness, opts.environment, config.Profile)
+
 	if err := failOnUnready(readiness); err != nil {
 		return err
 	}
@@ -1853,6 +1859,10 @@ func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment st
 	}
 	for index, opt := range options {
 		if opt.value == "bootstrap" {
+			// Selectable, not fixed: a fixed row is excluded from the answer, and
+			// with every other row disabled the answer would come back empty. The
+			// note carries what the state is instead.
+			options[index].note = "the state backend — the only thing that can run yet"
 			continue
 		}
 		options[index].disabled = true

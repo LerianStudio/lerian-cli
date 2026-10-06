@@ -200,3 +200,65 @@ func stripComment(line string) string {
 	var scanner commentScanner
 	return scanner.code(line)
 }
+
+// PendingPlaceholders lists the tokens still in a root's WRITTEN variables file,
+// as opposed to PlaceholdersIn, which reads the committed example.
+//
+// The two answer different questions. Before the file exists, the example says
+// what will have to be filled in; afterwards, only the file itself knows what is
+// still missing — it may have been written by an older build, filled in by hand,
+// or copied from somewhere else.
+func PendingPlaceholders(unit Unit, env string) ([]string, error) {
+	content, err := os.ReadFile(VarFile(unit, env))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("infra: cannot read %s: %w", VarFile(unit, env), err)
+	}
+	return placeholderTokens(content), nil
+}
+
+// FillPlaceholders replaces tokens in a written variables file, in place, and
+// reports how many lines changed.
+//
+// Only in code: a comment that says "was <PUT-YOUR-VPC-ID>" is prose about the
+// file, and rewriting it would turn an explanation into a statement that is no
+// longer true. The replacement is applied to the first N occurrences of the
+// line, where N is how many the code part holds — which lands on exactly those,
+// because the comment is what follows the code on a line.
+func FillPlaceholders(unit Unit, env string, values map[string]string) (int, error) {
+	path := VarFile(unit, env)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("infra: cannot read %s: %w", path, err)
+	}
+
+	changed := 0
+	var comments commentScanner
+	lines := strings.Split(string(content), "\n")
+	for index, line := range lines {
+		code := comments.code(line)
+		before := line
+		for token, value := range values {
+			if count := strings.Count(code, token); count > 0 {
+				line = strings.Replace(line, token, value, count)
+			}
+		}
+		if line != before {
+			lines[index] = line
+			changed++
+		}
+	}
+	if changed == 0 {
+		return 0, nil
+	}
+
+	// Mode 0o600 rather than the file's own: these files hold account ids and
+	// sizing, they are gitignored, and the write path everywhere else in this
+	// package uses the same.
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		return 0, fmt.Errorf("infra: cannot write %s: %w", path, err)
+	}
+	return changed, nil
+}

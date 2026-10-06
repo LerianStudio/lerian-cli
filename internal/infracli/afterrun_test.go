@@ -113,3 +113,72 @@ func contains(values []string, want string) bool {
 	}
 	return false
 }
+
+// Taking an environment down is the other half of putting one up, and the only
+// way to reach it was to leave and answer every question again.
+func TestDestroyIsOfferedAfterARun(t *testing.T) {
+	for _, done := range []infra.Action{infra.ActionPlan, infra.ActionApply} {
+		t.Run(string(done), func(t *testing.T) {
+			rows := afterOptions(done, false)
+
+			var values []string
+			for _, opt := range rows {
+				values = append(values, opt.value)
+			}
+			if !contains(values, string(infra.ActionDestroy)) {
+				t.Fatalf("destroy is not offered after %s: %v", done, values)
+			}
+
+			// Never beside apply, and never where the cursor starts: everything
+			// above it is done repeatedly, and this one cannot be undone.
+			destroy := indexOf(values, string(infra.ActionDestroy))
+			if destroy == 0 {
+				t.Error("the cursor starts on destroy")
+			}
+			if apply := indexOf(values, string(infra.ActionApply)); apply >= 0 && destroy == apply+1 {
+				t.Error("destroy sits one keypress below apply")
+			}
+			if values[len(values)-1] != afterDone {
+				t.Errorf("destroy is not above the exit row: %v", values)
+			}
+		})
+	}
+}
+
+// A stack that planned and found nothing is a fact about the run. Counting only
+// the stacks WITH changes made the report contradict itself: a list of "no
+// changes" followed by "nothing to show".
+func TestAPlanWithNoChangesDoesNotAlsoSayThereWasNoPlan(t *testing.T) {
+	var out bytes.Buffer
+	reportPlanDetail(&out, []unitDetail{
+		{name: "infra-base/vpc"},
+		{name: "infra-base/eks"},
+	})
+
+	painted := out.String()
+	if !strings.Contains(painted, "no changes") {
+		t.Errorf("the stacks are not reported:\n%s", painted)
+	}
+	if strings.Contains(painted, "nothing to show") {
+		t.Errorf("it says no stack produced a plan, right after listing two:\n%s", painted)
+	}
+}
+
+// And with nothing at all, the closing line is the only thing there is to say.
+func TestNoStackAtAllSaysSo(t *testing.T) {
+	var out bytes.Buffer
+	reportPlanDetail(&out, nil)
+
+	if !strings.Contains(out.String(), "nothing to show") {
+		t.Errorf("an empty report says nothing:\n%s", out.String())
+	}
+}
+
+func indexOf(values []string, want string) int {
+	for index, value := range values {
+		if value == want {
+			return index
+		}
+	}
+	return -1
+}

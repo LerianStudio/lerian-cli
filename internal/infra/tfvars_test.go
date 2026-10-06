@@ -146,3 +146,112 @@ func TestPlaceholdersIgnoreBlockComments(t *testing.T) {
 		}
 	}
 }
+
+// A comment that says "was <PUT-YOUR-VPC-ID>" is prose about the file.
+// Rewriting it turns an explanation into a statement that is no longer true.
+func TestFillingReplacesCodeAndLeavesCommentsAlone(t *testing.T) {
+	unit := writtenVarFile(t, "dev", strings.Join([]string{
+		`region = "us-east-1"`,
+		`zones  = ["<ZONE-ARN>"]   # was <ZONE-ARN> before anybody filled it`,
+		`# <ZONE-ARN> on a comment line is not a value either`,
+	}, "\n"))
+
+	changed, err := FillPlaceholders(unit, "dev", map[string]string{"<ZONE-ARN>": "arn:real"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed != 1 {
+		t.Errorf("changed %d lines, want the one with a value on it", changed)
+	}
+
+	body, err := os.ReadFile(VarFile(unit, "dev"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	written := string(body)
+	if !strings.Contains(written, `zones  = ["arn:real"]`) {
+		t.Errorf("the value was not filled in:\n%s", written)
+	}
+	if !strings.Contains(written, "# was <ZONE-ARN> before") {
+		t.Errorf("a trailing comment was rewritten:\n%s", written)
+	}
+	if !strings.Contains(written, "# <ZONE-ARN> on a comment line") {
+		t.Errorf("a comment line was rewritten:\n%s", written)
+	}
+}
+
+// Nothing to replace leaves the file byte for byte as it was: rewriting it would
+// change its timestamp and invite a diff over nothing.
+func TestFillingNothingWritesNothing(t *testing.T) {
+	unit := writtenVarFile(t, "dev", "region = \"us-east-1\"\n")
+	before, err := os.Stat(VarFile(unit, "dev"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := FillPlaceholders(unit, "dev", map[string]string{"<NOT-HERE>": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed != 0 {
+		t.Errorf("changed = %d", changed)
+	}
+
+	after, err := os.Stat(VarFile(unit, "dev"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Error("the file was rewritten with no change to make")
+	}
+}
+
+// PendingPlaceholders reads the written file, not the committed example: after
+// init, only the file knows what is still missing.
+func TestPendingReadsTheWrittenFile(t *testing.T) {
+	unit := writtenVarFile(t, "dev", "zones = [\"<STILL-HERE>\"]\n")
+	// An example that says something else entirely.
+	if err := os.WriteFile(VarFile(unit, "dev")+"-example",
+		[]byte("zones = [\"<DIFFERENT-TOKEN>\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := PendingPlaceholders(unit, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(pending) != 1 || pending[0] != "<STILL-HERE>" {
+		t.Errorf("PendingPlaceholders = %v, want what the written file holds", pending)
+	}
+}
+
+// No file is not an error: a root that was never configured has a different
+// problem, reported elsewhere.
+func TestPendingOnAMissingFileIsEmpty(t *testing.T) {
+	unit := Unit{Name: "nowhere", Dir: t.TempDir()}
+
+	pending, err := PendingPlaceholders(unit, "dev")
+
+	if err != nil {
+		t.Fatalf("PendingPlaceholders = %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("pending = %v", pending)
+	}
+}
+
+// writtenVarFile is a root whose variables file already exists — the state after
+// init, which is what these functions read.
+func writtenVarFile(t *testing.T, env, body string) Unit {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "envs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unit := Unit{Name: "sample", Dir: dir}
+	if err := os.WriteFile(VarFile(unit, env), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return unit
+}

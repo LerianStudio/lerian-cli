@@ -139,6 +139,11 @@ Examples:
 
 type initOptions struct {
 	repo string
+	// zoneLister answers "which hosted zones does this account have" when a
+	// template asks for one. Here so a test can answer without credentials; a run
+	// leaves it nil and gets the AWS CLI.
+	zoneLister infra.ZoneLister
+
 	// templatesDir relocates the managed checkout, for a read-only home, a network
 	// home, or an operator who keeps tooling under XDG.
 	templatesDir string
@@ -368,6 +373,14 @@ func (p initPlan) commit(layout infra.Layout) error {
 
 // buildInitPlan resolves every decision, asking when it can and failing with the
 // flag name when it cannot, then computes the writes as a dry run.
+// zones is the lister this run should use.
+func (o initOptions) zones() infra.ZoneLister {
+	if o.zoneLister != nil {
+		return o.zoneLister
+	}
+	return infra.CLIZones{}
+}
+
 func buildInitPlan(
 	ctx context.Context,
 	layout infra.Layout,
@@ -567,6 +580,16 @@ func buildInitPlan(
 	// know about is still fillable without waiting for a release.
 	for token, value := range opts.set {
 		replacements[token] = value
+	}
+
+	// Whatever is left is asked for, here, while the answer still matters to the
+	// file about to be written. Before this, a token survived into the file and
+	// the run refused at the preflight — after every other question had been
+	// answered, over a value that was knowable all along.
+	if err := resolvePlaceholders(ctx, ask, opts.zones(),
+		append(append([]infra.Unit{}, plan.units...), plan.sharedUnits...),
+		environment, plan.env.Profile, replacements); err != nil {
+		return plan, err
 	}
 	for _, unit := range plan.sharedUnits {
 		// No Mode here: the tier roots have no such variable. They are the owner,
