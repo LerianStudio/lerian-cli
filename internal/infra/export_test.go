@@ -110,7 +110,7 @@ func TestTheCacheAndTheStateStayBehind(t *testing.T) {
 // is right there and exactly backwards here, where those files are the content.
 func TestTheGeneratedIgnoreKeepsTheConfiguration(t *testing.T) {
 	destination := t.TempDir()
-	if err := WriteExportMeta(destination, "v1.11.0", ExportPlan{Roots: []string{"examples/aws/bootstrap"}}); err != nil {
+	if err := WriteExportMeta(destination, "v1.11.0", ExportPlan{Roots: []ExportedRoot{{Path: "examples/aws/bootstrap", Bootstrap: true}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,7 +136,10 @@ func TestTheGeneratedIgnoreKeepsTheConfiguration(t *testing.T) {
 // unless the tag is written down.
 func TestTheReadmeRecordsWhereTheCopyCameFrom(t *testing.T) {
 	destination := t.TempDir()
-	plan := ExportPlan{Roots: []string{"examples/aws/infra-base/vpc"}, Modules: []string{"examples/aws/_modules/naming"}}
+	plan := ExportPlan{
+		Roots:   []ExportedRoot{{Path: "examples/aws/infra-base/vpc", StateKey: "aws/infra-base/vpc/terraform.tfstate"}},
+		Modules: []string{"examples/aws/_modules/naming"},
+	}
 	if err := WriteExportMeta(destination, "v1.11.0", plan); err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +355,7 @@ func TestTheReadmeDescribesWhereThingsLanded(t *testing.T) {
 			t.Errorf("the README still sends the reader to %q:\n%s", wrong, readme)
 		}
 	}
-	if !strings.Contains(string(readme), "- `infra-base/vpc`") {
+	if !strings.Contains(string(readme), "### infra-base/vpc") {
 		t.Errorf("the roots are not listed where they landed:\n%s", readme)
 	}
 	if !strings.Contains(string(readme), "cd infra-base/vpc") {
@@ -462,5 +465,148 @@ func TestTheFirstCommitIsAttributedToLerianStudio(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("the commit message does not mention %q:\n%s", want, body)
 		}
+	}
+}
+
+// The state key cannot be guessed, and a wrong one does not fail: Terraform
+// initializes an empty state and plans to create an estate that already exists.
+// So the README's key has to be the key this tool itself uses, for every root,
+// derived from the same place.
+func TestTheReadmeGivesEachRootItsOwnStateKey(t *testing.T) {
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "infra-base/vpc", "")
+	writeRoot(t, layout, "products/midaz/postgres", "")
+
+	units := []Unit{
+		{Name: "infra-base/vpc", Dir: filepath.Join(layout.AWSDir(), "infra-base", "vpc")},
+		{Name: "products/midaz/postgres",
+			Dir: filepath.Join(layout.AWSDir(), "products", "midaz", "postgres")},
+	}
+	plan, err := PlanExport(layout, units)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	readme := exportReadme("v1.11.0", plan)
+
+	for _, unit := range units {
+		// The authority is Unit.StateKey — the same call the runner makes when it
+		// initializes that root. Hard-coding the string here would let both drift
+		// together and prove nothing.
+		want := `-backend-config="key=` + unit.StateKey() + `"`
+		if !strings.Contains(readme, want) {
+			t.Errorf("the README does not give %s its own key (%s):\n%s", unit.Name, want, readme)
+		}
+	}
+	// And each root gets its own cd, so nothing is left to be adapted by hand.
+	for _, path := range []string{"cd infra-base/vpc", "cd products/midaz/postgres"} {
+		if !strings.Contains(readme, path) {
+			t.Errorf("the README does not say %q:\n%s", path, readme)
+		}
+	}
+}
+
+// The bootstrap keeps its state locally in a workspace per environment, because
+// it is the stack that creates the bucket the others use. Handing it a
+// -backend-config points it at a bucket it has not made yet.
+func TestTheReadmeDoesNotSendTheBootstrapAtABackend(t *testing.T) {
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "bootstrap", "")
+
+	plan, err := PlanExport(layout, []Unit{
+		{Name: "bootstrap", Dir: layout.BootstrapDir(), Bootstrap: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	readme := exportReadme("v1.11.0", plan)
+
+	if strings.Contains(readme, "-backend-config") {
+		t.Errorf("the bootstrap was given a backend it has not created yet:\n%s", readme)
+	}
+	if !strings.Contains(readme, "terraform workspace select dev") {
+		t.Errorf("the bootstrap's workspace step is missing:\n%s", readme)
+	}
+}
+
+// Who owns this afterwards is the question somebody opening it months later
+// actually has, and the answer is not "the tool that wrote it".
+func TestTheReadmeSaysItIsABootstrapAndNotMaintainedHere(t *testing.T) {
+	readme := exportReadme("v1.11.0", ExportPlan{
+		Roots: []ExportedRoot{{Path: "examples/aws/bootstrap", Bootstrap: true}},
+	})
+
+	for _, want := range []string{
+		"Infrastructure for Lerian applications",
+		"not maintained by lerian-cli",
+		"bootstrap",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("the README does not say %q:\n%s", want, readme)
+		}
+	}
+}
+
+// The bootstrap's state is local and does not travel: state never belongs in a
+// repository. A plan from the copy therefore starts from nothing and proposes to
+// create a backend that exists — verified against a real account, where it
+// offered to create nine resources that were already there. Somebody who applies
+// that is applying to an estate the plan cannot see.
+func TestTheReadmeWarnsThatTheBootstrapStateStayedBehind(t *testing.T) {
+	readme := exportReadme("v1.11.0", ExportPlan{
+		Roots: []ExportedRoot{{Path: "examples/aws/bootstrap", Bootstrap: true}},
+	})
+
+	for _, want := range []string{
+		"state did not travel",
+		"terraform.tfstate.d",
+		"Do not apply it against an environment that already has a backend",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("the README does not warn about %q:\n%s", want, readme)
+		}
+	}
+}
+
+// And the general case of the same confusion: an empty state reads as a missing
+// estate, and the difference is one `aws s3 ls` away.
+func TestTheReadmeSaysHowToTellAnEmptyStateFromAMissingEstate(t *testing.T) {
+	readme := exportReadme("v1.11.0", ExportPlan{
+		Roots: []ExportedRoot{{
+			Path:     "examples/aws/infra-base/vpc",
+			StateKey: "aws/infra-base/vpc/terraform.tfstate",
+		}},
+	})
+
+	if !strings.Contains(readme, "If a plan proposes to create everything") {
+		t.Errorf("the README does not cover the case:\n%s", readme)
+	}
+	for _, want := range []string{"aws sts get-caller-identity", "aws s3 ls"} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("the README does not say to run %q:\n%s", want, readme)
+		}
+	}
+}
+
+// Planning a later root against an environment where an earlier one was never
+// applied fails while reading its data sources — verified: the eks root failed
+// with "no matching EC2 VPC found" against an account whose vpc had been
+// destroyed. Without a line saying so, that reads as a broken configuration.
+func TestTheReadmeExplainsTheOrderBetweenRoots(t *testing.T) {
+	plan := ExportPlan{Roots: []ExportedRoot{
+		{Path: "examples/aws/infra-base/vpc", StateKey: "aws/infra-base/vpc/terraform.tfstate"},
+		{Path: "examples/aws/infra-base/eks", StateKey: "aws/infra-base/eks/terraform.tfstate"},
+	}}
+
+	readme := exportReadme("v1.11.0", plan)
+	if !strings.Contains(readme, "no matching EC2 VPC found") {
+		t.Errorf("the README does not name what that failure looks like:\n%s", readme)
+	}
+
+	// One root has no order to explain.
+	alone := exportReadme("v1.11.0", ExportPlan{Roots: plan.Roots[:1]})
+	if strings.Contains(alone, "Order matters") {
+		t.Errorf("it explains an order between one root:\n%s", alone)
 	}
 }

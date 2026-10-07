@@ -1308,6 +1308,30 @@ goes into `.tf`, `.tfvars`, `.hcl` and `environments.conf` — everything Terraf
 reads, and nothing else. A copy that rewrote arbitrary files would be a copy
 nobody can trust.
 
+**The README it writes is written for whoever opens it months later**, without
+the person who ran the export in the room. It says what this is — the
+infrastructure the Lerian applications run on — that it was generated **once, as
+a bootstrap**, and that `lerian-cli` does not maintain it and will not update it.
+From there it is ordinary Terraform belonging to whoever owns the repository.
+
+It also gives the exact commands to plan **each** root, rather than one worked
+example. The `key=` of a root's state is derived from its directory and cannot be
+guessed, and a wrong one does not fail — Terraform initializes an empty state and
+plans to create an estate that already exists. The keys come from `Unit.StateKey`,
+the same call the runner makes, so the two cannot drift.
+
+Three traps get their own paragraphs, because each one was hit while verifying
+this:
+
+- **The bootstrap's state did not travel**, because state never belongs in a
+  repository. A plan there starts from nothing and offers to create the backend
+  again — nine resources that already existed, in the run that found this.
+- **A plan proposing to create everything** means the state is empty, not that the
+  estate is missing. The README gives the two commands that tell those apart.
+- **A later root planned before an earlier one is applied** fails reading its data
+  sources (`no matching EC2 VPC found`), which reads as a broken configuration and
+  is not.
+
 **The first commit is authored by `lerian-studio <noreply@lerian.studio>`**, not
 by whoever ran the export. It is a generated tree; attributing it to the person
 at the terminal makes `git log` read as though they wrote four thousand lines of

@@ -68,7 +68,7 @@ func exportRepository(ctx context.Context, ask *prompter, out io.Writer, destina
 	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Exporting"))
 	fmt.Fprintf(out, "  from      %s  %s\n", layout.Root, theme.dim("("+explainSource(source)+")"))
 	fmt.Fprintf(out, "  to        %s\n", absolute)
-	fmt.Fprintf(out, "  roots     %s\n", nameAFew(targetsOf(plan, plan.Roots)))
+	fmt.Fprintf(out, "  roots     %s\n", nameAFew(targetsOf(plan, plan.RootPaths())))
 	fmt.Fprintf(out, "  modules   %s\n", nameAFew(baseNames(plan.Modules)))
 	fmt.Fprintf(out, "  config    %s\n\n", nameAFew(baseNames(plan.Config)))
 
