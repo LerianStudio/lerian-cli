@@ -59,6 +59,14 @@ func writeMakeDiscovery(out *strings.Builder, plan ExportPlan) {
 			prefix = filepath.ToSlash(plan.Roots[0].Path)[:cut+1]
 		}
 	}
+	fmt.Fprintf(out, "# The order the roots were applied in. Discovery cannot work this out —\n")
+	fmt.Fprintf(out, "# nothing in a directory says the network comes before the cluster in it —\n")
+	fmt.Fprintf(out, "# so it is written down. Anything found that is not in this list runs after\n")
+	fmt.Fprintf(out, "# it, in alphabetical order.\n")
+	fmt.Fprintf(out, "ORDER := %s\n", strings.Join(orderedPaths(plan), " "))
+	fmt.Fprintf(out, "ordered = $(foreach o,$(ORDER),$(filter $(o),$(1))) $(sort $(filter-out $(ORDER),$(1)))\n")
+	fmt.Fprintf(out, "reverse = $(if $(1),$(call reverse,$(wordlist 2,$(words $(1)),$(1))) $(firstword $(1)))\n\n")
+
 	fmt.Fprintf(out, "# A root's state key is its path. KEY_PREFIX is what has to come off that\n")
 	fmt.Fprintf(out, "# path first — empty when the roots sit at the top level, as they normally do.\n")
 	fmt.Fprintf(out, "KEY_PREFIX := %s\n", prefix)
@@ -89,6 +97,16 @@ func writeMakeDiscovery(out *strings.Builder, plan ExportPlan) {
 // as the templates see it.
 func keySuffixOf(root ExportedRoot) string {
 	return strings.TrimSuffix(strings.TrimPrefix(root.StateKey, "aws/"), "/terraform.tfstate")
+}
+
+// orderedPaths is the roots in the order the CLI applied them, which is the
+// order a group has to run in: the network exists before the cluster in it.
+func orderedPaths(plan ExportPlan) []string {
+	paths := make([]string, 0, len(plan.Roots))
+	for _, root := range plan.Roots {
+		paths = append(paths, filepath.ToSlash(plan.Target(root.Path)))
+	}
+	return paths
 }
 
 // localRoots is the roots that run on local state, by their exported path.
@@ -129,20 +147,26 @@ func writeMakePositional(out *strings.Builder) {
 
 // writeMakeTargets is the work.
 func writeMakeTargets(out *strings.Builder) {
-	fmt.Fprintf(out, ".PHONY: plan apply destroy output init test check help require-root list-roots\n\n")
+	fmt.Fprintf(out, ".PHONY: plan apply destroy output init test check help require-root roots\n")
+	fmt.Fprintf(out, ".PHONY: $(foreach v,plan apply destroy output test,one-$(v) group-$(v))\n\n")
 
 	// HOLDS is the roots underneath a directory that is not one itself —
 	// `infra-base` holds two, and answering "infra-base has no envs/dev.tfvars"
 	// describes it as a broken root instead of as the parent of two working ones.
-	fmt.Fprintf(out, "HOLDS = $(filter $(ROOT)/%%,$(ROOTS))\n\n")
+	// `all` is spelled out rather than left as the "." the dir of a top-level
+	// root reduces to: `make plan . dev` is not something anybody would try.
+	fmt.Fprintf(out, "HOLDS = $(if $(filter all,$(ROOT)),$(ROOTS),$(filter $(ROOT)/%%,$(ROOTS)))\n")
+	fmt.Fprintf(out, "# Every directory holding roots, so `make roots` can name what the group\n")
+	fmt.Fprintf(out, "# form accepts. A root is not a group, even when it sits under one.\n")
+	fmt.Fprintf(out, "GROUPS := all $(sort $(filter-out . $(ROOTS),$(patsubst %%/,%%,$(dir $(ROOTS)))))\n\n")
 
 	fmt.Fprintf(out, "require-root:\n")
 	fmt.Fprintf(out, "\t@test -n \"$(ROOT)\" || { echo '  which root?  e.g. make plan $(firstword $(UNIQUE)) dev'; "+
-		"$(MAKE) --no-print-directory list-roots; exit 1; }\n")
-	fmt.Fprintf(out, "\t@if [ -n \"$(HOLDS)\" ]; then "+
-		"echo \"  $(ROOT) is not a root — it holds: $(HOLDS)\"; exit 1; fi\n")
+		"$(MAKE) --no-print-directory roots; exit 1; }\n")
+	fmt.Fprintf(out, "\t@test -z \"$(HOLDS)\" || "+
+		"{ echo \"  $(ROOT) holds $(words $(HOLDS)) roots; this target takes one\"; exit 1; }\n")
 	fmt.Fprintf(out, "\t@test -n \"$(filter $(RESOLVED),$(ROOTS))\" || "+
-		"{ echo \"  no such root: $(ROOT)\"; $(MAKE) --no-print-directory list-roots; exit 1; }\n")
+		"{ echo \"  no such root: $(ROOT)\"; $(MAKE) --no-print-directory roots; exit 1; }\n")
 	fmt.Fprintf(out, "\t@test -f \"$(RESOLVED)/envs/$(ENV).tfvars\" || "+
 		"{ echo \"  $(RESOLVED) has no envs/$(ENV).tfvars\"; "+
 		"echo \"  it has: $$(ls $(RESOLVED)/envs 2>/dev/null | sed 's/[.]tfvars$$//' | tr '\\n' ' ')\"; "+
@@ -150,9 +174,21 @@ func writeMakeTargets(out *strings.Builder) {
 
 	// (3) The short names, because somebody who mistyped one is looking for the
 	//     list of them — not for the paths, which is what they already saw.
-	fmt.Fprintf(out, ".PHONY: list-roots\nlist-roots:\n")
-	fmt.Fprintf(out, "\t@echo '  roots: $(ROOTS)'\n")
-	fmt.Fprintf(out, "\t@test -z '$(UNIQUE)' || echo '  short: $(UNIQUE)'\n\n")
+	// roots is a target of its own because "what can I run this against" is the
+	// first question somebody has, and reading it out of the error of a command
+	// they had to guess at is not an answer.
+	fmt.Fprintf(out, "roots:\n")
+	fmt.Fprintf(out, "\t@echo '  in the order they are applied:'\n")
+	fmt.Fprintf(out, "\t@for root in $(call ordered,$(ROOTS)); do \\\n")
+	fmt.Fprintf(out, "\t\tshort=''; for s in $(UNIQUE); do "+
+		"[ \"$$(basename $$root)\" = \"$$s\" ] && short=\"  ($$s)\"; done; \\\n")
+	fmt.Fprintf(out, "\t\techo \"    $$root$$short\"; \\\n")
+	fmt.Fprintf(out, "\tdone\n")
+	fmt.Fprintf(out, "\t@echo ''\n")
+	fmt.Fprintf(out, "\t@echo '  groups — these run every root under them, in order:'\n")
+	fmt.Fprintf(out, "\t@for group in $(GROUPS); do \\\n")
+	fmt.Fprintf(out, "\t\techo \"    $$group\"; \\\n")
+	fmt.Fprintf(out, "\tdone\n\n")
 
 	// init is its own target and also a prerequisite of everything else, because
 	// -reconfigure is what stops a root initialized for one environment from
@@ -169,19 +205,58 @@ func writeMakeTargets(out *strings.Builder) {
 	fmt.Fprintf(out, "\t\t\t-backend-config=\"key=$(KEY)\" >/dev/null; \\\n")
 	fmt.Fprintf(out, "\tfi\n\n")
 
+	// Every verb takes either one root or a directory holding several. The group
+	// form is what makes `make plan infra-base dev` mean "the whole of it" rather
+	// than an error about a directory that is not a root.
+	for _, verb := range []string{"plan", "apply", "destroy", "output", "test"} {
+		fmt.Fprintf(out, "%s:\n", verb)
+		// ROOT and ENV are passed on: a sub-make starts with none of this one's
+		// variables, and a group-plan that cannot see ROOT works out that it holds
+		// nothing and cheerfully does nothing.
+		fmt.Fprintf(out, "\t@if [ -n \"$(HOLDS)\" ]; then "+
+			"$(MAKE) --no-print-directory group-%s ROOT=\"$(ROOT)\" ENV=\"$(ENV)\"; "+
+			"else $(MAKE) --no-print-directory one-%s ROOT=\"$(ROOT)\" ENV=\"$(ENV)\"; fi\n\n", verb, verb)
+	}
+
+	// The group confirms once, for all of them, and the children are told it has
+	// happened. Asking per root turns one decision into three, and three prompts
+	// in a row is a thing people answer without reading.
+	for _, verb := range []string{"plan", "apply", "destroy", "output", "test"} {
+		order := "$(call ordered,$(HOLDS))"
+		if verb == "destroy" {
+			// Backwards: the cluster goes before the network it sits in.
+			order = "$(call reverse,$(call ordered,$(HOLDS)))"
+		}
+
+		fmt.Fprintf(out, "group-%s:\n", verb)
+		if verb == "apply" || verb == "destroy" {
+			fmt.Fprintf(out, "\t@test -n \"$(CONFIRMED)\" || { \\\n")
+			fmt.Fprintf(out, "\t\tprintf '  %s these in %%s, in order:\\n' '$(ENV)'; \\\n", verb)
+			fmt.Fprintf(out, "\t\tfor root in %s; do echo \"    $$root\"; done; \\\n", order)
+			fmt.Fprintf(out, "\t\tprintf '  Type yes to continue: '; \\\n")
+			fmt.Fprintf(out, "\t\tread -r answer; [ \"$$answer\" = yes ] || { echo '  stopped.'; exit 1; }; }\n")
+		}
+		fmt.Fprintf(out, "\t@for root in %s; do \\\n", order)
+		fmt.Fprintf(out, "\t\tprintf '\\n==> %%s\\n' \"$$root\"; \\\n")
+		fmt.Fprintf(out, "\t\t$(MAKE) --no-print-directory one-%s ROOT=$$root ENV=$(ENV) CONFIRMED=1 "+
+			"|| exit 1; \\\n", verb)
+		fmt.Fprintf(out, "\tdone\n\n")
+	}
+
 	for _, verb := range []string{"plan", "apply", "destroy"} {
-		fmt.Fprintf(out, "%s: init\n", verb)
+		fmt.Fprintf(out, "one-%s: init\n", verb)
 		if verb != "plan" {
 			// The same bar the CLI sets: these write, and a Makefile that applies
 			// on one word is a Makefile somebody applies to the wrong environment.
-			fmt.Fprintf(out, "\t@printf '  %s %%s in %%s. Type yes to continue: ' '$(RESOLVED)' '$(ENV)'; \\\n", verb)
-			fmt.Fprintf(out, "\tread -r answer; [ \"$$answer\" = yes ] || { echo '  stopped.'; exit 1; }\n")
+			fmt.Fprintf(out, "\t@test -n \"$(CONFIRMED)\" || { \\\n")
+			fmt.Fprintf(out, "\t\tprintf '  %s %%s in %%s. Type yes to continue: ' '$(RESOLVED)' '$(ENV)'; \\\n", verb)
+			fmt.Fprintf(out, "\t\tread -r answer; [ \"$$answer\" = yes ] || { echo '  stopped.'; exit 1; }; }\n")
 		}
 		fmt.Fprintf(out, "\t$(TERRAFORM) -chdir=$(RESOLVED) %s -var-file=envs/$(ENV).tfvars\n\n", verb)
 	}
 
-	fmt.Fprintf(out, "output: init\n\t$(TERRAFORM) -chdir=$(RESOLVED) output\n\n")
-	fmt.Fprintf(out, "test: require-root\n\t$(TERRAFORM) -chdir=$(RESOLVED) test\n\n")
+	fmt.Fprintf(out, "one-output: init\n\t$(TERRAFORM) -chdir=$(RESOLVED) output\n\n")
+	fmt.Fprintf(out, "one-test: require-root\n\t$(TERRAFORM) -chdir=$(RESOLVED) test\n\n")
 
 	// Both halves run, and the exit status comes at the end. Stopping at the
 	// first meant a stray space in a .tfvars hid every validate behind it — and
@@ -222,6 +297,11 @@ func writeMakeHelp(out *strings.Builder, plan ExportPlan) {
 	fmt.Fprintf(out, "\t@echo '  make output <root> [env]    terraform output'\n")
 	fmt.Fprintf(out, "\t@echo '  make test <root>            terraform test'\n")
 	fmt.Fprintf(out, "\t@echo '  make check                  fmt and validate every root'\n")
+	fmt.Fprintf(out, "\t@echo '  make roots                  what can be run, and in what order'\n")
+	fmt.Fprintf(out, "\t@echo ''\n")
+	fmt.Fprintf(out, "\t@echo '  <root> is one root, or a directory holding several:'\n")
+	fmt.Fprintf(out, "\t@echo '    make plan infra-base dev  runs every root under it, in order'\n")
+	fmt.Fprintf(out, "\t@echo '    make plan all dev         runs every root there is'\n")
 	fmt.Fprintf(out, "\t@echo ''\n")
 	fmt.Fprintf(out, "\t@echo '  env defaults to dev. These are the same:'\n")
 	fmt.Fprintf(out, "\t@echo '    make plan %s stg'\n", firstShort(plan))

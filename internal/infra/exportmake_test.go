@@ -252,21 +252,18 @@ func TestTheMakefileSaysWhatIsWrong(t *testing.T) {
 		return string(output)
 	}
 
-	t.Run("a directory that holds roots is not a broken root", func(t *testing.T) {
-		out := run("plan", "infra-base", "dev")
+	// `make plan infra-base dev` is the group form and runs both; what must not
+	// happen is the answer it used to give — "infra-base has no envs/dev.tfvars",
+	// which describes a directory holding two working roots as one somebody
+	// forgot to configure. The single-root targets still refuse it, and say why.
+	t.Run("a directory is never called a broken root", func(t *testing.T) {
+		out := run("one-plan", "ROOT=infra-base", "ENV=dev")
 
-		// It used to answer "infra-base has no envs/dev.tfvars", which describes a
-		// parent directory as a root somebody forgot to configure.
 		if strings.Contains(out, "has no envs/") {
 			t.Errorf("it called a parent directory a broken root:\n%s", out)
 		}
-		if !strings.Contains(out, "is not a root — it holds:") {
+		if !strings.Contains(out, "holds 2 roots") {
 			t.Errorf("it does not say what infra-base is:\n%s", out)
-		}
-		for _, held := range []string{"infra-base/eks", "infra-base/vpc"} {
-			if !strings.Contains(out, held) {
-				t.Errorf("it does not list %s:\n%s", held, out)
-			}
 		}
 	})
 
@@ -276,10 +273,15 @@ func TestTheMakefileSaysWhatIsWrong(t *testing.T) {
 		if !strings.Contains(out, "no such root: boostrap") {
 			t.Errorf("it did not name what it could not find:\n%s", out)
 		}
-		// Somebody who mistyped a short name is looking for the list of those,
-		// not for the paths they were already shown.
-		if !strings.Contains(out, "short:") || !strings.Contains(out, "eks") {
+		// Somebody who mistyped a short name is looking for the list of those, not
+		// only for the paths. `make roots` prints both, each path with its short
+		// name beside it, and the error calls it rather than printing its own
+		// half-version.
+		if !strings.Contains(out, "(eks)") || !strings.Contains(out, "(bootstrap)") {
 			t.Errorf("it does not list the short names:\n%s", out)
+		}
+		if !strings.Contains(out, "groups") {
+			t.Errorf("it does not mention the group form:\n%s", out)
 		}
 	})
 
@@ -321,4 +323,156 @@ func TestARepeatedVerbDoesNotRedefineTheTarget(t *testing.T) {
 	if !strings.Contains(string(output), "-chdir=infra-base/eks") {
 		t.Errorf("the plan did not run:\n%s", output)
 	}
+}
+
+// A directory holding roots runs all of them. The order is the part discovery
+// cannot work out — nothing in a directory says the network comes before the
+// cluster in it — so it is written down and followed.
+func TestAGroupRunsEveryRootUnderItInOrder(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("no make here")
+	}
+	dir := makefileTree(t)
+	// A terraform that reports which root it was run in, and does nothing.
+	stub := filepath.Join(t.TempDir(), "terraform")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nfor a in \"$@\"; do case $a in -chdir=*) echo \"RAN ${a#-chdir=}\";; esac; done\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	ran := func(args ...string) []string {
+		t.Helper()
+		command := exec.Command("make", args...)
+		command.Dir = dir
+		command.Env = append(os.Environ(), "TERRAFORM="+stub, "CONFIRMED=1")
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("make %v failed: %v\n%s", args, err, output)
+		}
+
+		var order []string
+		for _, line := range strings.Split(string(output), "\n") {
+			if root, found := strings.CutPrefix(strings.TrimSpace(line), "RAN "); found {
+				// init runs first in each root; only the first mention matters.
+				if len(order) == 0 || order[len(order)-1] != root {
+					order = append(order, root)
+				}
+			}
+		}
+		return order
+	}
+
+	t.Run("the network before the cluster in it", func(t *testing.T) {
+		order := ran("plan", "infra-base", "dev")
+
+		want := []string{"infra-base/vpc", "infra-base/eks"}
+		if strings.Join(order, " ") != strings.Join(want, " ") {
+			t.Errorf("ran %v, want %v", order, want)
+		}
+	})
+
+	t.Run("destroy goes the other way", func(t *testing.T) {
+		order := ran("destroy", "infra-base", "dev")
+
+		want := []string{"infra-base/eks", "infra-base/vpc"}
+		if strings.Join(order, " ") != strings.Join(want, " ") {
+			t.Errorf("ran %v, want %v — a cluster cannot outlive its network", order, want)
+		}
+	})
+
+	t.Run("all is every root there is", func(t *testing.T) {
+		order := ran("plan", "all", "dev")
+
+		want := []string{"bootstrap", "infra-base/vpc", "infra-base/eks"}
+		if strings.Join(order, " ") != strings.Join(want, " ") {
+			t.Errorf("ran %v, want %v", order, want)
+		}
+	})
+
+	t.Run("a new service joins its group without being named", func(t *testing.T) {
+		addRoot(t, dir, "infra-base/rds")
+
+		order := ran("plan", "infra-base", "dev")
+
+		if len(order) != 3 {
+			t.Fatalf("ran %v, want three roots", order)
+		}
+		// The two that are in ORDER keep their order; what is not runs after.
+		want := []string{"infra-base/vpc", "infra-base/eks", "infra-base/rds"}
+		if strings.Join(order, " ") != strings.Join(want, " ") {
+			t.Errorf("ran %v, want %v", order, want)
+		}
+	})
+}
+
+// A group that writes confirms once, for all of it. Asking per root turns one
+// decision into three, and three prompts in a row is a thing people answer
+// without reading.
+func TestAGroupConfirmsOnceAndListsWhatItWouldDo(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("no make here")
+	}
+	dir := makefileTree(t)
+
+	command := exec.Command("make", "destroy", "infra-base", "dev")
+	command.Dir = dir
+	command.Stdin = strings.NewReader("no\n")
+	output, err := command.CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("declining went ahead anyway:\n%s", output)
+	}
+	out := string(output)
+	if strings.Count(out, "Type yes to continue") != 1 {
+		t.Errorf("it asked %d times, want once:\n%s", strings.Count(out, "Type yes to continue"), out)
+	}
+	// And it says what it would take down, in the order it would do it.
+	eks := strings.Index(out, "infra-base/eks")
+	vpc := strings.Index(out, "infra-base/vpc")
+	if eks < 0 || vpc < 0 || eks > vpc {
+		t.Errorf("it does not list what it would destroy, cluster first:\n%s", out)
+	}
+}
+
+// "What can I run this against" is the first question somebody has, and reading
+// it out of the error of a command they had to guess at is not an answer.
+func TestRootsListsWhatCanBeRun(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("no make here")
+	}
+	dir := makefileTree(t)
+
+	out := dryRunReal(t, dir, "roots")
+
+	for _, want := range []string{"bootstrap", "infra-base/vpc", "infra-base/eks"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("it does not list %s:\n%s", want, out)
+		}
+	}
+	// The short names are what gets typed, so they are beside the paths.
+	if !strings.Contains(out, "(eks)") || !strings.Contains(out, "(vpc)") {
+		t.Errorf("the short names are missing:\n%s", out)
+	}
+	// And the groups, which is the part nothing else announces.
+	if !strings.Contains(out, "infra-base") || !strings.Contains(out, "all") {
+		t.Errorf("the groups are missing:\n%s", out)
+	}
+	// "." is the dir of a top-level root and is not something anybody would type.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "." {
+			t.Errorf("it offers '.' as a group:\n%s", out)
+		}
+	}
+}
+
+// dryRunReal runs make for real, for targets that only print.
+func dryRunReal(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	command := exec.Command("make", args...)
+	command.Dir = dir
+
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("make %v failed: %v\n%s", args, err, output)
+	}
+	return string(output)
 }

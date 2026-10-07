@@ -1337,8 +1337,11 @@ does not `terraform init` is worse than one with an awkward directory name.
 **It writes a Makefile, and that is the front door.**
 
 ```bash
-make plan eks dev      # or: make eks-plan ENV=dev, or make plan ROOT=infra-base/eks
-make check             # fmt and validate every root
+make plan eks dev          # one root
+make plan infra-base dev   # every root under it, in order
+make plan all dev          # every root there is
+make roots                 # what can be run, and in what order
+make check                 # fmt and validate every root
 make help
 ```
 
@@ -1360,10 +1363,28 @@ A short name two roots would answer to — `products/midaz/postgres` and
 one of them, and no shortcut is generated for it. Both stay reachable by their
 full path.
 
+**A directory holding roots runs all of them.** `make plan infra-base dev` is the
+whole of `infra-base`, and `all` is everything. The **order** is the other thing
+discovery cannot work out — nothing in a directory says the network comes before
+the cluster in it — so the order the CLI applied them in is written into the
+file, and anything found later runs after it. `destroy` goes the other way: a
+cluster cannot outlive the network it sits in.
+
+```
+  destroy these in dev, in order:
+    infra-base/eks
+    infra-base/vpc
+  Type yes to continue:
+```
+
+A group that writes **confirms once**, for all of it, and lists what it would
+touch. Asking per root turns one decision into three, and three prompts in a row
+is a thing people answer without reading.
+
 `apply` and `destroy` ask before they write, the same bar the CLI sets. The
 bootstrap is named rather than found, because nothing in a directory says "this
 one creates the backend": it gets a workspace and no `-backend-config`, which is
-the one thing discovery cannot work out on its own.
+the other thing discovery cannot work out on its own.
 
 **Every Terraform file says where it came from.**
 
