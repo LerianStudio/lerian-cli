@@ -264,3 +264,65 @@ func TestTakingItAwayIsOfferedAfterARun(t *testing.T) {
 		})
 	}
 }
+
+// The row is only a row, and "back to the menu" reads like the way out of a
+// finished job. Somebody who scrolled past the copy without knowing what it was
+// for loses the offer the moment this closes — so leaving asks once.
+func TestLeavingAfterAnApplyOffersTheCopyOnceMore(t *testing.T) {
+	var out bytes.Buffer
+	// Up from the first row wraps to the last, which is "back to the menu"; then
+	// down and enter take "leave" on the question that follows it.
+	ask, painted := selectorFor(t, keyUpSeq+keyEnterSeq+keyDownSeq+keyEnterSeq)
+
+	err := afterRun(context.Background(), ask, nil, nil, nil, infra.ActionApply, &out,
+		func(infra.Action) error { return nil },
+		func() (func() error, string) { return nil, "" })
+	if err != nil {
+		t.Fatalf("leaving reported a failure: %v", err)
+	}
+
+	if !strings.Contains(painted.String(), "Before you go") {
+		t.Errorf("the run was left with no last offer of the copy:\n%s", painted.String())
+	}
+	if !strings.Contains(painted.String(), "lerian config repo") {
+		t.Errorf("it does not say where the offer goes afterwards:\n%s", painted.String())
+	}
+
+	// And "leave" leaves, rather than starting the very thing it declined. Not
+	// counted by how often the question appears on screen: the selector repaints
+	// the whole frame on every keypress, so one question is already several.
+	screen := painted.String() + out.String()
+	if strings.Contains(screen, "Where should the repository go?") {
+		t.Errorf("choosing leave started an export anyway:\n%s", screen)
+	}
+}
+
+// A plan built nothing to take away, so the question would be a prompt for its
+// own sake — and those are what teach people to dismiss prompts.
+func TestLeavingAfterAPlanAsksNothing(t *testing.T) {
+	var out bytes.Buffer
+	ask, painted := selectorFor(t, keyUpSeq+keyEnterSeq)
+
+	_ = afterRun(context.Background(), ask, nil, nil, nil, infra.ActionPlan, &out,
+		func(infra.Action) error { return nil },
+		func() (func() error, string) { return nil, "" })
+
+	if strings.Contains(painted.String(), "Before you go") {
+		t.Errorf("a plan asked about a copy of something it did not build:\n%s", painted.String())
+	}
+}
+
+// And once the copy exists, asking again is noise. Called directly: the path
+// through afterRun would have to write a real repository to get here.
+func TestTheQuestionIsNotAskedTwice(t *testing.T) {
+	var out bytes.Buffer
+	ask, painted := selectorFor(t, "")
+
+	exported := true
+	if !leaving(context.Background(), ask, &out, infra.ActionApply, &exported) {
+		t.Error("it stayed, though the copy had already been taken")
+	}
+	if painted.String() != "" {
+		t.Errorf("it asked again after exporting:\n%s", painted.String())
+	}
+}

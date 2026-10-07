@@ -1052,6 +1052,22 @@ carries the same row, between `output` and `destroy`. The moment somebody has a
 reason to want this is the moment they are looking at what was just built — not
 later, having guessed that a command they have never seen exists.
 
+**And once more on the way out.** After an apply, leaving that menu asks:
+
+```
+  Before you go
+  Last offer; afterwards: lerian config repo <path>
+❯ copy this into a repository of your own  the roots you configured, their mo…
+  leave                                    nothing else is written
+```
+
+A row is only a row. "back to the menu" reads like the way out of a finished
+job, and somebody who scrolled past the copy without knowing what it was for
+loses the offer the moment the menu closes. Asked after an apply only — a plan
+built nothing to take away — and only until the copy exists, because a prompt
+that comes back after being answered is one people learn to dismiss. `r` goes
+through it too; `q` and ctrl-c do not, since those mean stop now.
+
 **What goes in.** The roots that have an `envs/<env>.tfvars` — what was
 configured, not all twenty-seven products, which would be directories of someone
 else's decisions. The modules those roots reach are **followed**, through each

@@ -2,6 +2,7 @@ package infracli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -50,6 +51,11 @@ func afterRun(
 		return nil
 	}
 
+	// Whether the copy has already been taken in this sitting. The reminder below
+	// is worth one interruption and not two: somebody who has exported and then
+	// applies again does not need to be asked a second time.
+	exported := false
+
 	for {
 		point, why := cluster()
 		if point == nil && why != "" && done == infra.ActionApply {
@@ -67,8 +73,17 @@ func afterRun(
 		// step — so returning the error would turn declining an offer into a
 		// failed command.
 		case err != nil:
+			// r — "back" — is another way of saying "back to the menu", so it gets
+			// the same last question. q and ctrl-c are not: those mean stop now,
+			// and answering them with a prompt is the opposite of what they ask.
+			if errors.Is(err, errBack) && !leaving(ctx, ask, out, done, &exported) {
+				continue
+			}
 			return nil
 		case picked == afterDone:
+			if !leaving(ctx, ask, out, done, &exported) {
+				continue
+			}
 			return nil
 		case picked == afterDetail:
 			printPlanDetail(ctx, terraform, runner, stages, out)
@@ -76,6 +91,8 @@ func afterRun(
 		case picked == afterExport:
 			if err := exportFromMenu(ctx, ask, out); err != nil {
 				fmt.Fprintf(out, "\n  %v\n\n", err)
+			} else {
+				exported = true
 			}
 			continue
 		case picked == afterKubectl:
@@ -94,6 +111,52 @@ func afterRun(
 		done = infra.Action(picked)
 	}
 }
+
+// leaving is the last question before the run is left behind, and it reports
+// whether to go.
+//
+// It exists because what this menu offers stops being reachable the moment it
+// closes. The stack is up, the operator reads "back to the menu" as the way out
+// of a finished job, and the copy they are entitled to — the one that frees them
+// from the templates — is a row they scrolled past without knowing what it was
+// for. Afterwards it means finding `lerian config repo`, which nobody does.
+//
+// Only after an apply, and only once. A plan built nothing to take away, a
+// destroy took it down, and a second asking after the copy exists is a prompt
+// that trains people to dismiss prompts.
+func leaving(ctx context.Context, ask *prompter, out io.Writer, done infra.Action, exported *bool) bool {
+	if done != infra.ActionApply || *exported {
+		return true
+	}
+
+	// A choice rather than a yes/no. "Are you sure?" puts the work of remembering
+	// what was missed back on the person who just showed they had not; the row
+	// that does the thing is the reminder.
+	picked, err := ask.pick("Before you go", leavingPurpose, "", []option{
+		{value: afterExport, label: "copy this into a repository of your own",
+			note: "the roots you configured, their modules, and a git history"},
+		{value: afterDone, label: "leave", note: "nothing else is written"},
+	}, "")
+	if err != nil || picked == afterDone {
+		return true
+	}
+
+	if err := exportFromMenu(ctx, ask, out); err != nil {
+		fmt.Fprintf(out, "\n  %v\n\n", err)
+		// Staying, so the failure is on a screen with something to do about it.
+		// Leaving on the error would report it to somebody already walking away.
+		return false
+	}
+	*exported = true
+	return true
+}
+
+// leavingPurpose says why this question is being asked at all, since nothing has
+// gone wrong and the operator asked to leave.
+// Kept short on purpose: the line is truncated to the terminal width, and a
+// purpose whose only concrete fact — the command — falls off the end says
+// nothing the heading did not.
+const leavingPurpose = "Last offer; afterwards: lerian config repo <path>"
 
 // exportFromMenu asks where the repository goes and writes it.
 //
