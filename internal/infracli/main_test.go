@@ -623,3 +623,137 @@ func makeCheckout(t *testing.T, dir string) {
 		}
 	}
 }
+
+// The alternative to this offer is what the advice above it prints: a command to
+// copy into another terminal, in a directory nobody memorizes, with a uuid in
+// it. But it is never taken on one keypress — the cost of being wrong lands on
+// somebody else's apply, not on this run.
+func TestReleasingALockTakesTwoAnswers(t *testing.T) {
+	locked := []infra.StageResult{{
+		Plans: []infra.UnitResult{{
+			Unit: infra.Unit{Name: "infra-base/eks", Dir: t.TempDir()},
+			Err:  errors.New(lockedFailure),
+		}},
+	}}
+
+	t.Run("declining the menu runs nothing", func(t *testing.T) {
+		noDrain(t)
+		var out bytes.Buffer
+		spy := &spyUnlocker{}
+		ask, painted := selectorFor(t, keyEnterSeq) // "leave it", the first row
+
+		offerUnlock(context.Background(), ask, spy, &out, locked)
+
+		if spy.ran {
+			t.Error("it released the lock after being told to leave it")
+		}
+
+		if !strings.Contains(painted.String(), "Release the lock on infra-base/eks?") {
+			t.Errorf("it did not offer:\n%s", painted.String())
+		}
+		// Who and how long ago, on the line the decision turns on.
+		if !strings.Contains(painted.String(), "48 minute") &&
+			!strings.Contains(painted.String(), "hour") {
+			t.Errorf("the offer does not say how old the lock is:\n%s", painted.String())
+		}
+	})
+
+	t.Run("declining the typed confirmation runs nothing", func(t *testing.T) {
+		noDrain(t)
+		var out bytes.Buffer
+		spy := &spyUnlocker{}
+		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"no\n")
+
+		offerUnlock(context.Background(), ask, spy, &out, locked)
+
+		if spy.ran {
+			t.Error("it released after the confirmation was declined")
+		}
+	})
+
+	t.Run("both answers release the one that is held", func(t *testing.T) {
+		noDrain(t)
+		var out bytes.Buffer
+		spy := &spyUnlocker{}
+		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"yes\n")
+
+		offerUnlock(context.Background(), ask, spy, &out, locked)
+
+		if !spy.ran {
+			t.Fatalf("it did not release:\n%s", out.String())
+		}
+		if spy.id != "6b012100-a4eb-91d3-d0f2-e0a4ff5085d1" {
+			t.Errorf("it released %q", spy.id)
+		}
+		if spy.unit.Name != "infra-base/eks" {
+			t.Errorf("it released the lock of %q", spy.unit.Name)
+		}
+		if !strings.Contains(out.String(), "Run the same command again") {
+			t.Errorf("it did not say what to do next:\n%s", out.String())
+		}
+	})
+
+	// Guarded twice: offerUnlock returns early, and the selector refuses to run
+	// without a terminal anyway. Removing the early return does not change what
+	// this asserts — the behaviour is what matters, and it holds either way.
+	t.Run("nothing is offered without a terminal", func(t *testing.T) {
+		var out bytes.Buffer
+		spy := &spyUnlocker{}
+
+		offerUnlock(context.Background(), &prompter{out: &out}, spy, &out, locked)
+
+		if spy.ran {
+			t.Error("it released a lock with nobody to ask")
+		}
+		if out.String() != "" {
+			t.Errorf("it asked with nobody there:\n%s", out.String())
+		}
+	})
+
+	t.Run("a failure that is not a lock is left alone", func(t *testing.T) {
+		var out bytes.Buffer
+		ask, painted := selectorFor(t, keyEnterSeq)
+
+		spy := &spyUnlocker{}
+		offerUnlock(context.Background(), ask, spy, &out, []infra.StageResult{{
+			Plans: []infra.UnitResult{{
+				Unit: infra.Unit{Name: "infra-base/eks"},
+				Err:  errors.New("Error: no matching EC2 VPC found"),
+			}},
+		}})
+
+		if painted.String() != "" {
+			t.Errorf("it offered to unlock something that is not locked:\n%s", painted.String())
+		}
+		if spy.ran {
+			t.Error("it released a lock that was not reported")
+		}
+	})
+}
+
+// lockedFailure is the message terraform produces, trimmed to what matters.
+const lockedFailure = `infra: terraform plan failed for infra-base/eks: exit status 1
+
+Error: Error acquiring the state lock
+
+Lock Info:
+  ID:        6b012100-a4eb-91d3-d0f2-e0a4ff5085d1
+  Path:      bucket/aws/infra-base/eks/terraform.tfstate
+  Operation: OperationTypeApply
+  Who:       someone@their-laptop.local
+  Version:   1.16.3
+  Created:   2020-01-01 00:00:00.000000 +0000 UTC
+  Info:
+`
+
+// spyUnlocker records whether the command ran, and on what.
+type spyUnlocker struct {
+	ran  bool
+	unit infra.Unit
+	id   string
+}
+
+func (s *spyUnlocker) ForceUnlock(_ context.Context, unit infra.Unit, id string) error {
+	s.ran, s.unit, s.id = true, unit, id
+	return nil
+}

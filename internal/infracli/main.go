@@ -376,7 +376,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		case infra.ActionOutput:
 			return writeOutputs(ctx, runner, allUnits, stdout)
 		default:
-			return execute(ctx, runner, stages, action, opts, config, runDir, logs, terraform.Credentials, progressOut)
+			return execute(ctx, runner, terraform, stages, action, opts, config, runDir,
+				logs, terraform.Credentials, progressOut)
 		}
 	}
 
@@ -656,6 +657,9 @@ func failOnUnready(readiness []infra.Readiness) error {
 func execute(
 	ctx context.Context,
 	runner *infra.Runner,
+	// terraform is the same CLI the runner uses, needed here for the one command
+	// that is not part of a run: releasing a lock a failed run reported.
+	terraform *infra.CLI,
 	stages []infra.Stage,
 	action infra.Action,
 	opts options,
@@ -719,6 +723,7 @@ func execute(
 
 	if err != nil {
 		printFailureLogs(out, results, logs)
+		offerUnlock(ctx, newPrompter(out), terraform, out, results)
 		fmt.Fprintf(out, "\n  logs %s\n", runDir)
 
 		// The detail was just printed, in full, next to the stack it belongs to.
@@ -844,6 +849,88 @@ func printFailureLogs(out io.Writer, results []infra.StageResult, logs *infra.Fi
 // to this machine and this run — the directory to pass to -chdir, the id already
 // filled in — which is exactly what somebody retypes by hand from a web page
 // while the run they were in the middle of sits there failed.
+// offerUnlock asks whether to release a held lock, and does it.
+//
+// The alternative is what this just put on the screen: a command to copy into
+// another terminal, in a directory nobody memorizes, with a uuid in it. That is
+// a round trip for something this process can do — and the decision it needs was
+// already made by reading the lines above.
+//
+// Asked, never assumed, and never under --auto-approve: that flag approves
+// infrastructure changes, and this is not one. It is a judgement about whether a
+// process somewhere else is still alive, which no flag can stand in for.
+// unlocker is the half of the terraform CLI this needs. An interface so a test
+// can see whether the command ran, which is the only thing worth asserting about
+// a prompt that guards a destructive operation.
+type unlocker interface {
+	ForceUnlock(ctx context.Context, unit infra.Unit, lockID string) error
+}
+
+func offerUnlock(
+	ctx context.Context,
+	ask *prompter,
+	terraform unlocker,
+	out io.Writer,
+	results []infra.StageResult,
+) {
+	if ask == nil || !ask.interactive || terraform == nil {
+		return
+	}
+
+	for _, result := range results {
+		for _, phase := range [][]infra.UnitResult{result.Plans, result.Applies} {
+			for _, unit := range phase {
+				if unit.Err == nil {
+					continue
+				}
+				lock := infra.ReadStateLock(unit.Err.Error())
+				if lock == nil {
+					continue
+				}
+				unlockOne(ctx, ask, terraform, out, unit.Unit, *lock)
+				// One at a time, and only the first: a second lock in the same run
+				// is almost always the same holder, and the answer to it is the
+				// answer that was just given.
+				return
+			}
+		}
+	}
+}
+
+// unlockOne is the question and the command.
+func unlockOne(
+	ctx context.Context,
+	ask *prompter,
+	terraform unlocker,
+	out io.Writer,
+	unit infra.Unit,
+	lock infra.StateLock,
+) {
+	answer, err := ask.pick("Release the lock on "+unit.Name+"?",
+		lock.Holder(time.Now())+" — only if that run is over.", "",
+		[]option{
+			{value: "no", label: "leave it", note: "nothing changes; the command above still works"},
+			{value: "yes", label: "release it", note: "terraform force-unlock"},
+		}, "")
+	if err != nil || answer != "yes" {
+		return
+	}
+
+	// Typed, because the cost of being wrong lands on somebody else's apply and
+	// not on this run. A menu row is one keypress and this is not a one-keypress
+	// decision.
+	if err := ask.confirm(ctx, out,
+		"Is that run definitely over? Releasing a live lock lets two writes race"); err != nil {
+		return
+	}
+
+	if err := terraform.ForceUnlock(ctx, unit, lock.ID); err != nil {
+		fmt.Fprintf(out, "\n  %v\n", err)
+		return
+	}
+	fmt.Fprintf(out, "\n  Released. Run the same command again.\n")
+}
+
 func printFailureAdvice(out io.Writer, unit infra.UnitResult) {
 	lock := infra.ReadStateLock(unit.Err.Error())
 	if lock == nil {

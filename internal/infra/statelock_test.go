@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -124,5 +125,69 @@ func TestAnUnreadableAgeIsLeftOut(t *testing.T) {
 	}
 	if !strings.Contains(before, "force-unlock") {
 		t.Errorf("the command went missing with the age:\n%s", before)
+	}
+}
+
+// "from a Apply" is the kind of seam that makes a message read as generated
+// rather than written. Terraform's OperationTypeApply has to become English.
+func TestTheOperationReadsAsEnglish(t *testing.T) {
+	lock := ReadStateLock(lockedOutput)
+
+	advice := lock.Advice("/x", lock.Created.Add(time.Minute))
+	if strings.Contains(advice, "a Apply") {
+		t.Errorf("the operation was printed raw:\n%s", advice)
+	}
+	// "from an apply", not merely "an apply": the paragraph below the holder line
+	// contains that phrase too, and asserting on it alone passed while the holder
+	// line still read "from a Apply".
+	if !strings.Contains(advice, "from an apply") {
+		t.Errorf("it does not say what kind of run holds it:\n%s", advice)
+	}
+
+	// Everything else takes "a", and still lowercase.
+	plan := ReadStateLock(strings.ReplaceAll(lockedOutput,
+		"OperationTypeApply", "OperationTypePlan"))
+	if got := plan.Holder(plan.Created); !strings.Contains(got, "a plan") {
+		t.Errorf("holder = %q", got)
+	}
+}
+
+// Holder is the one line the unlock prompt stands on: who, doing what, how long
+// ago. Without those it is a question nobody can answer.
+func TestTheHolderLineCarriesTheDecision(t *testing.T) {
+	lock := ReadStateLock(lockedOutput)
+
+	holder := lock.Holder(lock.Created.Add(48 * time.Minute))
+
+	for _, want := range []string{"someone@their-laptop.local", "an apply", "48 minute(s) ago"} {
+		if !strings.Contains(holder, want) {
+			t.Errorf("the holder line does not say %q: %q", want, holder)
+		}
+	}
+
+	// And it still says something when terraform named nobody.
+	anonymous := StateLock{ID: "x"}
+	if got := anonymous.Holder(time.Now()); got == "" {
+		t.Error("an unnamed holder produced an empty line")
+	}
+}
+
+// The id reaches a command line, and the only way a value there turns into a
+// flag is by starting with a dash.
+func TestAnIDArgvWouldMisreadIsRefused(t *testing.T) {
+	cli := &CLI{execPath: "/nonexistent/terraform"}
+
+	// Checked by the message, not merely by there being an error: the exec path
+	// does not exist, so running it fails too, and "it returned an error" would
+	// pass with no validation at all.
+	for _, id := range []string{"", "   ", "-force", "--help"} {
+		err := cli.ForceUnlock(context.Background(), Unit{Dir: "/tmp"}, id)
+		if err == nil {
+			t.Errorf("%q was accepted", id)
+			continue
+		}
+		if !strings.Contains(err.Error(), "is not a lock id") {
+			t.Errorf("%q reached terraform instead of being refused: %v", id, err)
+		}
 	}
 }
