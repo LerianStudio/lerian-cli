@@ -1164,8 +1164,29 @@ which is a different thing from guessing:
 complete answer on its own; the other row publishes an estate's layout to a
 server, and a stray enter must not be what does that.
 
-Publishing takes three separate answers, because each is something somebody could
-want different: yes, this name, this visibility. **Private is the default and the
+**Where it goes is asked, not assumed.** `gh` creates in the personal account
+when the name is unqualified, and somebody whose work lives in an organization
+finds that out after the push — with the estate on a server under their own name,
+and a second repository to delete:
+
+```
+  Where should it be created?
+  The account signed in to gh, and the organizations it belongs to.
+❯ octocat             your account
+  acme                organization
+  acme-labs           organization
+  somewhere else      an owner this login's token cannot list
+```
+
+The name is then qualified with it — `acme/estate`, never a bare `estate` that
+`gh` would place somewhere else. Skipped entirely for an account with no
+organizations, which would be a question with one answer. The list comes from the
+API and needs the `read:org` scope; without it only the account is listed, and
+the line above says so rather than letting a short list read as "those
+organizations do not exist".
+
+Publishing takes four separate answers, because each is something somebody could
+want different: yes, this owner, this name, this visibility. **Private is the default and the
 row the cursor starts on.** The repository holds no credentials, but it is a map
 of an estate — account numbers, VPC layout, cluster names — and public is a
 decision to arrive at on purpose. The description is written rather than asked

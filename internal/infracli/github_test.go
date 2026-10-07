@@ -32,6 +32,8 @@ type fakeGitHub struct {
 	protocol    string
 	protocolSet bool
 
+	owners []infra.GHOwner
+
 	// failFirst fails the first create only, so a retry can be observed.
 	failFirst error
 	attempts  int
@@ -58,6 +60,13 @@ func (f *fakeGitHub) GHAccounts(context.Context) []infra.GHAccount {
 		return nil
 	}
 	return []infra.GHAccount{{Host: "github.com", Login: "octocat", Active: true}}
+}
+
+func (f *fakeGitHub) GHOwners(context.Context) []infra.GHOwner {
+	if f.owners != nil {
+		return f.owners
+	}
+	return []infra.GHOwner{{Login: "octocat"}}
 }
 
 func (f *fakeGitHub) GHSwitch(_ context.Context, account infra.GHAccount) error {
@@ -87,7 +96,7 @@ func (f *fakeGitHub) CreateRepository(_ context.Context, dir string, repo infra.
 		return "", f.failFirst
 	}
 	f.created, f.dir = &repo, dir
-	return "https://github.com/octocat/" + repo.Name, nil
+	return "https://github.com/" + repo.Name, nil
 }
 
 // withGitHub swaps the real gh for the duration of one test.
@@ -118,8 +127,10 @@ func TestCreatingOnGitHubIsPrivateUnlessAskedOtherwise(t *testing.T) {
 	if !gh.created.Private {
 		t.Error("the repository was created public by default")
 	}
-	if gh.created.Name != "some-export" {
-		t.Errorf("named it %q, want the directory's name offered as the default", gh.created.Name)
+	// Qualified with the owner, always: an unqualified name is created in the
+	// personal account whatever was chosen.
+	if gh.created.Name != "octocat/some-export" {
+		t.Errorf("named it %q, want the directory's name under the owner", gh.created.Name)
 	}
 	if gh.dir != "/tmp/some-export" {
 		t.Errorf("pushed from %q, not from the export", gh.dir)
@@ -459,7 +470,7 @@ func TestTheGitHubScreenWithoutATerminal(t *testing.T) {
 func TestATakenNameIsAskedAboutRatherThanGivenUpOn(t *testing.T) {
 	gh := &fakeGitHub{loggedIn: true, failFirst: &infra.CreateFailure{
 		Advice: "That name is taken.", NameTaken: true,
-	}}
+	}, owners: []infra.GHOwner{{Login: "octocat"}}}
 	withGitHub(t, gh, nil)
 
 	var out bytes.Buffer
@@ -471,7 +482,8 @@ func TestATakenNameIsAskedAboutRatherThanGivenUpOn(t *testing.T) {
 	if gh.created == nil {
 		t.Fatalf("it gave up on a name that was taken:\n%s", out.String())
 	}
-	if gh.created.Name != "estate-2" {
+	// Under the same owner: the owner was chosen and is not what went wrong.
+	if gh.created.Name != "octocat/estate-2" {
 		t.Errorf("it retried with %q", gh.created.Name)
 	}
 	// The second attempt keeps everything else that was chosen.
@@ -523,5 +535,98 @@ func TestAFailedPushDoesNotSuggestStartingOver(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "The repository was created") {
 		t.Errorf("it did not say the repository exists:\n%s", out.String())
+	}
+}
+
+// gh creates in the personal account when the name is unqualified. Somebody
+// whose work lives in an organization finds that out after the push — with the
+// estate on a server under their own name, and a second repository to delete.
+func TestTheOwnerIsChosenRatherThanAssumed(t *testing.T) {
+	gh := &fakeGitHub{loggedIn: true, owners: []infra.GHOwner{
+		{Login: "octocat"},
+		{Login: "acme", Organization: true},
+		{Login: "acme-labs", Organization: true},
+	}}
+	withGitHub(t, gh, nil)
+
+	var out bytes.Buffer
+	// publish · the second owner (acme) · the default name · private
+	ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq)
+
+	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+
+	if gh.created == nil {
+		t.Fatalf("nothing was created:\n%s", painted.String())
+	}
+	if gh.created.Name != "acme/some-export" {
+		t.Errorf("created %q — the organization that was chosen was not used", gh.created.Name)
+	}
+	// The organizations are distinguishable from the account at a glance: they
+	// read the same on a command line and are not the same place for an estate.
+	// Checked per row, not anywhere on screen — the purpose line above the menu
+	// says "organizations" too, and would satisfy a looser test on its own.
+	if !rowSays(painted.String(), "acme", "organization") {
+		t.Errorf("the acme row does not say it is an organization:\n%s", painted.String())
+	}
+	if !rowSays(painted.String(), "octocat", "your account") {
+		t.Errorf("the account row does not say it is yours:\n%s", painted.String())
+	}
+}
+
+// rowSays is whether some painted line holds both the label and its note.
+func rowSays(painted, label, note string) bool {
+	for _, line := range strings.Split(painted, "\n") {
+		if strings.Contains(line, label) && strings.Contains(line, note) {
+			return true
+		}
+	}
+	return false
+}
+
+// An account with no organizations gets the question it would always answer the
+// same way, which is no question at all.
+func TestOneOwnerIsNotAQuestion(t *testing.T) {
+	gh := &fakeGitHub{loggedIn: true, owners: []infra.GHOwner{{Login: "octocat"}}}
+	withGitHub(t, gh, nil)
+
+	var out bytes.Buffer
+	ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq)
+
+	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+
+	if strings.Contains(painted.String(), "Where should it be created?") {
+		t.Errorf("it asked with one answer available:\n%s", painted.String())
+	}
+	if gh.created == nil || gh.created.Name != "octocat/some-export" {
+		t.Errorf("created %+v", gh.created)
+	}
+}
+
+// The organizations come from the API and need the read:org scope. Without it
+// the list is the account alone — which looks like the organizations do not
+// exist rather than like they were not visible.
+func TestAShortOwnerListSaysWhyItMightBeShort(t *testing.T) {
+	alone := []infra.GHOwner{{Login: "octocat"}}
+	if purpose := ownerPurpose(alone); !strings.Contains(purpose, "read:org") {
+		t.Errorf("it does not explain the empty list: %q", purpose)
+	}
+
+	withOrg := []infra.GHOwner{{Login: "octocat"}, {Login: "acme", Organization: true}}
+	if purpose := ownerPurpose(withOrg); strings.Contains(purpose, "read:org") {
+		t.Errorf("it warns about a scope that is plainly working: %q", purpose)
+	}
+}
+
+// Somebody who typed an owner into the name prompt meant it. Prefixing that
+// would produce an owner nobody has.
+func TestAnOwnerTypedIntoTheNameIsKept(t *testing.T) {
+	if got := qualify("octocat", "acme/estate"); got != "acme/estate" {
+		t.Errorf("qualify produced %q", got)
+	}
+	if got := qualify("octocat", "estate"); got != "octocat/estate" {
+		t.Errorf("qualify produced %q", got)
+	}
+	if got := qualify("", "estate"); got != "estate" {
+		t.Errorf("qualify invented an owner: %q", got)
 	}
 }

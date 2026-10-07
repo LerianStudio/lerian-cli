@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
@@ -134,6 +135,7 @@ func pushByHand(out io.Writer, destination string) {
 type gitHub interface {
 	GHStatus(ctx context.Context) (infra.GHAccount, bool)
 	GHAccounts(ctx context.Context) []infra.GHAccount
+	GHOwners(ctx context.Context) []infra.GHOwner
 	GHLogin(ctx context.Context, in io.Reader, out, errOut io.Writer) error
 	GHSwitch(ctx context.Context, account infra.GHAccount) error
 	GHLogout(ctx context.Context, account infra.GHAccount) error
@@ -244,13 +246,19 @@ func createOnGitHub(
 	gh gitHub,
 	destination, description string,
 ) {
-	name, err := ask.ask("What should the repository be called?",
-		"<name> for your own account, or <owner>/<name> for an organization.",
-		filepath.Base(destination), "")
+	owner, err := pickOwner(ctx, ask, gh)
 	if err != nil {
 		pushByHand(out, destination)
 		return
 	}
+
+	name, err := ask.ask("What should the repository be called?",
+		nameUnder(owner), filepath.Base(destination), "")
+	if err != nil {
+		pushByHand(out, destination)
+		return
+	}
+	name = qualify(owner, name)
 
 	// Private first, and private is where the cursor starts. This repository is
 	// not a secret in the sense of holding credentials, but it is a map of an
@@ -272,6 +280,80 @@ func createOnGitHub(
 		Private:     visibility == "private",
 		Description: description,
 	})
+}
+
+// ownerTypeAnother is the row for an owner the API did not list.
+const ownerTypeAnother = "\x00owner"
+
+// pickOwner asks where the repository goes: the account, or one of the
+// organizations it belongs to.
+//
+// Asked because the alternative is silent. gh creates in the personal account
+// when the name is unqualified, and somebody whose work lives in an organization
+// finds that out after the push — with the estate on a server under their own
+// name, and a second repository to delete.
+//
+// Skipped when there is one answer. An account with no organizations gets the
+// question it would always answer the same way, which is no question at all.
+func pickOwner(ctx context.Context, ask *prompter, gh gitHub) (string, error) {
+	owners := gh.GHOwners(ctx)
+	if len(owners) == 1 {
+		return owners[0].Login, nil
+	}
+
+	options := make([]option, 0, len(owners)+1)
+	for _, owner := range owners {
+		note := "your account"
+		if owner.Organization {
+			note = "organization"
+		}
+		options = append(options, option{value: owner.Login, label: owner.Login, note: note})
+	}
+	options = append(options, option{value: ownerTypeAnother, label: "somewhere else",
+		note: "an owner this login's token cannot list"})
+
+	picked, err := ask.pick("Where should it be created?",
+		ownerPurpose(owners), "", options, "")
+	if err != nil {
+		return "", err
+	}
+	if picked != ownerTypeAnother {
+		return picked, nil
+	}
+	return ask.ask("Which owner?", "A user or organization you can create in.", "", "")
+}
+
+// ownerPurpose says why the list might be shorter than expected.
+//
+// The organizations come from the API, and reading them needs the read:org
+// scope. Without it the list is the account alone — which looks like the
+// organizations do not exist rather than like they were not visible.
+func ownerPurpose(owners []infra.GHOwner) string {
+	for _, owner := range owners {
+		if owner.Organization {
+			return "The account signed in to gh, and the organizations it belongs to."
+		}
+	}
+	return "Only your account is listed. Organizations need the read:org scope: gh auth refresh -s read:org"
+}
+
+// nameUnder is the purpose line of the name prompt, which has to say where the
+// name lands — by then the owner is two questions ago.
+func nameUnder(owner string) string {
+	if owner == "" {
+		return "The name only. Where it goes was the previous answer."
+	}
+	return "It will be created as " + owner + "/<name>."
+}
+
+// qualify puts the owner in front of the name, unless the name already carries
+// one. Somebody who typed "acme/estate" at the name prompt meant it, and
+// prefixing that would produce an owner nobody has.
+func qualify(owner, name string) string {
+	if owner == "" || strings.Contains(name, "/") {
+		return name
+	}
+	return owner + "/" + name
 }
 
 // createWithRetries creates the repository, asking for another name when that is
@@ -324,7 +406,10 @@ func createWithRetries(
 			pushByHand(out, destination)
 			return
 		}
-		repo.Name = another
+		// Under the same owner. The owner was chosen and is not what went wrong;
+		// asking for it again would be a second question about a settled answer,
+		// and dropping it would quietly move the retry to the personal account.
+		repo.Name = qualify(ownerOf(repo.Name), another)
 	}
 }
 
@@ -392,4 +477,12 @@ func baseNames(paths []string) []string {
 		out = append(out, filepath.Base(path))
 	}
 	return out
+}
+
+// ownerOf is the owner part of a qualified name, or empty when there is none.
+func ownerOf(name string) string {
+	if cut := strings.Index(name, "/"); cut >= 0 {
+		return name[:cut]
+	}
+	return ""
 }

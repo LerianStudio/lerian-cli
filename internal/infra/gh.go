@@ -253,6 +253,61 @@ func (g GHCLI) SetGitProtocol(ctx context.Context, protocol string) error {
 	return nil
 }
 
+// GHOwner is somewhere a repository can be created: the signed-in account, or
+// an organization it belongs to.
+type GHOwner struct {
+	Login string
+	// Organization distinguishes the two. A personal account and an organization
+	// read the same on a command line and are not the same place to put an
+	// estate.
+	Organization bool
+}
+
+// GHOwners lists where this login can create a repository.
+//
+// Asked rather than assumed. gh creates in the personal account when the name is
+// unqualified, which is the wrong place for anybody whose work lives in an
+// organization — and they find out after the push, with the estate already on a
+// server under their own name.
+//
+// The organizations need the read:org scope. Without it the API answers with an
+// error and this returns the account alone, which is honest: it is what gh could
+// see. The screen still offers typing an owner by hand.
+func (g GHCLI) GHOwners(ctx context.Context) []GHOwner {
+	login, err := g.apiField(ctx, "user", ".login")
+	if err != nil || login == "" {
+		return nil
+	}
+	owners := []GHOwner{{Login: login}}
+
+	orgs, err := g.apiField(ctx, "user/orgs", ".[].login")
+	if err != nil {
+		return owners
+	}
+	for _, org := range strings.Split(orgs, "\n") {
+		if org = strings.TrimSpace(org); org != "" {
+			owners = append(owners, GHOwner{Login: org, Organization: true})
+		}
+	}
+	return owners
+}
+
+// apiField runs one gh api call and returns the jq-filtered output.
+func (g GHCLI) apiField(ctx context.Context, path, filter string) (string, error) {
+	// #nosec G204 -- the binary is the literal "gh" and both arguments are
+	// literals supplied by the two callers above. No shell is involved.
+	command := exec.CommandContext(ctx, g.binary(), "api", path, "--jq", filter)
+
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	output, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("infra: gh api %s failed: %w\n%s", path, err,
+			strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 // GHRepo is the repository to create.
 type GHRepo struct {
 	// Name is what gh is given: "my-infrastructure", or "org/my-infrastructure"
