@@ -334,6 +334,12 @@ func TestTheQuestionIsNotAskedTwice(t *testing.T) {
 // the step there would make somebody reopen the menu to say the same thing with
 // a different path.
 func TestAnOccupiedDestinationIsAskedAboutAgain(t *testing.T) {
+	// A checkout of its own. Without one, resolveLayout fails before the
+	// destination is ever looked at, and the test passes or fails on whether the
+	// machine running it happens to have a clone — which is how this first went
+	// green here and red in CI.
+	t.Setenv("LERIAN_TF_REPO", fakeCheckout(t, "", ""))
+
 	occupied := t.TempDir()
 	if err := os.WriteFile(filepath.Join(occupied, "mine.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -361,15 +367,17 @@ func TestAnOccupiedDestinationIsAskedAboutAgain(t *testing.T) {
 // Closing the step over it sends somebody back through the menu to type a
 // different path — which is what asking again does for them.
 func TestAPathThatCanNeverWorkIsAskedAboutAgain(t *testing.T) {
-	working, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The checkout this run reads is protected, and it is also a directory this
+	// test made. Pointing the destination at the working directory would prove
+	// the same thing while risking the source tree if the safeguard regressed —
+	// which has happened here once already.
+	checkout := fakeCheckout(t, "", "")
+	t.Setenv("LERIAN_TF_REPO", checkout)
 
 	var out bytes.Buffer
-	// The working directory — protected, always — then q at the prompt that
-	// follows, which only arrives if the question came back.
-	ask, painted := selectorFor(t, working+"\n"+"q\n")
+	// The checkout itself — refused, always — then q at the prompt that follows,
+	// which only arrives if the question came back.
+	ask, painted := selectorFor(t, checkout+"\n"+"q\n")
 
 	runErr := exportFromMenu(context.Background(), ask, &out)
 
