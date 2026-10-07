@@ -695,7 +695,7 @@ func TestReleasingALockTakesTwoAnswers(t *testing.T) {
 
 	// Guarded twice: offerUnlock returns early, and the selector refuses to run
 	// without a terminal anyway. Removing the early return does not change what
-	// this asserts — the behaviour is what matters, and it holds either way.
+	// this asserts — the behavior is what matters, and it holds either way.
 	t.Run("nothing is offered without a terminal", func(t *testing.T) {
 		var out bytes.Buffer
 		spy := &spyUnlocker{}
