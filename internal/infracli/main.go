@@ -830,9 +830,26 @@ func printFailureLogs(out io.Writer, results []infra.StageResult, logs *infra.Fi
 				}
 				fmt.Fprintf(out, "\n---- %s failed ----\n%s\n  full log: %s\n",
 					unit.Unit.Name, indent(unit.Err.Error(), "  "), logs.Path(unit.Unit))
+				printFailureAdvice(out, unit)
 			}
 		}
 	}
+}
+
+// printFailureAdvice turns the failures worth recognizing into what to do about
+// them.
+//
+// Terraform's own message is kept above this, always: it is accurate, and this
+// adds to it rather than replacing it. What it adds is the part that is specific
+// to this machine and this run — the directory to pass to -chdir, the id already
+// filled in — which is exactly what somebody retypes by hand from a web page
+// while the run they were in the middle of sits there failed.
+func printFailureAdvice(out io.Writer, unit infra.UnitResult) {
+	lock := infra.ReadStateLock(unit.Err.Error())
+	if lock == nil {
+		return
+	}
+	fmt.Fprintf(out, "\n%s\n", indent(lock.Advice(unit.Unit.Dir, time.Now()), "  "))
 }
 
 // guardCredentialLifetime says out loud how long the run's credentials have, and
