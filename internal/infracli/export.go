@@ -87,8 +87,154 @@ func ExportRepository(ctx context.Context, out io.Writer, destination string) er
 	}
 
 	fmt.Fprintf(out, "  %d file(s), one commit, branch main.\n\n", written+2)
-	fmt.Fprintf(out, "  Next:\n    cd %s\n    git remote add origin <url>\n    git push -u origin main\n\n", absolute)
+	offerGitHub(ctx, newPrompter(out), out, absolute)
 	return nil
+}
+
+// pushByHand is what to do with the repository when this tool is not doing it.
+func pushByHand(out io.Writer, destination string) {
+	fmt.Fprintf(out, "  Next:\n    cd %s\n    git remote add origin <url>\n    git push -u origin main\n\n",
+		destination)
+}
+
+// gitHub is what the offer below needs from gh, as an interface so the whole
+// flow can be exercised without a GitHub account and without creating anything.
+type gitHub interface {
+	GHStatus(ctx context.Context) (infra.GHAccount, bool)
+	GHLogin(ctx context.Context, in io.Reader, out, errOut io.Writer) error
+	CreateRepository(ctx context.Context, dir string, repo infra.GHRepo) (string, error)
+}
+
+// newGitHub is a variable for the same reason.
+var newGitHub = func() (gitHub, error) {
+	gh, err := infra.NewGHCLI()
+	if err != nil {
+		return nil, err
+	}
+	return gh, nil
+}
+
+// offerGitHub asks whether to put the export on GitHub, and does it.
+//
+// The export deliberately stops before the remote: where somebody's
+// infrastructure gets published is not a guess to make. Asking is not guessing —
+// and the alternative, which is what this replaces, was a three-line recipe
+// ending in a repository they still had to go and create in a browser first.
+//
+// Nothing happens without three separate answers: yes, this name, this
+// visibility. Each one is a thing somebody could want different, and the last is
+// the one that cannot be taken back by deleting a directory.
+func offerGitHub(ctx context.Context, ask *prompter, out io.Writer, destination string) {
+	if ask == nil || !ask.interactive {
+		pushByHand(out, destination)
+		return
+	}
+
+	gh, err := newGitHub()
+	if err != nil {
+		// Said, not hidden. The row in `lerian infra check` says the same thing,
+		// and somebody who expected to be offered this is owed the reason.
+		fmt.Fprintf(out, "  %s\n\n", newStyle(out).dim(
+			"gh is not installed, so the repository cannot be created from here"))
+		pushByHand(out, destination)
+		return
+	}
+
+	wanted, err := ask.pick("Create this on GitHub and push it?",
+		"Creates the repository and pushes this commit to it. Nothing else is published.", "",
+		[]option{
+			{value: "yes", label: "create it on GitHub", note: "gh repo create, then push"},
+			{value: "no", label: "not now", note: "leaves the commands below"},
+		}, "")
+	if err != nil || wanted != "yes" {
+		pushByHand(out, destination)
+		return
+	}
+
+	if !signedIntoGitHub(ctx, ask, out, gh) {
+		pushByHand(out, destination)
+		return
+	}
+	createOnGitHub(ctx, ask, out, gh, destination)
+}
+
+// signedIntoGitHub makes sure gh can act, logging in if it cannot.
+//
+// Offered rather than reported. "Run gh auth login and start over" is a round
+// trip through a second program, for a command this one can run — and it is run
+// with the terminal handed over, because gh prints a code to paste into a
+// browser and waits for it.
+func signedIntoGitHub(ctx context.Context, ask *prompter, out io.Writer, gh gitHub) bool {
+	if _, loggedIn := gh.GHStatus(ctx); loggedIn {
+		return true
+	}
+
+	answer, err := ask.pick("gh is not logged in. Log in now?",
+		"Runs gh auth login, which prints a code and opens a browser.", "",
+		[]option{
+			{value: "yes", label: "log in now", note: "hands this terminal to gh"},
+			{value: "no", label: "cancel", note: "leaves the commands below"},
+		}, "")
+	if err != nil || answer != "yes" {
+		return false
+	}
+
+	fmt.Fprintln(out)
+	if err := gh.GHLogin(ctx, os.Stdin, out, out); err != nil {
+		fmt.Fprintf(out, "\n  %v\n\n", err)
+		return false
+	}
+
+	// Asked again rather than assumed: gh auth login exits zero on paths that
+	// leave no usable credential, and the next command would fail for a reason
+	// that reads as a bug in this one.
+	_, loggedIn := gh.GHStatus(ctx)
+	if !loggedIn {
+		fmt.Fprintf(out, "\n  %s\n\n", "gh still reports no login, so nothing was created.")
+	}
+	return loggedIn
+}
+
+// createOnGitHub asks for the name and the visibility, then creates it.
+func createOnGitHub(ctx context.Context, ask *prompter, out io.Writer, gh gitHub, destination string) {
+	name, err := ask.ask("What should the repository be called?",
+		"<name> for your own account, or <owner>/<name> for an organization.",
+		filepath.Base(destination), "")
+	if err != nil {
+		pushByHand(out, destination)
+		return
+	}
+
+	// Private first, and private is where the cursor starts. This repository is
+	// not a secret in the sense of holding credentials, but it is a map of an
+	// estate — account numbers, VPC layout, cluster names — and public is a
+	// decision somebody should arrive at deliberately.
+	visibility, err := ask.pick("Public or private?",
+		"The next answer creates "+name+" and pushes this commit.", "",
+		[]option{
+			{value: "private", label: "private", note: "only you and who you invite"},
+			{value: "public", label: "public", note: "anyone can read your infrastructure"},
+		}, "")
+	if err != nil {
+		pushByHand(out, destination)
+		return
+	}
+
+	url, err := gh.CreateRepository(ctx, destination, infra.GHRepo{
+		Name:    name,
+		Private: visibility == "private",
+	})
+	if err != nil {
+		fmt.Fprintf(out, "\n  %v\n\n", err)
+		pushByHand(out, destination)
+		return
+	}
+
+	if url == "" {
+		fmt.Fprintf(out, "  Created and pushed.\n\n")
+		return
+	}
+	fmt.Fprintf(out, "  Created and pushed: %s\n\n", url)
 }
 
 // refuseNonEmpty keeps the export from writing into somebody's existing work.

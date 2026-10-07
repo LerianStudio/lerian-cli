@@ -286,11 +286,25 @@ checks the machine before it asks anything:
   ==> Environment check
   ok       terraform    /opt/homebrew/bin/terraform
   ok       aws          /opt/homebrew/bin/aws
+  ok       gh           /opt/homebrew/bin/gh  (octocat)
   ok       templates    ~/.lerian/lerian-terraform-foundation @ v1.6.0
   ok       aws session  8 of 9 profiles resolve: dev, stg, prd and 5 more
 
-  4 checks, all ok.
+  5 checks, all ok.
 ```
+
+**`gh` is reported and never gates.** Nothing in a deploy touches GitHub; it is
+reached only by somebody who asked for the exported repository to be created for
+them. A machine without it reads `absent`, in grey, and the run carries on — a
+red line for a tool no run calls is how people learn to read past red lines:
+
+```
+  absent   gh           not installed — only for creating the exported repository on GitHub
+```
+
+The row is there so the absence of the offer at the end of a run is explicable
+rather than looking like the tool forgetting. `git` is not in this table at all,
+for the stricter version of the same reason: a run never clones.
 
 It then asks which account, every run:
 
@@ -667,7 +681,13 @@ removes that file, so the next run asks what it asked the first time.
   aws        /opt/homebrew/bin/aws
   git        /usr/bin/git
   kubectl    /usr/local/bin/kubectl
+  gh         /opt/homebrew/bin/gh   (octocat)
 ```
+
+The `gh` row says more than where the binary is, because "installed" is not the
+useful fact about it. The one thing it is used for — creating the exported
+repository on GitHub and pushing it — works or does not depending on a login, so
+the row says who is logged in, or that nobody is.
 
 Grouped by who owns each thing, because the same word means different things in
 different groups: a profile under **This tool** is a Lerian platform login, a
@@ -1085,9 +1105,41 @@ editing the one Terraform does not read.
 templates and exactly backwards here — in this repository those files are the
 content. What stays ignored is what no repository should carry.
 
-**It stops before the remote.** `git remote add` and `git push` are yours:
-pushing is irreversible in a way copying is not, and where your infrastructure
-gets published is not this tool's guess to make.
+**It stops before the remote, unless you say otherwise.** Where your
+infrastructure gets published is not this tool's guess to make — so it asks,
+which is a different thing from guessing:
+
+```
+  Create this on GitHub and push it?
+  Creates the repository and pushes this commit to it. Nothing else is published.
+❯ create it on GitHub  gh repo create, then push
+  not now               leaves the commands below
+```
+
+Three separate answers, because each is something somebody could want different:
+yes, this name, this visibility. **Private is the default and the row the cursor
+starts on.** The repository holds no credentials, but it is a map of an estate —
+account numbers, VPC layout, cluster names — and public is a decision to arrive
+at on purpose.
+
+It goes through `gh` rather than the GitHub API. `gh` already holds the
+credential, in the system keyring, shared with every other `gh` on the machine; a
+token this CLI stored itself would be a second place for a secret to live and a
+second place to revoke it from. If `gh` is installed but logged out, it offers
+`gh auth login` and hands over the terminal — the login prints a code to paste
+into a browser, and a login whose output this tool buffered would be a prompt
+nobody can see. Then it asks `gh` again rather than assuming, because
+`gh auth login` exits zero on paths that leave no usable credential.
+
+Declining, no `gh`, a failed create — every one of them falls back to the three
+commands, said out loud:
+
+```
+  Next:
+    cd /Users/you/work/my-infrastructure
+    git remote add origin <url>
+    git push -u origin main
+```
 
 The directory layout is kept as it was, `examples/aws/...` and all, so the
 modules' relative paths still resolve. The README it writes says so, along with
@@ -1377,6 +1429,7 @@ See `.github/workflows/` for CI/CD configuration.
 
 - Go 1.26 or higher
 - kubectl (for Kubernetes operations)
+- gh (optional — only to create the exported repository on GitHub)
 - Make
 
 ### Building from Source

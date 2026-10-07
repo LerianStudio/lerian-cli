@@ -50,6 +50,7 @@ func DescribeMachine(ctx context.Context, out io.Writer) {
 	for _, name := range []string{"terraform", "aws", "git", "kubectl"} {
 		line(name, binaryPath(name))
 	}
+	describeGH(ctx, line)
 	fmt.Fprintln(out)
 }
 
@@ -305,4 +306,29 @@ func sorted(values []string) []string {
 	out := append([]string(nil), values...)
 	sort.Strings(out)
 	return out
+}
+
+// describeGH is the one tool row that says more than where the binary is.
+//
+// Installed is not the fact anybody needs. The offer attached to gh — create the
+// exported repository on GitHub and push it — works or does not depending on a
+// login, and a row reading only "/opt/homebrew/bin/gh" answers a question nobody
+// asked while leaving the real one open.
+func describeGH(ctx context.Context, line func(label, value string)) {
+	gh, err := infra.NewGHCLI()
+	if err != nil {
+		line("gh", "not installed   (only for creating the exported repository on GitHub)")
+		return
+	}
+
+	account, loggedIn := gh.GHStatus(ctx)
+	if !loggedIn {
+		line("gh", binaryPath("gh")+"   (not logged in — lerian config repo offers it)")
+		return
+	}
+	if name := account.String(); name != "not logged in" {
+		line("gh", binaryPath("gh")+"   ("+name+")")
+		return
+	}
+	line("gh", binaryPath("gh")+"   (logged in)")
 }

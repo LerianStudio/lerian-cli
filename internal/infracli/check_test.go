@@ -905,3 +905,56 @@ func TestAnSSOProfileIsStillOfferedTheLogin(t *testing.T) {
 		t.Errorf("an expired SSO profile is not offered the login:\n%s", detail)
 	}
 }
+
+// An optional row reports and never gates. gh is the only one: nothing in a
+// deploy touches GitHub, and failing a run over a tool it never calls is the
+// mistake the ordering in this package exists to avoid — the same reason git is
+// left out of the preflight entirely.
+func TestAnOptionalCheckReportsWithoutFailingTheRun(t *testing.T) {
+	var out bytes.Buffer
+
+	err := reportChecks(&out, []checkResult{
+		{name: "terraform", summary: "/usr/local/bin/terraform", ok: true},
+		{name: "gh", summary: "not installed", ok: false, optional: true,
+			detail: "install it from https://cli.github.com"},
+	}, "")
+	if err != nil {
+		t.Fatalf("an absent optional tool failed the check: %v", err)
+	}
+
+	report := out.String()
+	if !strings.Contains(report, "gh") || !strings.Contains(report, "absent") {
+		t.Errorf("the row was not reported, or not as absent:\n%s", report)
+	}
+	if strings.Contains(report, "missing") {
+		t.Errorf("an optional tool was reported as missing:\n%s", report)
+	}
+	// No remediation block either. The summary says what it is for; a paragraph
+	// of install instructions under every machine without gh is how a clean
+	// report learns to look like a failing one.
+	if strings.Contains(report, "cli.github.com") {
+		t.Errorf("an optional row printed a remediation:\n%s", report)
+	}
+	if !strings.Contains(report, "all ok") {
+		t.Errorf("the verdict was not clean:\n%s", report)
+	}
+}
+
+// And a blocking row still blocks, with the optional one beside it.
+func TestABlockingCheckStillFailsBesideAnOptionalOne(t *testing.T) {
+	var out bytes.Buffer
+
+	err := reportChecks(&out, []checkResult{
+		{name: "terraform", summary: "not usable", ok: false, detail: "install terraform"},
+		{name: "gh", summary: "not installed", ok: false, optional: true},
+	}, "")
+	if err == nil {
+		t.Fatal("a missing terraform did not fail the check")
+	}
+	if strings.Contains(err.Error(), "gh") {
+		t.Errorf("the optional tool was named as a failure: %v", err)
+	}
+	if !strings.Contains(out.String(), "1 of 2 checks failed") {
+		t.Errorf("the optional row was counted:\n%s", out.String())
+	}
+}
