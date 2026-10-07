@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -13,6 +15,7 @@ import (
 // Sentinel rows for the menu that follows a run.
 const (
 	afterDetail  = "\x00detail"
+	afterExport  = "\x00export"
 	afterKubectl = "\x00kubectl"
 	afterDone    = "\x00done"
 )
@@ -70,6 +73,11 @@ func afterRun(
 		case picked == afterDetail:
 			printPlanDetail(ctx, terraform, runner, stages, out)
 			continue
+		case picked == afterExport:
+			if err := exportFromMenu(ctx, ask, out); err != nil {
+				fmt.Fprintf(out, "\n  %v\n\n", err)
+			}
+			continue
 		case picked == afterKubectl:
 			if err := point(); err != nil {
 				// Said and carried on. Nothing was deployed differently because
@@ -85,6 +93,26 @@ func afterRun(
 		}
 		done = infra.Action(picked)
 	}
+}
+
+// exportFromMenu asks where the repository goes and writes it.
+//
+// Asked rather than defaulted to a path: this creates a directory somebody is
+// going to push, and guessing where their infrastructure lives on disk is the
+// kind of guess that gets a tree written somewhere they did not expect.
+func exportFromMenu(ctx context.Context, ask *prompter, out io.Writer) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+
+	where, err := ask.ask("Where should the repository go?",
+		"A directory that does not exist yet. Nothing is pushed; the remote stays yours.",
+		filepath.Join(home, "infrastructure"), "lerian config repo <path>")
+	if err != nil {
+		return err
+	}
+	return ExportRepository(ctx, out, where)
 }
 
 // afterPurpose says what the rows below operate on, which is the part that makes
@@ -122,6 +150,11 @@ func afterOptions(done infra.Action, cluster bool) []option {
 	}
 	options = append(options,
 		option{value: string(infra.ActionOutput), label: "output", note: "reads terraform output"},
+		// Here because this is when the configuration is complete and somebody is
+		// looking at what it just built. Offering it only under `config` meant
+		// finding a command whose existence nobody had a reason to suspect.
+		option{value: afterExport, label: "copy this into a repository of your own",
+			note: "the roots you configured, their modules, and a git history"},
 	)
 
 	// destroy last among the actions, and never beside apply. Everything above is

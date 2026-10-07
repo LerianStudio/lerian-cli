@@ -237,3 +237,30 @@ func TestNoOfferBeforeThereIsACluster(t *testing.T) {
 		t.Errorf("an offer was made with no cluster:\n%s", painted.String())
 	}
 }
+
+// The configuration is complete exactly when a run finishes, and somebody is
+// looking at what it just built. Offering this only under `config` meant finding
+// a command whose existence nobody had a reason to suspect.
+func TestTakingItAwayIsOfferedAfterARun(t *testing.T) {
+	for _, done := range []infra.Action{infra.ActionPlan, infra.ActionApply} {
+		t.Run(string(done), func(t *testing.T) {
+			values := make([]string, 0, 8)
+			for _, opt := range afterOptions(done, false) {
+				values = append(values, opt.value)
+			}
+
+			export := indexOf(values, afterExport)
+			if export < 0 {
+				t.Fatalf("the export is not offered after %s: %v", done, values)
+			}
+			// Above destroy and never on the row the cursor starts on: this one
+			// writes a tree somewhere, which is not what a stray enter should do.
+			if export == 0 {
+				t.Error("the cursor starts on the export")
+			}
+			if destroy := indexOf(values, string(infra.ActionDestroy)); destroy >= 0 && export > destroy {
+				t.Errorf("the export sits below destroy: %v", values)
+			}
+		})
+	}
+}

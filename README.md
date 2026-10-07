@@ -1047,6 +1047,11 @@ This writes a copy that does not:
     git push -u origin main
 ```
 
+**It is also offered where the thought occurs.** The menu that follows a run
+carries the same row, between `output` and `destroy`. The moment somebody has a
+reason to want this is the moment they are looking at what was just built — not
+later, having guessed that a command they have never seen exists.
+
 **What goes in.** The roots that have an `envs/<env>.tfvars` — what was
 configured, not all twenty-seven products, which would be directories of someone
 else's decisions. The modules those roots reach are **followed**, through each
