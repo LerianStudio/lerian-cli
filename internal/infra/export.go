@@ -460,6 +460,13 @@ func WriteExportMeta(destination, templatesRef string, plan ExportPlan) error {
 	if err := os.WriteFile(filepath.Join(destination, "README.md"), []byte(readme), 0o600); err != nil {
 		return fmt.Errorf("infra: cannot write README.md: %w", err)
 	}
+
+	// 0o700: a Makefile is read, not executed, but the rest of this tree is 0o600
+	// and a file nobody can read is worse than one nobody runs.
+	if err := os.WriteFile(filepath.Join(destination, "Makefile"),
+		[]byte(WriteMakefile(plan)), 0o600); err != nil {
+		return fmt.Errorf("infra: cannot write Makefile: %w", err)
+	}
 	return nil
 }
 
@@ -551,6 +558,13 @@ func writeRunningIt(readme *strings.Builder, plan ExportPlan) {
 	fmt.Fprintf(readme, "You need Terraform, and AWS credentials for the account the "+
 		"environment names in `environments.conf` — `aws sts get-caller-identity` should "+
 		"show that account before you start.\n\n")
+
+	fmt.Fprintf(readme, "There is a Makefile, and it is the short way:\n\n")
+	fmt.Fprintf(readme, "```bash\nmake plan %s dev\nmake help\n```\n\n", firstShort(plan))
+	fmt.Fprintf(readme, "It knows each root's state key and which backend file belongs to "+
+		"which environment — the two arguments below that cannot be guessed. The rest of "+
+		"this section is what it runs, for when you want to run it yourself.\n\n")
+
 	fmt.Fprintf(readme, "Replace `dev` with the environment you want. A plan writes nothing; "+
 		"`terraform apply` is the one that does.\n\n")
 

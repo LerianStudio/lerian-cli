@@ -1334,6 +1334,37 @@ is a no-op. If anything ever sits outside `examples/aws/` — a module reached f
 above it — the prefix is kept instead, because a repository that reads nicely and
 does not `terraform init` is worse than one with an awkward directory name.
 
+**It writes a Makefile, and that is the front door.**
+
+```bash
+make plan eks dev      # or: make eks-plan ENV=dev, or make plan ROOT=infra-base/eks
+make check             # fmt and validate every root
+make help
+```
+
+Running one root by hand is five arguments, two of which cannot be guessed: the
+backend file for the environment, and the state key for that root. People get
+those right the first time by copying them out of the README and wrong every
+time after.
+
+**The roots are found, not listed.** A root is a directory with an `envs/` in it,
+and its state key is its own path — both hold for every root the templates ship.
+So a service added next month, in the same shape, appears in `make help`, gets
+its own short name and its own `<name>-plan` shortcut, with no change to the
+file. A generated list would have been accurate on the day of the export and
+wrong the first time somebody added something, which is the point of handing the
+repository over at all.
+
+A short name two roots would answer to — `products/midaz/postgres` and
+`products/ledger/postgres` are both "postgres" — is left out rather than given to
+one of them, and no shortcut is generated for it. Both stay reachable by their
+full path.
+
+`apply` and `destroy` ask before they write, the same bar the CLI sets. The
+bootstrap is named rather than found, because nothing in a directory says "this
+one creates the backend": it gets a workspace and no `-backend-config`, which is
+the one thing discovery cannot work out on its own.
+
 **Every Terraform file says where it came from.**
 
 ```hcl
