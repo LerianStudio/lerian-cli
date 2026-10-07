@@ -233,3 +233,92 @@ func makefilePlan() ExportPlan {
 		{Path: "examples/aws/infra-base/eks", StateKey: "aws/infra-base/eks/terraform.tfstate"},
 	}}
 }
+
+// The errors are where a Makefile either helps or sends somebody to read it.
+func TestTheMakefileSaysWhatIsWrong(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("no make here")
+	}
+	dir := makefileTree(t)
+
+	run := func(args ...string) string {
+		t.Helper()
+		command := exec.Command("make", args...)
+		command.Dir = dir
+		output, err := command.CombinedOutput()
+		if err == nil {
+			t.Fatalf("make %v was expected to fail:\n%s", args, output)
+		}
+		return string(output)
+	}
+
+	t.Run("a directory that holds roots is not a broken root", func(t *testing.T) {
+		out := run("plan", "infra-base", "dev")
+
+		// It used to answer "infra-base has no envs/dev.tfvars", which describes a
+		// parent directory as a root somebody forgot to configure.
+		if strings.Contains(out, "has no envs/") {
+			t.Errorf("it called a parent directory a broken root:\n%s", out)
+		}
+		if !strings.Contains(out, "is not a root — it holds:") {
+			t.Errorf("it does not say what infra-base is:\n%s", out)
+		}
+		for _, held := range []string{"infra-base/eks", "infra-base/vpc"} {
+			if !strings.Contains(out, held) {
+				t.Errorf("it does not list %s:\n%s", held, out)
+			}
+		}
+	})
+
+	t.Run("a mistyped root lists the short names too", func(t *testing.T) {
+		out := run("plan", "boostrap", "dev")
+
+		if !strings.Contains(out, "no such root: boostrap") {
+			t.Errorf("it did not name what it could not find:\n%s", out)
+		}
+		// Somebody who mistyped a short name is looking for the list of those,
+		// not for the paths they were already shown.
+		if !strings.Contains(out, "short:") || !strings.Contains(out, "eks") {
+			t.Errorf("it does not list the short names:\n%s", out)
+		}
+	})
+
+	t.Run("a missing environment says which ones exist", func(t *testing.T) {
+		out := run("plan", "eks", "producao")
+
+		if !strings.Contains(out, "has no envs/producao.tfvars") {
+			t.Errorf("it did not say what is missing:\n%s", out)
+		}
+		if !strings.Contains(out, "it has: dev stg") {
+			t.Errorf("it does not list the environments that exist:\n%s", out)
+		}
+	})
+}
+
+// A word that is itself a verb must not get a do-nothing rule: `make plan eks
+// dev plan` would redefine plan, and make warns about overriding commands —
+// which reads as a broken Makefile rather than as a stray word.
+func TestARepeatedVerbDoesNotRedefineTheTarget(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("no make here")
+	}
+	dir := makefileTree(t)
+
+	command := exec.Command("make", "-n", "plan", "eks", "dev", "plan")
+	command.Dir = dir
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("make failed: %v\n%s", err, output)
+	}
+
+	if strings.Contains(string(output), "overriding commands") {
+		t.Errorf("a repeated verb redefined the target:\n%s", output)
+	}
+	if strings.Contains(string(output), "ignoring old commands") {
+		t.Errorf("make ignored the real rule:\n%s", output)
+	}
+	// And it still did the work.
+	if !strings.Contains(string(output), "-chdir=infra-base/eks") {
+		t.Errorf("the plan did not run:\n%s", output)
+	}
+}

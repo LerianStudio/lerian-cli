@@ -186,9 +186,12 @@ release cycle; this one is yours to edit, and nothing reaches back.
 It stops before the remote: 'git remote add origin <url>' and 'git push' are
 yours, because where your infrastructure gets published is not this tool's
 guess to make.`,
-	Args: cobra.ExactArgs(1),
+	// Not ExactArgs(1): this is on the menu, where there is no command line to
+	// put a path on, and cobra's "accepts 1 arg(s), received 0" is an answer
+	// about the arity of a command nobody typed.
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := infracli.ExportRepository(cmd.Context(), cmd.OutOrStdout(), args[0])
+		err := runExportRepo(cmd, args)
 		// Leaving an occupied directory alone is a decision, not a failure. The
 		// path came in as an argument, so there is no second one to offer here —
 		// but a red line under "nothing was removed" would be alarming about a
@@ -224,6 +227,19 @@ other terminal too.`,
 		return err
 	},
 	SilenceUsage: true,
+}
+
+// runExportRepo exports to the path given, or asks for one.
+func runExportRepo(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
+	if len(args) == 1 {
+		return infracli.ExportRepository(cmd.Context(), out, args[0])
+	}
+	if infracli.CanAsk(out) {
+		return infracli.AskWhereAndExport(cmd.Context(), out)
+	}
+	return fmt.Errorf("give the directory the repository should go in\n" +
+		"  lerian config repo ~/infrastructure")
 }
 
 var configShowCmd = &cobra.Command{

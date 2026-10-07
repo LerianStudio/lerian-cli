@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -163,38 +162,7 @@ const leavingPurpose = "Last offer; afterwards: lerian config repo <path>"
 // going to push, and guessing where their infrastructure lives on disk is the
 // kind of guess that gets a tree written somewhere they did not expect.
 func exportFromMenu(ctx context.Context, ask *prompter, out io.Writer) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = ""
-	}
-
-	// Asked again when the destination was occupied and the answer was to leave
-	// it alone. That answer means "somewhere else", not "never mind" — ending the
-	// step there would make somebody reopen the menu to say the same thing with a
-	// different path.
-	for {
-		where, err := ask.ask("Where should the repository go?",
-			"A directory that does not exist yet. Nothing is pushed; the remote stays yours.",
-			filepath.Join(home, "infrastructure"), "lerian config repo <path>")
-		if err != nil {
-			return err
-		}
-
-		err = exportRepository(ctx, ask, out, where)
-
-		// Both of these are verdicts on the path that was just typed, not on the
-		// run: one says that directory is staying, the other that it can never be
-		// emptied. Returning either would close the step and send somebody back
-		// through the menu to type a different path — which is what the question
-		// coming round again does for them.
-		if errors.Is(err, infra.ErrProtectedPath) {
-			fmt.Fprintf(out, "\n  %v\n", err)
-			continue
-		}
-		if !errors.Is(err, errBack) {
-			return err
-		}
-	}
+	return askWhereAndExport(ctx, ask, out)
 }
 
 // afterPurpose says what the rows below operate on, which is the part that makes

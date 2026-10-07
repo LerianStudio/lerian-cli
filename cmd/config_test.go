@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/lerian-studio/lerian-cli/internal/config"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 	"github.com/lerian-studio/lerian-cli/internal/infracli"
@@ -426,5 +428,43 @@ func TestWithNoTerminalTheCommandStillSaysWhatItNeeds(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--clear") {
 		t.Errorf("the error does not mention how to clear it:\n%v", err)
+	}
+}
+
+// Reached off the menu there is no command line to put a path on, and cobra's
+// "accepts 1 arg(s), received 0" is an answer about the arity of a command
+// nobody typed.
+func TestConfigRepoDoesNotDemandAnArgument(t *testing.T) {
+	if use := configRepoCmd.Args; use == nil {
+		t.Fatal("the command accepts anything")
+	}
+	// No argument is allowed through to RunE, which asks.
+	if err := configRepoCmd.Args(configRepoCmd, nil); err != nil {
+		t.Errorf("the menu row cannot reach this command: %v", err)
+	}
+	// One is still the normal case.
+	if err := configRepoCmd.Args(configRepoCmd, []string{"/tmp/x"}); err != nil {
+		t.Errorf("a path was refused: %v", err)
+	}
+	// Two is a mistake worth reporting rather than ignoring.
+	if err := configRepoCmd.Args(configRepoCmd, []string{"/tmp/x", "/tmp/y"}); err == nil {
+		t.Error("a second path was accepted and would be ignored")
+	}
+}
+
+// And outside a terminal, with nothing to ask, it says what to type rather than
+// naming an argument count.
+func TestConfigRepoWithoutATerminalSaysWhatToType(t *testing.T) {
+	var out bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&out)
+
+	err := runExportRepo(command, nil)
+
+	if err == nil {
+		t.Fatal("it exported with no destination")
+	}
+	if !strings.Contains(err.Error(), "lerian config repo ~/infrastructure") {
+		t.Errorf("it does not say what to type: %v", err)
 	}
 }

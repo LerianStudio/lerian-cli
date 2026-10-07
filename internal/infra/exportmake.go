@@ -120,21 +120,39 @@ func writeMakePositional(out *strings.Builder) {
 	fmt.Fprintf(out, "  ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))\n")
 	fmt.Fprintf(out, "  ifneq ($(word 1,$(ARGS)),)\n    ROOT := $(word 1,$(ARGS))\n  endif\n")
 	fmt.Fprintf(out, "  ifneq ($(word 2,$(ARGS)),)\n    ENV := $(word 2,$(ARGS))\n  endif\n")
-	fmt.Fprintf(out, "  $(eval $(ARGS):;@:)\n")
+	fmt.Fprintf(out, "  # Do-nothing rules for the extra words — but never for a word that is\n")
+	fmt.Fprintf(out, "  # already a target. `make plan eks dev plan` would otherwise redefine\n")
+	fmt.Fprintf(out, "  # plan, and make warns about overriding it.\n")
+	fmt.Fprintf(out, "  $(eval $(filter-out $(VERBS) check help,$(ARGS)):;@:)\n")
 	fmt.Fprintf(out, "endif\n\n")
 }
 
 // writeMakeTargets is the work.
 func writeMakeTargets(out *strings.Builder) {
-	fmt.Fprintf(out, ".PHONY: plan apply destroy output init test check help require-root\n\n")
+	fmt.Fprintf(out, ".PHONY: plan apply destroy output init test check help require-root list-roots\n\n")
+
+	// HOLDS is the roots underneath a directory that is not one itself —
+	// `infra-base` holds two, and answering "infra-base has no envs/dev.tfvars"
+	// describes it as a broken root instead of as the parent of two working ones.
+	fmt.Fprintf(out, "HOLDS = $(filter $(ROOT)/%%,$(ROOTS))\n\n")
 
 	fmt.Fprintf(out, "require-root:\n")
-	fmt.Fprintf(out, "\t@test -n \"$(ROOT)\" || { echo '  which root? e.g. make plan %s dev'; "+
-		"echo '  roots: $(ROOTS)'; exit 1; }\n", "<root>")
-	fmt.Fprintf(out, "\t@test -d \"$(RESOLVED)\" || { echo \"  no such root: $(ROOT)\"; "+
-		"echo '  roots: $(ROOTS)'; exit 1; }\n")
+	fmt.Fprintf(out, "\t@test -n \"$(ROOT)\" || { echo '  which root?  e.g. make plan $(firstword $(UNIQUE)) dev'; "+
+		"$(MAKE) --no-print-directory list-roots; exit 1; }\n")
+	fmt.Fprintf(out, "\t@if [ -n \"$(HOLDS)\" ]; then "+
+		"echo \"  $(ROOT) is not a root — it holds: $(HOLDS)\"; exit 1; fi\n")
+	fmt.Fprintf(out, "\t@test -n \"$(filter $(RESOLVED),$(ROOTS))\" || "+
+		"{ echo \"  no such root: $(ROOT)\"; $(MAKE) --no-print-directory list-roots; exit 1; }\n")
 	fmt.Fprintf(out, "\t@test -f \"$(RESOLVED)/envs/$(ENV).tfvars\" || "+
-		"{ echo \"  $(RESOLVED) has no envs/$(ENV).tfvars\"; exit 1; }\n\n")
+		"{ echo \"  $(RESOLVED) has no envs/$(ENV).tfvars\"; "+
+		"echo \"  it has: $$(ls $(RESOLVED)/envs 2>/dev/null | sed 's/[.]tfvars$$//' | tr '\\n' ' ')\"; "+
+		"exit 1; }\n\n")
+
+	// (3) The short names, because somebody who mistyped one is looking for the
+	//     list of them — not for the paths, which is what they already saw.
+	fmt.Fprintf(out, ".PHONY: list-roots\nlist-roots:\n")
+	fmt.Fprintf(out, "\t@echo '  roots: $(ROOTS)'\n")
+	fmt.Fprintf(out, "\t@test -z '$(UNIQUE)' || echo '  short: $(UNIQUE)'\n\n")
 
 	// init is its own target and also a prerequisite of everything else, because
 	// -reconfigure is what stops a root initialized for one environment from

@@ -23,6 +23,51 @@ import (
 // It stops before `git push`. The remote is the operator's to choose, and a tool
 // that guesses where somebody's infrastructure gets published has guessed about
 // the wrong thing.
+// AskWhereAndExport asks where the repository goes, then writes it — for the
+// callers that arrive with no path.
+//
+// `config repo` reached off the menu is one: there is no command line there to
+// put an argument on, and answering that with cobra's "accepts 1 arg(s),
+// received 0" leaves somebody staring at the arity of a command they did not
+// type. The post-run menu is the other.
+//
+// The question comes back when the answer was a directory that is staying put,
+// because "leave that directory alone" means "somewhere else" rather than "never
+// mind".
+func AskWhereAndExport(ctx context.Context, out io.Writer) error {
+	return askWhereAndExport(ctx, newPrompter(out), out)
+}
+
+// askWhereAndExport is the same with the prompter supplied, for the post-run
+// menu — which already has one, and whose answers are the ones a test drives.
+func askWhereAndExport(ctx context.Context, ask *prompter, out io.Writer) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+
+	for {
+		where, err := ask.ask("Where should the repository go?",
+			"A directory that does not exist yet. Nothing is pushed; the remote stays yours.",
+			filepath.Join(home, "infrastructure"), "lerian config repo <path>")
+		if err != nil {
+			return err
+		}
+
+		err = exportRepository(ctx, ask, out, where)
+		// Both of these are verdicts on the path that was just typed, not on the
+		// run: one says that directory is staying, the other that it can never be
+		// emptied.
+		if errors.Is(err, infra.ErrProtectedPath) {
+			fmt.Fprintf(out, "\n  %v\n", err)
+			continue
+		}
+		if !errors.Is(err, errBack) {
+			return err
+		}
+	}
+}
+
 func ExportRepository(ctx context.Context, out io.Writer, destination string) error {
 	return exportRepository(ctx, newPrompter(out), out, destination)
 }
