@@ -53,9 +53,14 @@ func exportRepository(ctx context.Context, ask *prompter, out io.Writer, destina
 	}
 	units := configuredUnits(layout, catalog)
 	if len(units) == 0 {
+		// Not --repo: this command does not take one, and neither does the menu
+		// row that reaches it. A hint naming a flag that does not exist costs
+		// somebody an unknown-flag error on top of the problem they already have.
 		return fmt.Errorf("nothing is configured in %s yet\n"+
 			"A root is exported once it has an envs/<env>.tfvars — run lerian infra first,\n"+
-			"or point at the checkout that holds your configuration with --repo",
+			"or point at the checkout that holds your configuration:\n"+
+			"  lerian config templates <path>     (records it)\n"+
+			"  LERIAN_TF_REPO=<path> lerian …     (this shell only)",
 			layout.RepoRel(layout.AWSDir()))
 	}
 

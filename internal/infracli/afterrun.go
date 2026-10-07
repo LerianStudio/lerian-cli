@@ -261,6 +261,9 @@ type unitDetail struct {
 	// unplanned marks a stack that never produced a plan in this run — normal for
 	// anything blocked behind an earlier stage.
 	unplanned bool
+	// unreadable is a plan file that exists and could not be read, which is not
+	// normal and must not be reported as the line above.
+	unreadable error
 }
 
 // printPlanDetail reads the saved plans and reports them.
@@ -278,11 +281,18 @@ func printPlanDetail(
 	for _, stage := range stages {
 		for _, unit := range stage.Units {
 			changes, err := terraform.PlanDetail(ctx, unit, runner.PlanFile(unit))
-			details = append(details, unitDetail{
-				name:      unit.Name,
-				changes:   changes,
-				unplanned: err != nil,
-			})
+			detail := unitDetail{name: unit.Name, changes: changes}
+			if err != nil {
+				// A plan file that is there and will not read is a different thing
+				// from one that was never made. Reporting both as "not planned in
+				// this run" hid the failure while the menu still offered apply.
+				if _, statErr := os.Stat(runner.PlanFile(unit)); statErr == nil {
+					detail.unreadable = err
+				} else {
+					detail.unplanned = true
+				}
+			}
+			details = append(details, detail)
 		}
 	}
 	reportPlanDetail(out, details)
@@ -300,6 +310,9 @@ func reportPlanDetail(out io.Writer, details []unitDetail) {
 
 	for _, detail := range details {
 		switch {
+		case detail.unreadable != nil:
+			fmt.Fprintf(out, "\n  %s\n    %s\n", detail.name,
+				theme.alert("its saved plan could not be read: "+detail.unreadable.Error()))
 		case detail.unplanned:
 			fmt.Fprintf(out, "\n  %s\n    %s\n", detail.name,
 				theme.dim("no saved plan — it was not planned in this run"))

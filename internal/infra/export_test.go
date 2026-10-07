@@ -2,6 +2,7 @@ package infra
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -608,5 +609,76 @@ func TestTheReadmeExplainsTheOrderBetweenRoots(t *testing.T) {
 	alone := exportReadme("v1.11.0", ExportPlan{Roots: plan.Roots[:1]})
 	if strings.Contains(alone, "Order matters") {
 		t.Errorf("it explains an order between one root:\n%s", alone)
+	}
+}
+
+// A module source can resolve outside the checkout. filepath.Rel answers that
+// with a path starting in "..", and joining it to the destination writes the
+// module into a sibling of the export — outside the directory somebody named.
+func TestAModuleOutsideTheCheckoutIsRefused(t *testing.T) {
+	layout := exportCheckout(t)
+	// Five levels up from examples/aws/infra-base/vpc leaves the checkout.
+	writeRoot(t, layout, "infra-base/vpc", `module "x" { source = "../../../../../elsewhere" }`)
+	writeFile(t, filepath.Join(filepath.Dir(layout.Root), "elsewhere", "main.tf"), "")
+
+	_, err := PlanExport(layout, []Unit{
+		{Name: "vpc", Dir: filepath.Join(layout.AWSDir(), "infra-base", "vpc")},
+	})
+
+	if err == nil {
+		t.Fatal("a module outside the checkout was accepted")
+	}
+	if !strings.Contains(err.Error(), "outside the checkout") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+// With nothing stripped, the README must not say the roots are at the top level
+// or name configuration files that are not there: a reader following it lands in
+// directories this repository does not have.
+func TestTheReadmeDoesNotClaimALayoutItDidNotProduce(t *testing.T) {
+	plan := ExportPlan{
+		// Base empty: something sat outside examples/aws, so the prefix stayed.
+		Roots: []ExportedRoot{{
+			Path:     "examples/aws/infra-base/vpc",
+			StateKey: "aws/infra-base/vpc/terraform.tfstate",
+		}},
+		Config: []string{"examples/aws/environments.conf", "examples/aws/backend/dev.hcl"},
+	}
+
+	readme := exportReadme("v1.11.0", plan)
+
+	if strings.Contains(readme, "roots sit at the top level") {
+		t.Errorf("it claims a layout it did not produce:\n%s", readme)
+	}
+	if strings.Contains(readme, "- `environments.conf`") {
+		t.Errorf("it names a path that is not there:\n%s", readme)
+	}
+	if !strings.Contains(readme, "examples/aws/environments.conf") {
+		t.Errorf("it does not name the path that is:\n%s", readme)
+	}
+	// And the worked example follows the same layout.
+	if !strings.Contains(readme, "cd examples/aws/infra-base/vpc") {
+		t.Errorf("the worked example points somewhere else:\n%s", readme)
+	}
+}
+
+// gh stopping before it wires origin is a different failure from gh failing to
+// push: "git push -u origin main" there fails with "'origin' does not appear to
+// be a git repository", which reads as a second, unrelated problem.
+func TestAddingTheRemoteFailingGetsItsOwnAdvice(t *testing.T) {
+	gh := fakeGH(t, `echo "unable to add remote: exit status 128" >&2; exit 1`)
+
+	_, err := gh.CreateRepository(context.Background(), t.TempDir(), GHRepo{Name: "estate"})
+
+	var failure *CreateFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("the failure is not readable: %v", err)
+	}
+	if !failure.Created {
+		t.Error("the repository exists and the advice does not say so")
+	}
+	if !strings.Contains(err.Error(), "git remote add origin") {
+		t.Errorf("it does not say to add the remote:\n%v", err)
 	}
 }

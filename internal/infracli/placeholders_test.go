@@ -186,3 +186,52 @@ func writeExampleWithTokens(t *testing.T, layout infra.Layout, tokens ...string)
 	}
 	return unit
 }
+
+// Choosing no zone is not an answer. Joining an empty selection produces "",
+// which fills the token with nothing and lets readiness pass — the cluster then
+// deploys with an ExternalDNS that may write to no zone at all.
+//
+// Tested on the join rather than through the prompt, because the selector cannot
+// produce an empty selection: enter takes the row under the cursor. The typed
+// fallback can, and `,,,` is what it looks like.
+func TestNoZoneChosenIsNotAnAnswer(t *testing.T) {
+	for _, picked := range [][]string{nil, {}, {""}, {"", "  "}} {
+		value, ok := joinZones(picked)
+		if ok {
+			t.Errorf("%q was reported as an answer: %q", picked, value)
+		}
+		if value != "" {
+			t.Errorf("%q produced %q", picked, value)
+		}
+	}
+}
+
+// And a real selection still comes back joined for the template's quotes.
+func TestAChosenZoneIsReturned(t *testing.T) {
+	zones := staticZones{found: []infra.HostedZone{
+		{ID: "Z1", Name: "example.com"},
+	}}
+
+	// Enter takes the row under the cursor — which is why the selector cannot
+	// produce the empty case above.
+	ask, painted := selectorFor(t, keyEnterSeq)
+
+	value, resolved, err := askForHostedZones(context.Background(), ask, zones,
+		"<ROUTE53-ZONE-ARN>", "example-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved || value != "arn:aws:route53:::hostedzone/Z1" {
+		t.Errorf("resolved=%v value=%q\n%s", resolved, value, painted.String())
+	}
+}
+
+// staticZones answers the lookup without AWS.
+type staticZones struct {
+	found []infra.HostedZone
+	err   error
+}
+
+func (s staticZones) ListHostedZones(context.Context, string) ([]infra.HostedZone, error) {
+	return s.found, s.err
+}

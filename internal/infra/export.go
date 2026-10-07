@@ -142,9 +142,22 @@ func PlanExport(layout Layout, units []Unit) (ExportPlan, error) {
 				if err := follow(target); err != nil {
 					return err
 				}
-				if rel, relErr := filepath.Rel(layout.Root, target); relErr == nil {
-					plan.Modules = append(plan.Modules, rel)
+				rel, relErr := filepath.Rel(layout.Root, target)
+				if relErr != nil {
+					continue
 				}
+				// A source like ../../../../../shared resolves outside the
+				// checkout, and filepath.Rel happily returns a path starting with
+				// "..". Joined to the destination, copyTree would then write the
+				// module into a sibling of the export — outside the directory the
+				// operator named. Refused rather than clamped: a copy that silently
+				// drops a module terraform needs is not better than one that says
+				// what it cannot do.
+				if escapesRoot(rel) {
+					return fmt.Errorf("infra: %s uses a module outside the checkout (%s);"+
+						" it cannot be exported", layout.rel(dir), rel)
+				}
+				plan.Modules = append(plan.Modules, rel)
 			}
 		}
 		return nil
@@ -159,6 +172,9 @@ func PlanExport(layout Layout, units []Unit) (ExportPlan, error) {
 			return plan, err
 		}
 		if rel, err := filepath.Rel(layout.Root, unit.Dir); err == nil {
+			if escapesRoot(rel) {
+				return plan, fmt.Errorf("infra: %s is outside the checkout; it cannot be exported", rel)
+			}
 			plan.Roots = append(plan.Roots, ExportedRoot{
 				Path:      rel,
 				StateKey:  unit.StateKey(),
@@ -209,6 +225,15 @@ func exportBase(layout Layout, files []string) string {
 		}
 	}
 	return base
+}
+
+// escapesRoot is whether a repo-relative path leaves the repository.
+//
+// filepath.Rel answers "how do I get there from here" and is perfectly happy to
+// answer with "..", which is the whole problem: every caller here treats its
+// result as a path inside the tree.
+func escapesRoot(rel string) bool {
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // backendFiles is every backend/<env>.hcl that exists.
@@ -473,8 +498,10 @@ func exportReadme(templatesRef string, plan ExportPlan) string {
 		"%s and apply what you want by hand.\n\n", templatesRefOrThis(templatesRef))
 
 	fmt.Fprintf(&readme, "## What is here\n\n")
-	fmt.Fprintf(&readme, "- `environments.conf` — which AWS account each environment may touch\n")
-	fmt.Fprintf(&readme, "- `backend/<env>.hcl` — where each environment keeps its state\n")
+	fmt.Fprintf(&readme, "- `%s` — which AWS account each environment may touch\n",
+		configPath(plan, "environments.conf"))
+	fmt.Fprintf(&readme, "- `%s` — where each environment keeps its state\n",
+		configPath(plan, filepath.Join("backend", "<env>.hcl")))
 	fmt.Fprintf(&readme, "- `envs/<env>.tfvars` under each root — the sizing and the values "+
 		"that were chosen\n")
 	if len(plan.Modules) > 0 {
@@ -485,10 +512,19 @@ func exportReadme(templatesRef string, plan ExportPlan) string {
 		fmt.Fprintf(&readme, "- `_modules/` — shared modules the roots use: %s\n",
 			strings.Join(names, ", "))
 	}
-	fmt.Fprintf(&readme, "\nThe roots sit at the top level. In the templates they live under "+
-		"`examples/aws/`, which is the right name there and the wrong one here — this is not "+
-		"an example of an estate, it is one. The directory was dropped from every path at "+
-		"once, so each `source = \"../../_modules/...\"` still points where it did.\n\n")
+	if plan.Base != "" {
+		fmt.Fprintf(&readme, "\nThe roots sit at the top level. In the templates they live "+
+			"under `%s/`, which is the right name there and the wrong one here — this is not "+
+			"an example of an estate, it is one. The directory was dropped from every path at "+
+			"once, so each `source = \"../../_modules/...\"` still points where it did.\n\n",
+			filepath.ToSlash(plan.Base))
+	} else {
+		// Nothing was stripped, because something sits outside that directory and
+		// moving the rest would break its relative source. Saying otherwise sends
+		// the reader into directories this repository does not have.
+		fmt.Fprintf(&readme, "\nThe directory layout is the templates' own, kept as it was "+
+			"so every `source = \"../../_modules/...\"` still resolves.\n\n")
+	}
 
 	writeRunningIt(&readme, plan)
 
@@ -675,4 +711,22 @@ func matchesIn(path string, pattern *regexp.Regexp) []string {
 		found = append(found, match[1])
 	}
 	return found
+}
+
+// configPath is where one of the configuration files landed, as the reader will
+// find it. With nothing stripped these keep the templates' prefix, and naming
+// them without it sends somebody to a path that is not there.
+func configPath(plan ExportPlan, name string) string {
+	if plan.Base == "" {
+		for _, rel := range plan.Config {
+			if strings.HasSuffix(filepath.ToSlash(rel), "/"+filepath.ToSlash(name)) {
+				return filepath.ToSlash(rel)
+			}
+		}
+		// Config is empty in the unit tests of the README itself, and on an export
+		// of a checkout with neither file. Deriving it from the plan's own base is
+		// still better than a bare name that is wrong.
+		return filepath.ToSlash(filepath.Join("examples", "aws", name))
+	}
+	return filepath.ToSlash(name)
 }

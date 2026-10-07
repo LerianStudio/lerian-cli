@@ -147,10 +147,8 @@ func askForHostedZones(
 		return "", false, err
 	}
 
-	// Joined with the quotes the template already has around the token:
-	// external_dns_hosted_zone_arns = ["<ROUTE53-ZONE-ARN>"] becomes a list of
-	// however many were picked.
-	return strings.Join(picked, `", "`), true, nil
+	value, ok := joinZones(picked)
+	return value, ok, nil
 }
 
 // hostedZoneOptions is the public zones, since these roles publish records the
@@ -283,4 +281,29 @@ func unitsOf(readiness []infra.Readiness) []infra.Unit {
 		units = append(units, entry.Unit)
 	}
 	return units
+}
+
+// joinZones turns the selection into the value the template wants, and reports
+// whether there is one.
+//
+// Joined with the quotes the template already has around the token:
+// external_dns_hosted_zone_arns = ["<ROUTE53-ZONE-ARN>"] becomes a list of
+// however many were picked.
+//
+// An empty selection is not an answer. The selector cannot produce one — enter
+// takes the row under the cursor — but the typed fallback can: `,,,` is nonempty
+// to the prompt and splits into nothing. Joining that gives "", which fills the
+// token with emptiness and lets readiness pass, and the cluster then deploys
+// with an ExternalDNS permitted to write to no zone at all.
+func joinZones(picked []string) (string, bool) {
+	kept := make([]string, 0, len(picked))
+	for _, zone := range picked {
+		if strings.TrimSpace(zone) != "" {
+			kept = append(kept, zone)
+		}
+	}
+	if len(kept) == 0 {
+		return "", false
+	}
+	return strings.Join(kept, `", "`), true
 }

@@ -454,11 +454,21 @@ func newCreateFailure(err error, said string) *CreateFailure {
 	// The create succeeded and the push did not. gh says so on its way out, and
 	// this is the one failure where trying again changes the problem rather than
 	// repeating it.
-	case strings.Contains(lower, "unable to add remote"),
-		strings.Contains(lower, "failed to push"),
+	// Created, and no remote to push to: gh got as far as the repository and
+	// stopped before wiring origin. Telling somebody to "git push -u origin main"
+	// here fails with "'origin' does not appear to be a git repository", which
+	// reads as a second, unrelated problem.
+	case strings.Contains(lower, "unable to add remote"):
+		failure.Created = true
+		failure.Advice = "The repository was created; adding the remote is what failed.\n" +
+			"Do not create it again — point this clone at it and push:\n" +
+			"  git remote add origin <the url gh printed>\n" +
+			"  git push -u origin main"
+
+	case strings.Contains(lower, "failed to push"),
 		strings.Contains(lower, "permission denied (publickey)"):
 		failure.Created = true
-		failure.Advice = "The repository was created; the push is what failed.\n" +
+		failure.Advice = "The repository was created and origin is set; the push is what failed.\n" +
 			"Fix the credential and push by hand — do not create it again:\n" +
 			"  git push -u origin main\n" +
 			"For ssh remotes this is usually a key GitHub does not have: gh auth refresh"

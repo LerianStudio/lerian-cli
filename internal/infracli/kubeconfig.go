@@ -58,11 +58,17 @@ func readClusterFacts(
 			ARN:      unquote(values["cluster_arn"]),
 			Endpoint: unquote(values["cluster_endpoint"]),
 		}
-		if facts.Name != "" {
+		// All three, not just the name. The ARN is what finds the existing
+		// kubeconfig entry, and with it empty planKubeconfig looks up "", finds
+		// nothing, reports no replacement — and aws eks update-kubeconfig then
+		// overwrites the real entry without the confirmation this flow exists to
+		// make. The endpoint is what the probe reaches afterwards.
+		if facts.Name != "" && facts.ARN != "" && facts.Endpoint != "" {
 			return facts, true, ""
 		}
 	}
-	return clusterFacts{}, false, "the eks stack reported no cluster_name"
+	return clusterFacts{}, false,
+		"the eks stack reported no cluster_name, cluster_arn or cluster_endpoint"
 }
 
 // outputReader is the half of terraform this needs: the outputs of one root.

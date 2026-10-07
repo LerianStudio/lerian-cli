@@ -301,3 +301,53 @@ func TestAMissingKubectlIsNotAClusterProblem(t *testing.T) {
 		t.Errorf("a missing kubectl was reported as a cluster failure:\n%s", out.String())
 	}
 }
+
+// The ARN is what finds the existing kubeconfig entry. With it empty,
+// planKubeconfig looks up "", finds nothing, reports no replacement — and
+// aws eks update-kubeconfig then overwrites the real entry without the
+// confirmation this flow exists to make.
+func TestAllThreeClusterFactsAreRequired(t *testing.T) {
+	tests := []struct {
+		name    string
+		outputs map[string]json.RawMessage
+	}{
+		{"no arn", map[string]json.RawMessage{
+			"cluster_name": json.RawMessage(`"c"`), "cluster_endpoint": json.RawMessage(`"https://e"`)}},
+		{"no endpoint", map[string]json.RawMessage{
+			"cluster_name": json.RawMessage(`"c"`), "cluster_arn": json.RawMessage(`"arn:x"`)}},
+		{"no name", map[string]json.RawMessage{
+			"cluster_arn": json.RawMessage(`"arn:x"`), "cluster_endpoint": json.RawMessage(`"https://e"`)}},
+	}
+
+	units := []infra.Unit{{Name: "infra-base/eks", Dir: "/tmp/eks"}}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, found, why := readClusterFacts(context.Background(),
+				staticOutputs{values: test.outputs}, units)
+
+			if found {
+				t.Error("it offered to rewrite the kubeconfig from a partial answer")
+			}
+			if why == "" {
+				t.Error("it gave no reason, so the row just disappears")
+			}
+		})
+	}
+
+	// And all three together still work.
+	facts, found, _ := readClusterFacts(context.Background(), staticOutputs{values: map[string]json.RawMessage{
+		"cluster_name":     json.RawMessage(`"c"`),
+		"cluster_arn":      json.RawMessage(`"arn:x"`),
+		"cluster_endpoint": json.RawMessage(`"https://e"`),
+	}}, units)
+	if !found || facts.ARN != "arn:x" {
+		t.Errorf("a complete answer was rejected: %+v", facts)
+	}
+}
+
+// staticOutputs answers every unit with the same outputs.
+type staticOutputs struct{ values map[string]json.RawMessage }
+
+func (s staticOutputs) Output(context.Context, infra.Unit) (map[string]json.RawMessage, error) {
+	return s.values, nil
+}
