@@ -356,3 +356,31 @@ func TestAnOccupiedDestinationIsAskedAboutAgain(t *testing.T) {
 		t.Errorf("it removed something: %v", err)
 	}
 }
+
+// A path that can never be emptied is a verdict on the answer, not on the run.
+// Closing the step over it sends somebody back through the menu to type a
+// different path — which is what asking again does for them.
+func TestAPathThatCanNeverWorkIsAskedAboutAgain(t *testing.T) {
+	working, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	// The working directory — protected, always — then q at the prompt that
+	// follows, which only arrives if the question came back.
+	ask, painted := selectorFor(t, working+"\n"+"q\n")
+
+	runErr := exportFromMenu(context.Background(), ask, &out)
+
+	if !errors.Is(runErr, infra.ErrAborted) {
+		t.Errorf("leaving the second prompt returned %v", runErr)
+	}
+	screen := painted.String() + out.String()
+	if asked := strings.Count(screen, "Where should the repository go?"); asked < 2 {
+		t.Errorf("the path was asked %d time(s), want it asked again:\n%s", asked, screen)
+	}
+	if !strings.Contains(screen, "refusing to empty") {
+		t.Errorf("it did not say why that path cannot work:\n%s", screen)
+	}
+}

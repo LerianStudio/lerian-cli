@@ -100,31 +100,74 @@ func TestWhatIsThereIsDescribedWellEnoughToDecideFrom(t *testing.T) {
 // catches it, and the test caught it by watching its own source tree go.
 func TestSomeDirectoriesAreRefusedWhateverTheAnswer(t *testing.T) {
 	if home, err := os.UserHomeDir(); err == nil {
-		if err := RefuseToEmpty(home); err == nil {
+		if err := RefuseToEmpty(home, nil); err == nil {
 			t.Error("it would empty the home directory")
 		}
 	}
-	if err := RefuseToEmpty(string(filepath.Separator)); err == nil {
+	if err := RefuseToEmpty(string(filepath.Separator), nil); err == nil {
 		t.Error("it would empty the filesystem root")
-	}
-	if err := RefuseToEmpty(templatesCheckoutDir(t)); err == nil {
-		t.Error("it would empty a templates checkout, which other runs read")
 	}
 
 	working, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := RefuseToEmpty(working); err == nil {
+	if err := RefuseToEmpty(working, nil); err == nil {
 		t.Error("it would empty its own working directory")
 	}
-	if err := RefuseToEmpty(filepath.Dir(working)); err == nil {
+	if err := RefuseToEmpty(filepath.Dir(working), nil); err == nil {
 		t.Error("it would empty a directory holding its own working directory")
 	}
 
 	// And an ordinary one is allowed.
-	if err := RefuseToEmpty(t.TempDir()); err != nil {
+	if err := RefuseToEmpty(t.TempDir(), nil); err != nil {
 		t.Errorf("an ordinary directory was refused: %v", err)
+	}
+}
+
+// A checkout something reads is untouchable, and so is a directory holding one:
+// emptying ~/work takes ~/work/templates with it, and the question asked was
+// about neither.
+func TestACheckoutInUseIsRefused(t *testing.T) {
+	parent := t.TempDir()
+	checkout := filepath.Join(parent, "templates")
+	if err := os.MkdirAll(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inUse := []string{checkout}
+
+	if err := RefuseToEmpty(checkout, inUse); err == nil {
+		t.Error("it would empty the checkout this run is reading")
+	}
+	if err := RefuseToEmpty(parent, inUse); err == nil {
+		t.Error("it would empty a directory holding that checkout")
+	}
+
+	// A sibling is not in the way.
+	sibling := filepath.Join(parent, "estate")
+	if err := os.MkdirAll(sibling, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := RefuseToEmpty(sibling, inUse); err != nil {
+		t.Errorf("a directory beside the checkout was refused: %v", err)
+	}
+}
+
+// The bug this replaced: an export taken before the layout changed has an
+// examples/aws/_modules and an examples/aws/backend of its own, so recognizing a
+// checkout by shape protected last week's export of the estate as though it were
+// the templates — and the offer to replace it, which is what this screen is for,
+// could never appear.
+func TestAnOldExportIsNotMistakenForTheTemplates(t *testing.T) {
+	// Shaped exactly like a checkout, and named by nobody.
+	oldExport := templatesCheckoutDir(t)
+	writeTree(t, oldExport, "examples/aws/bootstrap/main.tf", "README.md")
+
+	if !IsCheckout(oldExport) {
+		t.Fatal("the fixture does not reproduce the shape that caused this")
+	}
+	if err := RefuseToEmpty(oldExport, []string{t.TempDir()}); err != nil {
+		t.Errorf("an old export was protected as though it were the templates: %v", err)
 	}
 }
 
@@ -142,7 +185,7 @@ func TestEmptyingLeavesTheDirectoryItself(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := EmptyDirectory(dir); err != nil {
+	if err := EmptyDirectory(dir, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -173,7 +216,7 @@ func TestEmptyingItselfRefusesAProtectedPath(t *testing.T) {
 	checkout := templatesCheckoutDir(t)
 	writeTree(t, checkout, "examples/aws/bootstrap/main.tf")
 
-	if err := EmptyDirectory(checkout); err == nil {
+	if err := EmptyDirectory(checkout, []string{checkout}); err == nil {
 		t.Fatal("it emptied a templates checkout")
 	}
 	if _, err := os.Stat(filepath.Join(checkout, "examples/aws/bootstrap/main.tf")); err != nil {

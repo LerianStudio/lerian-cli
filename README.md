@@ -1166,10 +1166,18 @@ holds. A repository whose commits are all pushed gets the one question, and the
 line above says why: that copy survives, this directory does not.
 
 **Some paths are refused whatever the answer** — your home directory, the root of
-a filesystem, a templates checkout other runs read, and any directory holding the
-one the command is running in. A confirmation is consent to lose what was
-described, and in those the two are not the same thing. None is a plausible
-answer to "where should the export go", so refusing costs nobody anything.
+a filesystem, the templates checkout this run is reading (or any directory
+holding it), and any directory holding the one the command is running in. A
+confirmation is consent to lose what was described, and in those the two are not
+the same thing.
+
+That list is the checkouts something actually depends on — the one resolved for
+this run, the one recorded in the config, the managed paths — and **not**
+"anything shaped like a checkout". Recognizing them by shape was wrong in the one
+direction that matters: an export taken before the layout changed has an
+`examples/aws/_modules` and an `examples/aws/backend` of its own, so last week's
+export of the estate was protected as though it were the templates, and the offer
+to replace it could never appear.
 
 Declining re-asks for the path when the question came from the post-run menu:
 "leave that directory alone" means "somewhere else", not "never mind". Outside a

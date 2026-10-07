@@ -181,6 +181,16 @@ func exportFromMenu(ctx context.Context, ask *prompter, out io.Writer) error {
 		}
 
 		err = exportRepository(ctx, ask, out, where)
+
+		// Both of these are verdicts on the path that was just typed, not on the
+		// run: one says that directory is staying, the other that it can never be
+		// emptied. Returning either would close the step and send somebody back
+		// through the menu to type a different path — which is what the question
+		// coming round again does for them.
+		if errors.Is(err, infra.ErrProtectedPath) {
+			fmt.Fprintf(out, "\n  %v\n", err)
+			continue
+		}
 		if !errors.Is(err, errBack) {
 			return err
 		}

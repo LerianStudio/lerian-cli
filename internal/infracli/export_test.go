@@ -21,7 +21,7 @@ func TestExportRefusesADirectoryWithAnythingInItWhenItCannotAsk(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := clearTheWay(context.Background(), &prompter{out: &out}, &out, occupied)
+	err := clearTheWay(context.Background(), &prompter{out: &out}, &out, occupied, nil)
 
 	if err == nil {
 		t.Fatal("an export was allowed on top of existing files")
@@ -44,7 +44,7 @@ func TestExportRefusesADirectoryWithAnythingInItWhenItCannotAsk(t *testing.T) {
 func TestExportAcceptsAPathThatIsNotThere(t *testing.T) {
 	var out bytes.Buffer
 	path := filepath.Join(t.TempDir(), "new")
-	if err := clearTheWay(context.Background(), &prompter{out: &out}, &out, path); err != nil {
+	if err := clearTheWay(context.Background(), &prompter{out: &out}, &out, path, nil); err != nil {
 		t.Errorf("clearTheWay = %v, want it to accept a fresh path", err)
 	}
 }
@@ -117,7 +117,7 @@ func TestReplacingWhatIsThereIsOffered(t *testing.T) {
 		var out bytes.Buffer
 		ask, painted := selectorFor(t, keyEnterSeq) // "no", the first row
 
-		err := clearTheWay(context.Background(), ask, &out, occupied)
+		err := clearTheWay(context.Background(), ask, &out, occupied, nil)
 
 		if !errors.Is(err, errBack) {
 			t.Errorf("declining returned %v, want a step back", err)
@@ -147,7 +147,7 @@ func TestReplacingWhatIsThereIsOffered(t *testing.T) {
 		// price for work no clone anywhere holds.
 		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"yes\n")
 
-		if err := clearTheWay(context.Background(), ask, &out, occupied); err != nil {
+		if err := clearTheWay(context.Background(), ask, &out, occupied, nil); err != nil {
 			t.Fatal(err)
 		}
 
@@ -170,7 +170,7 @@ func TestReplacingWhatIsThereIsOffered(t *testing.T) {
 		var out bytes.Buffer
 		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"no\n")
 
-		if err := clearTheWay(context.Background(), ask, &out, occupied); err == nil {
+		if err := clearTheWay(context.Background(), ask, &out, occupied, nil); err == nil {
 			t.Error("declining the confirmation went ahead anyway")
 		}
 		if _, err := os.Stat(filepath.Join(occupied, "mine.txt")); err != nil {
@@ -197,15 +197,43 @@ func TestAProtectedPathIsNotEvenOffered(t *testing.T) {
 	var out bytes.Buffer
 	ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+"yes\n")
 
-	err := clearTheWay(context.Background(), ask, &out, checkout)
+	// Named as in use, which is what makes it untouchable. A directory merely
+	// shaped like a checkout is not: that was the bug — an export taken before
+	// the layout changed has the same shape, and was protected as though it were
+	// the templates.
+	err := clearTheWay(context.Background(), ask, &out, checkout, []string{checkout})
 
 	if !errors.Is(err, infra.ErrProtectedPath) {
-		t.Fatalf("it offered to empty a templates checkout: %v", err)
+		t.Fatalf("it offered to empty the checkout this run is reading: %v", err)
 	}
 	if strings.Contains(painted.String(), "Replace it?") {
 		t.Errorf("it asked a question whose yes it would not honor:\n%s", painted.String())
 	}
 	if _, err := os.Stat(filepath.Join(checkout, "mine.txt")); err != nil {
 		t.Errorf("it removed something anyway: %v", err)
+	}
+}
+
+// The list of untouchable checkouts is the ones something depends on, assembled
+// from what the CLI knows — not from what a directory looks like.
+func TestWhatCountsAsACheckoutInUse(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inUse := checkoutsInUse(layout)
+
+	// The one this run resolved, above all: it is the directory being copied
+	// from, and emptying it mid-export would take the source with it.
+	if indexOf(inUse, layout.Root) < 0 {
+		t.Errorf("the checkout this run is reading is not protected: %v", inUse)
+	}
+	// And the managed paths, which a later run discovers by convention.
+	for _, managed := range infra.ManagedCheckoutPaths("") {
+		if indexOf(inUse, managed) < 0 {
+			t.Errorf("%s is not protected: %v", managed, inUse)
+		}
 	}
 }

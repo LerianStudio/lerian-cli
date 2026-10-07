@@ -43,7 +43,7 @@ func exportRepository(ctx context.Context, ask *prompter, out io.Writer, destina
 	if err != nil {
 		return fmt.Errorf("cannot resolve %q: %w", destination, err)
 	}
-	if err := clearTheWay(ctx, ask, out, absolute); err != nil {
+	if err := clearTheWay(ctx, ask, out, absolute, checkoutsInUse(layout)); err != nil {
 		return err
 	}
 
@@ -435,7 +435,7 @@ func createWithRetries(
 // So it describes what is there and offers to replace it. Described first,
 // because "not empty" is not something anybody can decide from: whether that
 // directory is a scratch copy or six months of work is the entire question.
-func clearTheWay(ctx context.Context, ask *prompter, out io.Writer, path string) error {
+func clearTheWay(ctx context.Context, ask *prompter, out io.Writer, path string, inUse []string) error {
 	occupant, err := infra.Inspect(ctx, path)
 	if err != nil {
 		return err
@@ -451,7 +451,7 @@ func clearTheWay(ctx context.Context, ask *prompter, out io.Writer, path string)
 	}
 	// And some paths are refused whatever the answer: a confirmation is consent
 	// to lose what was described, and in these the two are not the same thing.
-	if err := infra.RefuseToEmpty(path); err != nil {
+	if err := infra.RefuseToEmpty(path, inUse); err != nil {
 		return err
 	}
 
@@ -482,7 +482,7 @@ func clearTheWay(ctx context.Context, ask *prompter, out io.Writer, path string)
 		}
 	}
 
-	if err := infra.EmptyDirectory(path); err != nil {
+	if err := infra.EmptyDirectory(path, inUse); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "\n  Emptied %s\n", path)
@@ -563,4 +563,20 @@ func ownerOf(name string) string {
 		return name[:cut]
 	}
 	return ""
+}
+
+// checkoutsInUse is every lerian-terraform-foundation checkout something depends
+// on: the one this run resolved, the one recorded in the config, and the managed
+// paths a later run would discover.
+//
+// This is the list, rather than "anything shaped like a checkout". An export
+// taken before the layout changed has the same examples/aws/_modules and
+// examples/aws/backend inside it, and recognizing it by shape made the common
+// case — replacing last week's export — impossible to reach.
+func checkoutsInUse(layout infra.Layout) []string {
+	managed := infra.ManagedCheckoutPaths("")
+
+	paths := make([]string, 0, 3+len(managed))
+	paths = append(paths, layout.Root, recordedCheckout(), os.Getenv("LERIAN_TF_REPO"))
+	return append(paths, managed...)
 }

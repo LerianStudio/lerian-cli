@@ -177,11 +177,23 @@ var ErrProtectedPath = errors.New("infra: refusing to empty that directory")
 //
 // A confirmation is consent to lose what was described, and these are places
 // where what would be lost is not what was described: a home directory holds
-// everything, a templates checkout is shared with every other run, and a
-// directory containing the shell's own working directory is the floor being
-// stood on. None of them is a plausible answer to "where should the export go",
-// so refusing costs nobody anything.
-func RefuseToEmpty(path string) error {
+// everything, a directory containing the shell's own working directory is the
+// floor being stood on, and `inUse` are the checkouts this run and later runs
+// read. None of them is a plausible answer to "where should the export go", so
+// refusing costs nobody anything.
+//
+// inUse is passed in rather than recognized by shape. Deciding "is this a
+// checkout" with IsCheckout was wrong in the one direction that matters: an
+// export taken before the layout changed has an examples/aws/_modules and an
+// examples/aws/backend of its own, so last week's export of the estate was
+// protected as though it were the templates — and the offer to replace it, which
+// is the common case this whole screen exists for, could never appear.
+//
+// What makes a directory untouchable is that something else depends on it, and
+// that is knowledge the caller has: the checkout this run resolved, the one
+// recorded in the config, the managed paths. Not a directory arrangement anybody
+// can reproduce by accident.
+func RefuseToEmpty(path string, inUse []string) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("infra: cannot resolve %q: %w", path, err)
@@ -194,9 +206,16 @@ func RefuseToEmpty(path string) error {
 	if home, err := os.UserHomeDir(); err == nil && filepath.Clean(home) == clean {
 		return fmt.Errorf("%w: %s is your home directory", ErrProtectedPath, clean)
 	}
-	if IsCheckout(clean) {
-		return fmt.Errorf("%w: %s is a lerian-terraform-foundation checkout,\n"+
-			"which other runs read", ErrProtectedPath, clean)
+	for _, checkout := range inUse {
+		if checkout == "" {
+			continue
+		}
+		// Containing one counts. Emptying ~/work takes ~/work/templates with it,
+		// and the question asked was about neither.
+		if resolved, err := filepath.Abs(checkout); err == nil && within(clean, filepath.Clean(resolved)) {
+			return fmt.Errorf("%w: %s holds the lerian-terraform-foundation checkout\n"+
+				"this run is reading (%s)", ErrProtectedPath, clean, filepath.Clean(resolved))
+		}
 	}
 	if working, err := os.Getwd(); err == nil && within(clean, working) {
 		return fmt.Errorf("%w: %s holds the directory this command is running in", ErrProtectedPath, clean)
@@ -218,8 +237,8 @@ func within(parent, child string) bool {
 // The contents rather than the directory itself: the path may be a mount point,
 // or have permissions somebody set, and recreating it is not the same thing as
 // having left it alone.
-func EmptyDirectory(path string) error {
-	if err := RefuseToEmpty(path); err != nil {
+func EmptyDirectory(path string, inUse []string) error {
+	if err := RefuseToEmpty(path, inUse); err != nil {
 		return err
 	}
 
