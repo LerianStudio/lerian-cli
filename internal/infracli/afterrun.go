@@ -67,11 +67,10 @@ func afterRun(
 
 		picked, err := ask.pick("What now?", afterPurpose(done), "", afterOptions(done, point != nil), "")
 		switch {
-		//nolint:nilerr // Leaving is leaving: q, r and ctrl-c all arrive as an
-		// error here, and so does a selector that could not draw. The run already
-		// happened and was already reported — this question is an offer, not a
-		// step — so returning the error would turn declining an offer into a
-		// failed command.
+		// Leaving is leaving: q, r and ctrl-c all arrive as an error here, and so
+		// does a selector that could not draw. The run already happened and was
+		// already reported — this question is an offer, not a step — so returning
+		// the error would turn declining an offer into a failed command.
 		case err != nil:
 			// r — "back" — is another way of saying "back to the menu", so it gets
 			// the same last question. q and ctrl-c are not: those mean stop now,

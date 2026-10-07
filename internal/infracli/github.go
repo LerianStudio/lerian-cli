@@ -29,11 +29,15 @@ const (
 // answers are.
 func ConfigureGitHub(ctx context.Context, out io.Writer) error {
 	gh, err := newGitHub()
-	//nolint:nilerr // Not an error of this command: the machine simply does not
-	// have gh, and the message already says what to install and what it is for.
-	// Returning it would put a red line under a screen whose whole content is
-	// that explanation — and would fail the menu row that opened it.
 	if err != nil {
+		// nilerr-ok: the real linter does not fire here — newGitHub returns an
+		// interface, and nilerr's SSA pass declines the case. A //nolint:nilerr
+		// would then fail the build as an unused directive.
+		//
+		// Not an error of this command: the machine simply does not have gh, and
+		// the message already says what to install and what it is for. Returning it
+		// would put a red line under a screen whose whole content is that
+		// explanation — and would fail the menu row that opened it.
 		fmt.Fprintf(out, "\n  %v\n\n", err)
 		return nil
 	}
@@ -169,7 +173,10 @@ func logOutOfGitHub(ctx context.Context, ask *prompter, out io.Writer, gh gitHub
 			{value: "yes", label: "sign out", note: "signing in again needs a browser"},
 		}, "")
 	if err != nil || answer != "yes" {
-		return nil
+		// Declining is not a failure, and neither is a selector that could not
+		// draw: either way the credential is still there, which is the safe
+		// outcome and the one on the screen.
+		return nil //nolint:nilerr // see above
 	}
 
 	if err := gh.GHLogout(ctx, *picked); err != nil {
