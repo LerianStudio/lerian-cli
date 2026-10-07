@@ -2,9 +2,13 @@ package infra
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/terraform-exec/tfexec"
 )
 
 // The real message, from a run that hit it: an apply whose process went away
@@ -174,8 +178,59 @@ func TestTheHolderLineCarriesTheDecision(t *testing.T) {
 
 // The id reaches a command line, and the only way a value there turns into a
 // flag is by starting with a dash.
+// The unlock has to reach the backend as the run does. Started as a bare
+// command it inherits this process's environment, which carries no AWS
+// credentials — the CLI resolves them once and exports them to each terraform
+// it starts — so it failed with "No valid credential sources found" after the
+// operator had already confirmed.
+func TestTheUnlockRunsWithTheRunsCredentials(t *testing.T) {
+	recorded := filepath.Join(t.TempDir(), "env")
+	path := filepath.Join(t.TempDir(), "terraform")
+	script := `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    version) echo '{"terraform_version":"1.9.0","platform":"test","provider_selections":{},"terraform_outdated":false}'; exit 0 ;;
+  esac
+done
+env > ` + recorded + `
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	cli := &CLI{
+		execPath: path,
+		byDir:    map[string]*tfexec.Terraform{},
+		Credentials: Credentials{
+			AccessKeyID:     "AKIAEXAMPLE",
+			SecretAccessKey: "secret",
+			SessionToken:    "token",
+		},
+	}
+
+	if err := cli.ForceUnlock(context.Background(), Unit{Name: "eks", Dir: t.TempDir()},
+		"6b012100-a4eb-91d3-d0f2-e0a4ff5085d1"); err != nil {
+		t.Fatal(err)
+	}
+
+	environment, err := os.ReadFile(recorded)
+	if err != nil {
+		t.Fatalf("terraform was never run: %v", err)
+	}
+	for _, want := range []string{
+		"AWS_ACCESS_KEY_ID=AKIAEXAMPLE",
+		"AWS_SECRET_ACCESS_KEY=secret",
+		"AWS_SESSION_TOKEN=token",
+	} {
+		if !strings.Contains(string(environment), want) {
+			t.Errorf("the unlock did not get %s:\n%s", want, environment)
+		}
+	}
+}
+
 func TestAnIDArgvWouldMisreadIsRefused(t *testing.T) {
-	cli := &CLI{execPath: "/nonexistent/terraform"}
+	cli := &CLI{execPath: "/nonexistent/terraform", byDir: map[string]*tfexec.Terraform{}}
 
 	// Checked by the message, not merely by there being an error: the exec path
 	// does not exist, so running it fails too, and "it returned an error" would

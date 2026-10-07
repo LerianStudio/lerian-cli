@@ -3,7 +3,6 @@ package infra
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -170,24 +169,26 @@ func (l StateLock) age(now time.Time) string {
 // holder is alive, nothing fails here — two writers simply proceed, and the
 // state that loses the race is gone.
 //
-// -force because the confirmation has already happened, in a prompt that said
-// who holds the lock and how old it is. Terraform's own y/n would be a second
-// question about a decision already taken, and one that cannot be answered when
-// this is not attached to a terminal.
+// Through the same tfexec client the run uses, not a bare exec. The client
+// carries the environment this CLI resolved — concrete credentials rather than
+// a profile, because of the SSO cache race — and a command started without it
+// reaches the backend as nobody: "No valid credential sources found", after a
+// confirmation the operator had already given.
 func (c *CLI) ForceUnlock(ctx context.Context, unit Unit, lockID string) error {
 	if strings.TrimSpace(lockID) == "" || strings.HasPrefix(lockID, "-") {
 		return fmt.Errorf("infra: %q is not a lock id", lockID)
 	}
 
-	// #nosec G204 -- the binary is the one this CLI resolved and verified, every
-	// flag is a literal, and the id is checked above for the only thing argv is
-	// vulnerable to: a value that parses as an option. No shell is involved.
-	command := exec.CommandContext(ctx, c.execPath, "force-unlock", "-force", lockID)
-	command.Dir = unit.Dir
+	client, err := c.terraform(unit)
+	if err != nil {
+		return err
+	}
+	// Quiet: the output is a confirmation line, and the run's log writer belongs
+	// to a stage that has already finished reporting.
+	defer c.quiet(client, unit)()
 
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("infra: terraform force-unlock failed in %s: %w\n%s",
-			unit.Name, err, strings.TrimSpace(string(output)))
+	if err := client.ForceUnlock(ctx, lockID); err != nil {
+		return fmt.Errorf("infra: terraform force-unlock failed in %s: %w", unit.Name, err)
 	}
 	return nil
 }
