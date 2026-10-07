@@ -262,6 +262,11 @@ type GHRepo struct {
 	// account numbers, VPC layouts, cluster names and the shape of an estate —
 	// not credentials, but a map of where they are worth stealing from.
 	Private bool
+	// Description is the one line GitHub shows beside the name, in search
+	// results and on the owner's list of repositories. Worth setting: a
+	// repository called "infrastructure" with no description is one somebody
+	// opens to find out what it is.
+	Description string
 }
 
 // validate rejects a name argv would read as an option.
@@ -302,16 +307,25 @@ func (g GHCLI) CreateRepository(ctx context.Context, dir string, repo GHRepo) (s
 	// #nosec G204 -- the binary is the literal "gh", every argument but the name
 	// is a literal, and the name is checked above for the only thing argv is
 	// vulnerable to: a value that parses as an option. No shell is involved.
-	command := exec.CommandContext(ctx, g.binary(), "repo", "create", repo.Name,
-		visibility, "--source", ".", "--remote", "origin", "--push")
+	args := []string{"repo", "create", repo.Name,
+		visibility, "--source", ".", "--remote", "origin", "--push"}
+	if description := strings.TrimSpace(repo.Description); description != "" {
+		// After the flag, never glued to it with "=": a description beginning with
+		// a dash is ordinary English, and this is the form where argv cannot read
+		// it as anything but a value.
+		args = append(args, "--description", description)
+	}
+
+	// #nosec G204 -- see above; the description is a value in its own argv slot,
+	// where no content can turn it into a flag.
+	command := exec.CommandContext(ctx, g.binary(), args...)
 	command.Dir = dir
 
 	var stderr strings.Builder
 	command.Stderr = &stderr
 	output, err := command.Output()
 	if err != nil {
-		return "", fmt.Errorf("infra: gh repo create failed: %w\n%s", err,
-			strings.TrimSpace(stderr.String()))
+		return "", newCreateFailure(err, stderr.String())
 	}
 
 	// The URL is on stdout when there is one, and on stderr when gh decided the
@@ -327,4 +341,91 @@ var repoURL = regexp.MustCompile(`https://\S+`)
 // firstRepoURL pulls the repository URL out of whatever gh said.
 func firstRepoURL(text string) string {
 	return repoURL.FindString(text)
+}
+
+// CreateFailure is a `gh repo create` that did not work, with what gh said and
+// what to do about it.
+//
+// A type rather than a string because the caller has to act differently for one
+// of them: a name already taken is answered by asking for another name, and
+// everything else is answered by stopping and saying why.
+type CreateFailure struct {
+	// Advice is the sentence this tool adds. Empty when gh's own message is
+	// already the whole answer.
+	Advice string
+	// NameTaken marks the one failure worth retrying in place.
+	NameTaken bool
+	// Created marks a repository that exists despite the error — the push failed,
+	// not the create. Retrying with the same name would then fail for the wrong
+	// reason, and the repository would be left behind unmentioned.
+	Created bool
+
+	said string
+	err  error
+}
+
+func (f *CreateFailure) Error() string {
+	message := "infra: gh repo create failed"
+	if said := strings.TrimSpace(f.said); said != "" {
+		message += ": " + said
+	} else if f.err != nil {
+		message += ": " + f.err.Error()
+	}
+	if f.Advice != "" {
+		message += "\n" + f.Advice
+	}
+	return message
+}
+
+func (f *CreateFailure) Unwrap() error { return f.err }
+
+// newCreateFailure reads what gh said and attaches the fix.
+//
+// Matched on gh's own wording, which is the only signal there is: gh exits 1 for
+// every one of these, and the difference between "pick another name" and "your
+// token is missing a scope" is entirely in the text. Unrecognized output passes
+// through unchanged rather than acquiring a guess — gh's message is usually the
+// better one, and a wrong hint costs more than no hint.
+func newCreateFailure(err error, said string) *CreateFailure {
+	failure := &CreateFailure{err: err, said: said}
+	lower := strings.ToLower(said)
+
+	switch {
+	case strings.Contains(lower, "name already exists"),
+		strings.Contains(lower, "already exists on this account"):
+		failure.NameTaken = true
+		failure.Advice = "That name is taken. Choose another, or push to the existing one by hand."
+
+	// The create succeeded and the push did not. gh says so on its way out, and
+	// this is the one failure where trying again changes the problem rather than
+	// repeating it.
+	case strings.Contains(lower, "unable to add remote"),
+		strings.Contains(lower, "failed to push"),
+		strings.Contains(lower, "permission denied (publickey)"):
+		failure.Created = true
+		failure.Advice = "The repository was created; the push is what failed.\n" +
+			"Fix the credential and push by hand — do not create it again:\n" +
+			"  git push -u origin main\n" +
+			"For ssh remotes this is usually a key GitHub does not have: gh auth refresh"
+
+	case strings.Contains(lower, "http 401"), strings.Contains(lower, "bad credentials"),
+		strings.Contains(lower, "authentication failed"):
+		failure.Advice = "The credential was refused. Sign in again:\n  gh auth login"
+
+	case strings.Contains(lower, "http 403"), strings.Contains(lower, "must have admin rights"),
+		strings.Contains(lower, "resource not accessible"), strings.Contains(lower, "scope"):
+		failure.Advice = "The token reached GitHub and was not allowed to do this.\n" +
+			"Either it is missing the repo scope, or the organization does not let you\n" +
+			"create there. This adds the scope:\n  gh auth refresh -s repo"
+
+	case strings.Contains(lower, "could not resolve"), strings.Contains(lower, "no such host"),
+		strings.Contains(lower, "dial tcp"), strings.Contains(lower, "timeout"):
+		failure.Advice = "GitHub could not be reached. The export is on disk either way; " +
+			"push it when the network is back."
+
+	case strings.Contains(lower, "not found"):
+		failure.Advice = "If the name was <owner>/<name>, that owner does not exist or is not\n" +
+			"one you can create in. gh auth status says who you are signed in as."
+	}
+	return failure
 }

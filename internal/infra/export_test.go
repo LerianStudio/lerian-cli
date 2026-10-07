@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -86,7 +87,7 @@ func TestTheCacheAndTheStateStayBehind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Export(layout, plan, destination); err != nil {
+	if _, err := Export(layout, plan, destination, "v1.11.0"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -94,14 +95,13 @@ func TestTheCacheAndTheStateStayBehind(t *testing.T) {
 		".terraform/modules/cached.tf", "terraform.tfstate", "dev.tfplan",
 		"envs/dev.tfvars-example",
 	} {
-		path := filepath.Join(destination, "examples", "aws", "bootstrap", gone)
+		path := filepath.Join(destination, "bootstrap", gone)
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Errorf("%s was exported", gone)
 		}
 	}
 	// And the answer did travel: it is what this repository exists to hold.
-	if _, err := os.Stat(filepath.Join(destination,
-		"examples", "aws", "bootstrap", "envs", "dev.tfvars")); err != nil {
+	if _, err := os.Stat(filepath.Join(destination, "bootstrap", "envs", "dev.tfvars")); err != nil {
 		t.Errorf("the configured tfvars did not travel: %v", err)
 	}
 }
@@ -193,4 +193,274 @@ func baseNamesOf(paths []string) []string {
 		out = append(out, filepath.Base(path))
 	}
 	return out
+}
+
+// `examples/aws/` is the templates' name and the wrong one in a repository that
+// is somebody's actual estate — the first thing a client reads in their own
+// infrastructure should not be a word saying it is a demonstration.
+//
+// The test that matters is not where the files land but whether they still work
+// where they landed: every module source is relative, and this walks each one
+// from its new home to prove it resolves.
+func TestTheExportDropsTheTemplatesDirectory(t *testing.T) {
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "infra-base/vpc", `module "naming" { source = "../../_modules/naming" }`)
+	writeRoot(t, layout, "bootstrap", `module "naming" { source = "../_modules/naming" }`)
+	writeModule(t, layout, "naming", `module "tags" { source = "../tagging" }`)
+	writeModule(t, layout, "tagging", "")
+	writeFile(t, layout.ConfigFile(), "dev=111111111111\n")
+
+	plan, err := PlanExport(layout, []Unit{
+		{Name: "vpc", Dir: filepath.Join(layout.AWSDir(), "infra-base", "vpc")},
+		{Name: "bootstrap", Dir: filepath.Join(layout.AWSDir(), "bootstrap")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destination := filepath.Join(t.TempDir(), "estate")
+	if _, err := Export(layout, plan, destination, "v1.11.0"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing anywhere in the tree says "example".
+	if err := filepath.WalkDir(destination, func(path string, _ os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(destination, path)
+		if strings.Contains(rel, "example") {
+			t.Errorf("the export still has %s in it", rel)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The roots are at the top, where the README says they are.
+	for _, want := range []string{
+		"infra-base/vpc/main.tf",
+		"bootstrap/main.tf",
+		"_modules/naming/main.tf",
+		"_modules/tagging/main.tf",
+		"environments.conf",
+	} {
+		if _, err := os.Stat(filepath.Join(destination, filepath.FromSlash(want))); err != nil {
+			t.Errorf("%s is not in the export: %v", want, err)
+		}
+	}
+
+	// And the whole point: every relative source still resolves from where the
+	// file now sits. Removing the same leading directories from both ends of a
+	// relative path leaves it pointing at the same place — this proves it rather
+	// than asserting it.
+	assertSourcesResolve(t, destination)
+}
+
+// assertSourcesResolve walks the exported tree and follows every local module
+// source from the directory it was found in.
+func assertSourcesResolve(t *testing.T, destination string) {
+	t.Helper()
+	checked := 0
+
+	err := filepath.WalkDir(destination, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".tf") {
+			return err
+		}
+		content, readErr := os.ReadFile(path) // #nosec G304 -- a path this test wrote
+		if readErr != nil {
+			return readErr
+		}
+		for _, match := range localSource.FindAllStringSubmatch(string(content), -1) {
+			target := filepath.Clean(filepath.Join(filepath.Dir(path), match[1]))
+			if _, statErr := os.Stat(target); statErr != nil {
+				rel, _ := filepath.Rel(destination, path)
+				t.Errorf("%s points at %s, which the export does not have", rel, match[1])
+			}
+			checked++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked == 0 {
+		t.Fatal("no module source was checked — the fixture proves nothing")
+	}
+}
+
+// Not stripped when anything sits outside it: a module reached from above that
+// directory would have its relative source broken by the move, and a repository
+// that reads nicely and does not terraform init is worse than one with an
+// awkward directory name.
+func TestTheTemplatesDirectoryStaysWhenSomethingIsOutsideIt(t *testing.T) {
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "infra-base/vpc", `module "shared" { source = "../../../../shared/naming" }`)
+	writeFile(t, filepath.Join(layout.Root, "shared", "naming", "main.tf"), "")
+
+	plan, err := PlanExport(layout, []Unit{
+		{Name: "vpc", Dir: filepath.Join(layout.AWSDir(), "infra-base", "vpc")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Base != "" {
+		t.Errorf("stripped %q with a module outside it — every source under it would break", plan.Base)
+	}
+
+	destination := filepath.Join(t.TempDir(), "estate")
+	if _, err := Export(layout, plan, destination, "v1.11.0"); err != nil {
+		t.Fatal(err)
+	}
+	assertSourcesResolve(t, destination)
+}
+
+// The README has to describe the layout that was written, not the one the
+// templates have: a client following it would cd into a directory that is not
+// there.
+func TestTheReadmeDescribesWhereThingsLanded(t *testing.T) {
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "infra-base/vpc", `module "naming" { source = "../../_modules/naming" }`)
+	writeModule(t, layout, "naming", "")
+	writeFile(t, layout.ConfigFile(), "dev=111111111111\n")
+
+	plan, err := PlanExport(layout, []Unit{
+		{Name: "vpc", Dir: filepath.Join(layout.AWSDir(), "infra-base", "vpc")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destination := filepath.Join(t.TempDir(), "estate")
+	if _, err := Export(layout, plan, destination, "v1.11.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteExportMeta(destination, "v1.11.0", plan); err != nil {
+		t.Fatal(err)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(destination, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The directory is named once, to say where this came from. What must not
+	// survive is any instruction to go there — a client following those lands in
+	// a directory the export does not have.
+	for _, wrong := range []string{"cd examples", "- `examples", "`examples/aws/environments.conf`",
+		"`examples/aws/backend/"} {
+		if strings.Contains(string(readme), wrong) {
+			t.Errorf("the README still sends the reader to %q:\n%s", wrong, readme)
+		}
+	}
+	if !strings.Contains(string(readme), "- `infra-base/vpc`") {
+		t.Errorf("the roots are not listed where they landed:\n%s", readme)
+	}
+	if !strings.Contains(string(readme), "cd infra-base/vpc") {
+		t.Errorf("the worked example does not match the layout:\n%s", readme)
+	}
+}
+
+// Six months on, "where did this root come from, and can I pull a newer one" is
+// asked with a .tf file on the screen. The README is read once; these are read
+// every time somebody opens the estate.
+func TestEveryTerraformFileSaysWhereItCameFrom(t *testing.T) {
+	previous := generatorVersion
+	generatorVersion = func() string { return "v9.9.9" }
+	t.Cleanup(func() { generatorVersion = previous })
+
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "bootstrap", `output "x" { value = 1 }`)
+	writeFile(t, filepath.Join(layout.AWSDir(), "bootstrap", "envs", "dev.tfvars"), "size = 1\n")
+	writeFile(t, layout.BackendFile("dev"), "bucket = \"b\"\n")
+	writeFile(t, layout.ConfigFile(), "dev=111111111111\n")
+	// Not Terraform's, and not this tool's to rewrite.
+	writeFile(t, filepath.Join(layout.AWSDir(), "bootstrap", "notes.md"), "# mine\n")
+
+	plan, err := PlanExport(layout, []Unit{
+		{Name: "bootstrap", Dir: filepath.Join(layout.AWSDir(), "bootstrap")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "estate")
+	if _, err := Export(layout, plan, destination, "v1.11.0"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{
+		"bootstrap/main.tf", "bootstrap/envs/dev.tfvars", "backend/dev.hcl", "environments.conf",
+	} {
+		body := readExported(t, destination, name)
+		if !strings.HasPrefix(body, "# Generated by lerian-cli v9.9.9 (Lerian Studio)") {
+			t.Errorf("%s does not say what generated it:\n%s", name, firstLine(body))
+		}
+		if !strings.Contains(body, "lerian-terraform-foundation v1.11.0") {
+			t.Errorf("%s does not say which templates it came from:\n%s", name, firstLine(body))
+		}
+	}
+
+	// A copy that rewrote arbitrary files would be a copy nobody can trust.
+	if body := readExported(t, destination, "bootstrap/notes.md"); body != "# mine\n" {
+		t.Errorf("a file that is not Terraform's was rewritten:\n%s", body)
+	}
+
+	// And the content survived the banner — the whole file, not just its first
+	// line.
+	if body := readExported(t, destination, "bootstrap/main.tf"); !strings.Contains(body, `output "x"`) {
+		t.Errorf("the banner replaced the content:\n%s", body)
+	}
+}
+
+func readExported(t *testing.T, destination, name string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(destination, filepath.FromSlash(name)))
+	if err != nil {
+		t.Fatalf("%s is not in the export: %v", name, err)
+	}
+	return string(body)
+}
+
+func firstLine(body string) string {
+	if cut := strings.IndexByte(body, '\n'); cut >= 0 {
+		return body[:cut]
+	}
+	return body
+}
+
+// The commit is a generated tree, not the work of whoever ran the export.
+// Attributing it to them makes `git log` read as though they wrote four thousand
+// lines of Terraform; everything after it is theirs.
+func TestTheFirstCommitIsAttributedToLerianStudio(t *testing.T) {
+	previous := generatorVersion
+	generatorVersion = func() string { return "v9.9.9" }
+	t.Cleanup(func() { generatorVersion = previous })
+
+	destination := t.TempDir()
+	writeFile(t, filepath.Join(destination, "main.tf"), "")
+
+	git, err := NewGitCLI()
+	if err != nil {
+		t.Skipf("no git here: %v", err)
+	}
+	if err := InitRepository(context.Background(), git, destination, "v1.11.0"); err != nil {
+		t.Fatal(err)
+	}
+
+	author, err := git.runRaw(context.Background(), destination, "log", "-1", "--format=%an <%ae>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(author) != "lerian-studio <noreply@lerian.studio>" {
+		t.Errorf("the commit is authored by %q", strings.TrimSpace(author))
+	}
+
+	body, err := git.runRaw(context.Background(), destination, "log", "-1", "--format=%B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"lerian-cli v9.9.9", "lerian-terraform-foundation v1.11.0"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the commit message does not mention %q:\n%s", want, body)
+		}
+	}
 }
