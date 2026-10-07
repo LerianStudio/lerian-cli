@@ -809,6 +809,50 @@ of the three things that actually go wrong — so the report says which:
 That first row is the one worth having. It reads like broken DNS and is not, and
 it is exactly what cost an afternoon here before this existed.
 
+### Signing in to GitHub
+
+```bash
+lerian config github
+```
+
+Who `gh` is signed in as on this machine, and how to change it:
+
+```
+  ==> GitHub
+  active     octocat  used by gh repo create
+  also       octocat-bot
+  protocol   https  how the remote of a created repository is written
+
+  GitHub
+  Changes what gh does, for every tool on this machine.
+❯ sign in to another account   gh auth login — an organization's host, or a second account
+  switch the active account    decides where gh repo create puts a repository
+  set how remotes are written  ssh or https — gh config set git_protocol
+  sign out                     removes the credential from the keyring, for every tool
+  back                         changes nothing
+```
+
+`lerian config repo` already signs you in on the way past, but that is a question
+asked in the middle of doing something else, and it cannot answer the ones that
+come up afterwards: signed in as the wrong account, needing a second one for an
+organization, taking the credential off a machine being handed on.
+
+**Which account is active is read, not assumed from the order.** It decides where
+`gh repo create` puts a repository, and `gh` marks it on a line of its own —
+`Active account: true`. It happens to print that one first today, and "today" is
+not a guarantee worth resting a repository's owner on.
+
+**The menu fits what is there.** No switch with one account, which would be a
+question with one answer; no sign-out with no login behind it. Signing out is
+confirmed, because the credential is in the system keyring and every `gh` on the
+machine reads it — including the one in your other terminal.
+
+The protocol row is the one `gh` setting worth surfacing: it decides whether the
+remote of the exported repository is `git@github.com:…` or `https://github.com/…`,
+and therefore whether pushing to it asks for a password every time. The one in
+force is named in its note rather than disabled — re-picking it is a harmless
+no-op, and a greyed-out row reads as "you may not have this".
+
 ### Pointing kubectl at the cluster
 
 After an `apply` that produced a cluster, the post-run menu offers it:

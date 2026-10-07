@@ -193,6 +193,31 @@ guess to make.`,
 	SilenceUsage: true,
 }
 
+var configGitHubCmd = &cobra.Command{
+	Use:   "github",
+	Short: "Sign in to GitHub and set how repositories are created",
+	Long: `Who gh is signed in as on this machine, and how to change it.
+
+'lerian config repo' offers to create the exported repository on GitHub, and
+will sign you in on the way past. This is for the questions that come up
+afterwards: signed in as the wrong account, needing a second one for an
+organization, or taking the credential off a machine being handed on.
+
+It changes gh, not this tool. The credential lives in the system keyring and
+every gh on the machine reads it — signing out here signs out the one in your
+other terminal too.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		err := infracli.ConfigureGitHub(cmd.Context(), cmd.OutOrStdout())
+		// Leaving is not a failure: the session redraws the menu that was left.
+		if errors.Is(err, infracli.ErrBack) || errors.Is(err, infra.ErrAborted) {
+			return nil
+		}
+		return err
+	},
+	SilenceUsage: true,
+}
+
 var configShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Print the configuration and where it lives",
@@ -385,6 +410,6 @@ func init() {
 		"also delete the templates checkouts, without asking")
 	configTemplatesCmd.Flags().BoolVar(&configTemplatesClear, "clear", false, "forget the recorded path")
 	configCmd.AddCommand(configShowCmd, configTemplatesCmd, configKubeconfigCmd,
-		configRepoCmd, configResetCmd)
+		configGitHubCmd, configRepoCmd, configResetCmd)
 	rootCmd.AddCommand(configCmd)
 }

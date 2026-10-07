@@ -101,7 +101,12 @@ func pushByHand(out io.Writer, destination string) {
 // flow can be exercised without a GitHub account and without creating anything.
 type gitHub interface {
 	GHStatus(ctx context.Context) (infra.GHAccount, bool)
+	GHAccounts(ctx context.Context) []infra.GHAccount
 	GHLogin(ctx context.Context, in io.Reader, out, errOut io.Writer) error
+	GHSwitch(ctx context.Context, account infra.GHAccount) error
+	GHLogout(ctx context.Context, account infra.GHAccount) error
+	GitProtocol(ctx context.Context) string
+	SetGitProtocol(ctx context.Context, protocol string) error
 	CreateRepository(ctx context.Context, dir string, repo infra.GHRepo) (string, error)
 }
 

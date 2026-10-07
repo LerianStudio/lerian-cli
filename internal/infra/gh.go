@@ -50,6 +50,9 @@ func (g GHCLI) binary() string {
 type GHAccount struct {
 	Host  string
 	Login string
+	// Active marks the one gh acts as. With several logins only one is, and it
+	// is the one that decides where a created repository lands.
+	Active bool
 }
 
 // String is what the reports print.
@@ -80,21 +83,31 @@ var ghAccountLine = regexp.MustCompile(`Logged in to (\S+) account (\S+)`)
 // not an error here: the question being asked is exactly that, and the answer is
 // no.
 func (g GHCLI) GHStatus(ctx context.Context) (GHAccount, bool) {
-	command := exec.CommandContext(ctx, g.binary(), "auth", "status")
-	// gh writes the status to stderr, which is where it has always written it.
-	// CombinedOutput rather than Output for that reason alone.
-	output, err := command.CombinedOutput()
-	if err != nil {
+	output, ok := g.authStatus(ctx)
+	if !ok {
 		return GHAccount{}, false
 	}
-	match := ghAccountLine.FindStringSubmatch(string(output))
-	if match == nil {
+
+	accounts := parseGHAccounts(output)
+	if len(accounts) == 0 {
 		// Exit zero with nothing recognizable: gh is logged in to something this
 		// cannot name. Usable, unnamed — reporting "not logged in" would be wrong
 		// in the direction that costs somebody a login they already have.
 		return GHAccount{}, true
 	}
-	return GHAccount{Host: match[1], Login: match[2]}, true
+	return accounts[0], true
+}
+
+// authStatus runs the command both readers need.
+//
+// gh writes the status to stderr, which is where it has always written it.
+// CombinedOutput rather than Output for that reason alone.
+func (g GHCLI) authStatus(ctx context.Context) (string, bool) {
+	output, err := exec.CommandContext(ctx, g.binary(), "auth", "status").CombinedOutput()
+	if err != nil {
+		return "", false
+	}
+	return string(output), true
 }
 
 // GHLogin runs the interactive login and hands it the terminal.
@@ -110,6 +123,132 @@ func (g GHCLI) GHLogin(ctx context.Context, in io.Reader, out, errOut io.Writer)
 
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("infra: gh auth login failed: %w", err)
+	}
+	return nil
+}
+
+// GHAccounts is every login gh holds, across every host.
+//
+// More than one is normal: a personal account and a work account on github.com,
+// or an enterprise host beside the public one. Which of them is active decides
+// where `gh repo create` puts a repository, so naming them all is the only way
+// to make that visible before it matters.
+func (g GHCLI) GHAccounts(ctx context.Context) []GHAccount {
+	output, ok := g.authStatus(ctx)
+	if !ok {
+		return nil
+	}
+	return parseGHAccounts(output)
+}
+
+// ghActiveLine is how gh marks the login it acts as.
+var ghActiveLine = regexp.MustCompile(`Active account:\s*true`)
+
+// parseGHAccounts reads the logins out of `gh auth status`, active one first.
+//
+// Scanned line by line rather than by pulling every "Logged in to" out at once,
+// because which account is active is on a line of its own underneath. Read
+// rather than assumed from the order: gh happens to print the active one first
+// today, and a tool that silently creates a repository under the wrong account
+// should not rest on where a line happened to land.
+func parseGHAccounts(output string) []GHAccount {
+	var accounts []GHAccount
+	for _, line := range strings.Split(output, "\n") {
+		if match := ghAccountLine.FindStringSubmatch(line); match != nil {
+			accounts = append(accounts, GHAccount{Host: match[1], Login: match[2]})
+			continue
+		}
+		if len(accounts) > 0 && ghActiveLine.MatchString(line) {
+			accounts[len(accounts)-1].Active = true
+		}
+	}
+
+	for i, account := range accounts {
+		if account.Active {
+			accounts[0], accounts[i] = accounts[i], accounts[0]
+			break
+		}
+	}
+	return accounts
+}
+
+// GHSwitch makes one of those logins the active one.
+func (g GHCLI) GHSwitch(ctx context.Context, account GHAccount) error {
+	if err := account.validate(); err != nil {
+		return err
+	}
+
+	// #nosec G204 -- the binary is the literal "gh", the flags are literals, and
+	// the two variable parts are checked above for the only thing argv is
+	// vulnerable to: a value that parses as an option. No shell is involved.
+	command := exec.CommandContext(ctx, g.binary(), "auth", "switch",
+		"--hostname", account.Host, "--user", account.Login)
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("infra: gh auth switch failed: %w\n%s", err,
+			strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// GHLogout ends one login.
+//
+// This reaches further than this tool, the way `aws sso logout` does: the
+// credential it removes is in the system keyring, and every gh on this machine
+// reads it. Nothing here does it without being asked.
+func (g GHCLI) GHLogout(ctx context.Context, account GHAccount) error {
+	if err := account.validate(); err != nil {
+		return err
+	}
+
+	// #nosec G204 -- see GHSwitch above; same literals, same check.
+	command := exec.CommandContext(ctx, g.binary(), "auth", "logout",
+		"--hostname", account.Host, "--user", account.Login)
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("infra: gh auth logout failed: %w\n%s", err,
+			strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// validate rejects a host or login argv would read as an option. Both reach a
+// command line, and both come from gh's own output — which is not a reason to
+// skip the check, only a reason to expect it to pass.
+func (a GHAccount) validate() error {
+	for _, value := range []string{a.Host, a.Login} {
+		if strings.TrimSpace(value) == "" {
+			return errors.New("infra: the account needs a host and a login")
+		}
+		if strings.HasPrefix(value, "-") {
+			return fmt.Errorf("infra: %q cannot start with a dash", value)
+		}
+	}
+	return nil
+}
+
+// GitProtocol is how gh writes the remote of a repository it creates: ssh or
+// https. It decides whether the exported repository can be pushed to without a
+// password prompt, which makes it the one gh setting worth surfacing here.
+func (g GHCLI) GitProtocol(ctx context.Context) string {
+	command := exec.CommandContext(ctx, g.binary(), "config", "get", "git_protocol")
+	output, err := command.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// SetGitProtocol writes it.
+func (g GHCLI) SetGitProtocol(ctx context.Context, protocol string) error {
+	if protocol != "ssh" && protocol != "https" {
+		return fmt.Errorf("infra: %q is not a git protocol gh understands", protocol)
+	}
+
+	// #nosec G204 -- every argument is a literal: the protocol is one of exactly
+	// two values, checked immediately above.
+	command := exec.CommandContext(ctx, g.binary(), "config", "set", "git_protocol", protocol)
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("infra: gh config set git_protocol failed: %w\n%s", err,
+			strings.TrimSpace(string(output)))
 	}
 	return nil
 }

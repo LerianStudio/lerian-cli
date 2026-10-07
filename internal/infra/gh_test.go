@@ -159,3 +159,84 @@ func TestWhatGHSaidSurvivesTheFailure(t *testing.T) {
 		t.Errorf("the reason was dropped: %v", err)
 	}
 }
+
+// Which account is active decides where a created repository lands, and it is
+// marked on a line of its own. Read rather than assumed from the order: gh
+// prints the active one first today, and "today" is not a guarantee worth
+// resting a repository's owner on.
+func TestTheActiveAccountIsReadNotAssumedFromTheOrder(t *testing.T) {
+	gh := fakeGH(t, `cat >&2 <<'EOF'
+github.com
+  ✓ Logged in to github.com account robot (keyring)
+  - Active account: false
+  ✓ Logged in to github.com account octocat (keyring)
+  - Active account: true
+EOF
+exit 0`)
+
+	accounts := gh.GHAccounts(context.Background())
+	if len(accounts) != 2 {
+		t.Fatalf("read %d accounts, want 2: %+v", len(accounts), accounts)
+	}
+	if accounts[0].Login != "octocat" || !accounts[0].Active {
+		t.Errorf("the active account is not first: %+v", accounts)
+	}
+	if accounts[1].Active {
+		t.Errorf("a second account was marked active: %+v", accounts)
+	}
+
+	// And the single-account reader agrees with it, since it is the one the
+	// export asks before creating anything.
+	active, loggedIn := gh.GHStatus(context.Background())
+	if !loggedIn || active.Login != "octocat" {
+		t.Errorf("the status named %+v", active)
+	}
+}
+
+// Signing out and switching both reach a command line with a host and a login on
+// it. Both come from gh's own output, which is a reason to expect the check to
+// pass, not a reason to skip it.
+func TestAnAccountArgvWouldMisreadIsRefused(t *testing.T) {
+	gh := fakeGH(t, `exit 0`)
+	ctx := context.Background()
+
+	for _, account := range []GHAccount{
+		{Host: "", Login: "octocat"},
+		{Host: "github.com", Login: ""},
+		{Host: "--hostname", Login: "octocat"},
+		{Host: "github.com", Login: "-x"},
+	} {
+		if err := gh.GHSwitch(ctx, account); err == nil {
+			t.Errorf("switch accepted %+v", account)
+		}
+		if err := gh.GHLogout(ctx, account); err == nil {
+			t.Errorf("logout accepted %+v", account)
+		}
+	}
+}
+
+// Only the two values gh understands, because this writes a setting every gh on
+// the machine then reads.
+func TestOnlyARealGitProtocolIsWritten(t *testing.T) {
+	recorded := filepath.Join(t.TempDir(), "argv")
+	gh := fakeGH(t, `printf '%s\n' "$@" > `+recorded+`; exit 0`)
+	ctx := context.Background()
+
+	if err := gh.SetGitProtocol(ctx, "carrier-pigeon"); err == nil {
+		t.Error("a protocol gh does not understand was written")
+	}
+	if _, err := os.Stat(recorded); err == nil {
+		t.Error("gh was run anyway")
+	}
+
+	if err := gh.SetGitProtocol(ctx, "ssh"); err != nil {
+		t.Fatal(err)
+	}
+	argv, err := os.ReadFile(recorded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(argv), "git_protocol") || !strings.Contains(string(argv), "ssh") {
+		t.Errorf("gh was asked for something else:\n%s", argv)
+	}
+}
