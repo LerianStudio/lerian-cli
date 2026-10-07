@@ -333,6 +333,13 @@ func TestResolveLayoutPrefersTheWorkingDirectoryOverTheManagedCheckout(t *testin
 // which is what makes a binary downloaded from the releases page usable from any
 // directory.
 func TestResolveLayoutFallsBackToTheManagedCheckout(t *testing.T) {
+	// A config of its own. Discovery reads the recorded path before it reaches
+	// the managed one, so on a machine where somebody has run
+	// `lerian config templates` this asserted about their configuration rather
+	// than about the fallback — passing or failing on a file the test never
+	// wrote.
+	t.Setenv("HOME", t.TempDir())
+
 	managed := checkoutTree(t)
 
 	// A directory that is NOT inside any checkout.

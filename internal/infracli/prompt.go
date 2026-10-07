@@ -218,8 +218,8 @@ func (p *prompter) confirm(ctx context.Context, errOut io.Writer, question strin
 		p.in = fresh
 	}
 
-	fmt.Fprintf(p.out, "\n  %s [type yes to continue · ctrl-c cancels]: ", question)
-	line, readErr := readLineOrCancel(ctx, p.in)
+	prompt := fmt.Sprintf("\n  %s [type yes to continue · ctrl-c cancels]: ", question)
+	line, readErr := p.confirmLine(ctx, prompt)
 	err = readErr
 	switch {
 	case errors.Is(err, infra.ErrAborted):
@@ -238,6 +238,54 @@ func (p *prompter) confirm(ctx context.Context, errOut io.Writer, question strin
 		return infra.ErrAborted
 	}
 	return nil
+}
+
+// confirmLine reads the answer with the editing a shell gives — arrows, home and
+// end — falling back to the plain read when there is no terminal to edit on.
+//
+// It is the same editor the other prompts use, which is the point: this one
+// asked for a word and then rendered a left arrow as "^[[D", so correcting a
+// typo in "yes" meant deleting it and starting over. A prompt that takes typed
+// input and cannot be edited is a prompt that teaches people to type carefully
+// rather than one that lets them correct.
+//
+// The editor is thrown away first. Reusing it would carry whatever it had
+// already pulled out of the descriptor past the flush above — and that flush is
+// the entire reason this question can be trusted to have been answered
+// deliberately.
+func (p *prompter) confirmLine(ctx context.Context, prompt string) (string, error) {
+	p.editor = nil
+	defer func() { p.editor = nil }()
+
+	type result struct {
+		line string
+		err  error
+	}
+	done := make(chan result, 1)
+
+	go func() {
+		line, handled, err := p.editableLine(p.out, prompt)
+		if handled {
+			done <- result{line: line, err: err}
+			return
+		}
+		// No terminal to edit on. The prompt has not been printed by the editor,
+		// so it is printed here and read the plain way.
+		fmt.Fprint(p.out, prompt)
+		plain, plainErr := p.in.ReadString('\n')
+		done <- result{line: plain, err: plainErr}
+	}()
+
+	// ctrl-c has to end the wait even though the read is blocked in a goroutine
+	// that cannot be interrupted. The goroutine leaks until the process exits,
+	// which is the price of a cancellable read on a descriptor that does not
+	// support one — and this is the last question before a run ends either way.
+	select {
+	case <-ctx.Done():
+		return "", infra.ErrAborted
+	case got := <-done:
+		return got.line, got.err
+	}
 }
 
 // printProfiles shows what each profile reaches, which is the question an operator

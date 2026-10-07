@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
@@ -141,5 +143,45 @@ func TestOnlyTheWholeWordConfirms(t *testing.T) {
 				t.Errorf("%q was taken as a confirmation: %v", answer, err)
 			}
 		})
+	}
+}
+
+// The confirmation used to read the line raw: a left arrow arrived as "^[[D"
+// and landed in the answer, so correcting a typo in "yes" meant deleting it and
+// starting over. It is the same editor every other typed prompt uses now.
+func TestTheConfirmationIsEditable(t *testing.T) {
+	noDrain(t)
+
+	// Under go test there is no terminal, so editableLine declines and the plain
+	// path runs. What this checks is that the plain path still works through the
+	// new reader — the editing itself needs a pty, and is verified there.
+	ask := &prompter{
+		interactive: true,
+		in:          bufio.NewReader(strings.NewReader("yes\n")),
+		out:         &bytes.Buffer{},
+	}
+
+	if err := ask.confirm(context.Background(), &bytes.Buffer{}, "Go ahead?"); err != nil {
+		t.Errorf("a plain yes was refused: %v", err)
+	}
+}
+
+// And the editor is never reused across a confirmation: whatever it had already
+// pulled out of the descriptor would survive the flush, and that flush is the
+// entire reason this question can be trusted to have been answered on purpose.
+func TestTheConfirmationDoesNotReuseAnEditor(t *testing.T) {
+	noDrain(t)
+
+	ask := &prompter{
+		interactive: true,
+		in:          bufio.NewReader(strings.NewReader("yes\n")),
+		out:         &bytes.Buffer{},
+		editor:      term.NewTerminal(readWriter{in: strings.NewReader(""), out: &bytes.Buffer{}}, "> "),
+	}
+
+	_ = ask.confirm(context.Background(), &bytes.Buffer{}, "Go ahead?")
+
+	if ask.editor != nil {
+		t.Error("the editor survived the confirmation, carrying whatever it had buffered")
 	}
 }
