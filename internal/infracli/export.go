@@ -270,16 +270,7 @@ func createOnGitHub(
 	}
 	name = qualify(owner, name)
 
-	// Private first, and private is where the cursor starts. This repository is
-	// not a secret in the sense of holding credentials, but it is a map of an
-	// estate — account numbers, VPC layout, cluster names — and public is a
-	// decision somebody should arrive at deliberately.
-	visibility, err := ask.pick("Public or private?",
-		"The next answer creates "+name+" and pushes this commit.", "",
-		[]option{
-			{value: "private", label: "private", note: "only you and who you invite"},
-			{value: "public", label: "public", note: "anyone can read your infrastructure"},
-		}, "")
+	visibility, err := pickVisibility(ctx, ask, out, destination, name)
 	if err != nil {
 		pushByHand(out, destination)
 		return
@@ -364,6 +355,60 @@ func qualify(owner, name string) string {
 		return name
 	}
 	return owner + "/" + name
+}
+
+// pickVisibility asks public or private, and makes public cost a typed answer.
+//
+// Private first, and private is where the cursor starts. This repository holds
+// no credentials, but it is a map of an estate — account numbers, state buckets,
+// subnets, cluster names — and public is a decision to arrive at deliberately.
+//
+// A menu row is not that decision. It is one keypress, it sits next to the other
+// one, and it is irreversible in the way that matters: a repository made public
+// has been readable by crawlers before anybody notices, and making it private
+// afterwards does not unpublish what was already fetched.
+func pickVisibility(ctx context.Context, ask *prompter, out io.Writer, destination, name string) (string, error) {
+	for {
+		visibility, err := ask.pick("Public or private?",
+			"The next answer creates "+name+" and pushes this commit.", "",
+			[]option{
+				{value: "private", label: "private", note: "only you and who you invite"},
+				{value: "public", label: "public", note: "anyone can read your infrastructure"},
+			}, "")
+		if err != nil {
+			return "", err
+		}
+		if visibility != "public" {
+			return visibility, nil
+		}
+
+		if confirmPublic(ctx, ask, out, destination, name) {
+			return visibility, nil
+		}
+		// Back to the same question rather than out of the flow: somebody who
+		// declined "public" almost always wants the other row, and ending the
+		// export here would make them start over to say so.
+	}
+}
+
+// confirmPublic reads back what publishing would disclose, and takes a typed
+// answer.
+//
+// Named rather than alluded to. "It may contain sensitive information" is a
+// sentence people click past, because it describes a possibility; the account
+// number is a fact, and seeing it is the difference between a warning and a
+// decision.
+func confirmPublic(ctx context.Context, ask *prompter, out io.Writer, destination, name string) bool {
+	theme := newStyle(out)
+	fmt.Fprintf(out, "\n  %s\n", theme.alert("A public repository is readable by anyone, including crawlers."))
+	fmt.Fprintf(out, "  %s\n", "Pushing this publishes:")
+	for _, fact := range infra.WhatPublishingReveals(destination) {
+		fmt.Fprintf(out, "    %s\n", fact)
+	}
+	fmt.Fprintf(out, "  %s\n", theme.dim(
+		"Making it private later does not unpublish what was already read."))
+
+	return ask.confirm(ctx, out, "Publish "+name+" publicly?") == nil
 }
 
 // createWithRetries creates the repository, asking for another name when that is

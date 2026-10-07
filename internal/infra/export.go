@@ -618,3 +618,61 @@ func InitRepository(ctx context.Context, git GitCLI, destination, templatesRef s
 	}
 	return nil
 }
+
+// WhatPublishingReveals names the identifiers a reader of this repository would
+// come away with.
+//
+// For the confirmation before a public repository. "It may contain sensitive
+// information" is a sentence people click past, because it describes a
+// possibility. The account number they are about to publish is a fact, and
+// reading it back is the difference between a warning and a decision.
+//
+// Read from the export itself rather than from what this run happens to know:
+// the question is what is in that directory, and the directory is the thing
+// being published.
+func WhatPublishingReveals(destination string) []string {
+	facts := make([]string, 0, 4)
+
+	accounts := distinct(matchesIn(filepath.Join(destination, "environments.conf"), accountLine))
+	if len(accounts) > 0 {
+		facts = append(facts, "AWS account "+strings.Join(accounts, ", "))
+	}
+
+	var buckets []string
+	entries, err := os.ReadDir(filepath.Join(destination, "backend"))
+	if err == nil {
+		for _, entry := range entries {
+			buckets = append(buckets, matchesIn(
+				filepath.Join(destination, "backend", entry.Name()), bucketLine)...)
+		}
+	}
+	if buckets = distinct(buckets); len(buckets) > 0 {
+		facts = append(facts, "state bucket "+strings.Join(buckets, ", "))
+	}
+
+	// Said last and said plainly. The two above are the ones that can be read off
+	// a file; the rest is the shape of the estate, which is not quotable and is
+	// the part somebody mapping a target would actually want.
+	return append(facts, "and the layout of the estate: subnets, cluster names, sizing")
+}
+
+var (
+	accountLine = regexp.MustCompile(`(?m)^\s*account_id\s*=\s*"?(\d+)"?`)
+	bucketLine  = regexp.MustCompile(`(?m)^\s*bucket\s*=\s*"([^"]+)"`)
+)
+
+// matchesIn pulls one capture group out of a file, or nothing when the file
+// cannot be read — this builds a warning, and a warning that fails to print
+// because a file was missing would be worse than a shorter one.
+func matchesIn(path string, pattern *regexp.Regexp) []string {
+	content, err := os.ReadFile(path) // #nosec G304 -- a path inside the export this run just wrote
+	if err != nil {
+		return nil
+	}
+
+	var found []string
+	for _, match := range pattern.FindAllStringSubmatch(string(content), -1) {
+		found = append(found, match[1])
+	}
+	return found
+}

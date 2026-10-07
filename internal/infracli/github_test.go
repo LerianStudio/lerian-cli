@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -629,4 +631,118 @@ func TestAnOwnerTypedIntoTheNameIsKept(t *testing.T) {
 	if got := qualify("", "estate"); got != "estate" {
 		t.Errorf("qualify invented an owner: %q", got)
 	}
+}
+
+// A menu row is not a decision to publish an estate's map. It is one keypress,
+// it sits next to the other one, and it is irreversible in the way that matters:
+// a public repository has been read by crawlers before anybody notices.
+func TestPublicCostsATypedAnswer(t *testing.T) {
+	t.Run("confirming goes through", func(t *testing.T) {
+		noDrain(t)
+		gh := &fakeGitHub{loggedIn: true}
+		withGitHub(t, gh, nil)
+
+		var out bytes.Buffer
+		// publish · the default name · public (the second row) · then type yes.
+		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyDownSeq+keyEnterSeq+"yes\n")
+
+		offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription)
+
+		if gh.created == nil {
+			t.Fatalf("nothing was created:\n%s", out.String())
+		}
+		if gh.created.Private {
+			t.Error("it created a private repository after public was confirmed")
+		}
+	})
+
+	t.Run("declining returns to the question instead of ending", func(t *testing.T) {
+		noDrain(t)
+		gh := &fakeGitHub{loggedIn: true}
+		withGitHub(t, gh, nil)
+
+		var out bytes.Buffer
+		// publish · name · public · decline · then private, which is where
+		// somebody who just declined public almost always wants to go.
+		ask, painted := selectorFor(t,
+			keyDownSeq+keyEnterSeq+"\n"+keyDownSeq+keyEnterSeq+"no\n"+keyEnterSeq)
+
+		offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription)
+
+		if gh.created == nil {
+			t.Fatalf("declining public ended the export:\n%s", painted.String())
+		}
+		if !gh.created.Private {
+			t.Error("it went public after the confirmation was declined")
+		}
+		if asked := strings.Count(painted.String(), "Public or private?"); asked < 2 {
+			t.Errorf("the question did not come back:\n%s", painted.String())
+		}
+	})
+
+	t.Run("private is never asked twice", func(t *testing.T) {
+		noDrain(t)
+		gh := &fakeGitHub{loggedIn: true}
+		withGitHub(t, gh, nil)
+
+		var out bytes.Buffer
+		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq)
+
+		offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription)
+
+		if strings.Contains(out.String(), "readable by anyone") {
+			t.Errorf("a private repository was warned about:\n%s", out.String())
+		}
+		if gh.created == nil || !gh.created.Private {
+			t.Errorf("created %+v", gh.created)
+		}
+	})
+}
+
+// What is being published is read back, by name. "It may contain sensitive
+// information" describes a possibility and gets clicked past; the account number
+// is a fact.
+func TestTheWarningNamesWhatWouldBePublished(t *testing.T) {
+	noDrain(t)
+	gh := &fakeGitHub{loggedIn: true}
+	withGitHub(t, gh, nil)
+
+	var out bytes.Buffer
+	// Decline, so nothing is created and the warning is all there is to read.
+	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyDownSeq+keyEnterSeq+"no\n"+keyEnterSeq)
+
+	offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription)
+
+	for _, want := range []string{
+		"AWS account 111122223333",     // read out of environments.conf
+		"state bucket tfstate-for-dev", // read out of backend/dev.hcl
+		"layout of the estate",
+		"does not unpublish",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the warning does not mention %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// exportWithFacts is an export directory holding the files the warning reads.
+func exportWithFacts(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("environments.conf", "[dev]\naccount_id = 111122223333\nprofile = example-dev\n")
+	// The bucket deliberately does not carry the account number: a fixture where
+	// it did let an assertion about the account be satisfied by the bucket line,
+	// and the account could then go unmentioned without any test noticing.
+	write("backend/dev.hcl", "bucket = \"tfstate-for-dev\"\nregion = \"us-east-2\"\n")
+	return dir
 }

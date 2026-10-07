@@ -1234,7 +1234,28 @@ Publishing takes four separate answers, because each is something somebody could
 want different: yes, this owner, this name, this visibility. **Private is the default and the
 row the cursor starts on.** The repository holds no credentials, but it is a map
 of an estate — account numbers, VPC layout, cluster names — and public is a
-decision to arrive at on purpose. The description is written rather than asked
+decision to arrive at on purpose.
+
+**Public takes a typed answer, and the warning names what it would publish:**
+
+```
+  A public repository is readable by anyone, including crawlers.
+  Pushing this publishes:
+    AWS account 524121347244
+    state bucket lerian-tfstate-dev-…, lerian-tfstate-prd-…, lerian-tfstate-stg-…
+    and the layout of the estate: subnets, cluster names, sizing
+  Making it private later does not unpublish what was already read.
+
+  Publish octocat/infrastructure publicly? [type yes to continue · ctrl-c cancels]:
+```
+
+The identifiers are read out of the export itself — `environments.conf` and
+`backend/*.hcl` — rather than described in the abstract. "It may contain
+sensitive information" states a possibility and gets clicked past; the account
+number is a fact, and seeing it is the difference between a warning and a
+decision. Declining returns to the visibility question rather than ending the
+export, because somebody who just declined public almost always wants the other
+row. The description is written rather than asked
 for: it is the same sentence every time — what this is, which `lerian-cli` made
 it, and from which templates tag — and a prompt whose answer is always the same
 answer should have been a default.
