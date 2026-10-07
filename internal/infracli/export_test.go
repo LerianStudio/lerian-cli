@@ -3,6 +3,7 @@ package infracli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,14 +13,15 @@ import (
 )
 
 // An export writes a whole tree and a git history. Landing it on top of
-// something else mixes two histories and leaves no obvious way back.
-func TestExportRefusesADirectoryWithAnythingInIt(t *testing.T) {
+// something else mixes the two — so with nobody to ask, it still refuses.
+func TestExportRefusesADirectoryWithAnythingInItWhenItCannotAsk(t *testing.T) {
 	occupied := t.TempDir()
 	if err := os.WriteFile(filepath.Join(occupied, "something.txt"), []byte("mine"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	err := refuseNonEmpty(occupied)
+	var out bytes.Buffer
+	err := clearTheWay(context.Background(), &prompter{out: &out}, &out, occupied)
 
 	if err == nil {
 		t.Fatal("an export was allowed on top of existing files")
@@ -27,13 +29,23 @@ func TestExportRefusesADirectoryWithAnythingInIt(t *testing.T) {
 	if !strings.Contains(err.Error(), "not empty") {
 		t.Errorf("error = %v", err)
 	}
+	// And it says what is there, so the reason is not a mystery to somebody
+	// reading a pipeline's log.
+	if !strings.Contains(err.Error(), "1 file(s)") {
+		t.Errorf("the refusal does not say what is in the way: %v", err)
+	}
+	// Nothing was removed on the way to refusing.
+	if _, err := os.Stat(filepath.Join(occupied, "something.txt")); err != nil {
+		t.Errorf("it deleted something with nobody to ask: %v", err)
+	}
 }
 
-// A path that does not exist yet is the normal case, and the one the message
-// above asks for.
+// A path that does not exist yet is the normal case.
 func TestExportAcceptsAPathThatIsNotThere(t *testing.T) {
-	if err := refuseNonEmpty(filepath.Join(t.TempDir(), "new")); err != nil {
-		t.Errorf("refuseNonEmpty = %v, want it to accept a fresh path", err)
+	var out bytes.Buffer
+	path := filepath.Join(t.TempDir(), "new")
+	if err := clearTheWay(context.Background(), &prompter{out: &out}, &out, path); err != nil {
+		t.Errorf("clearTheWay = %v, want it to accept a fresh path", err)
 	}
 }
 
@@ -89,5 +101,111 @@ func TestExportingAnUnconfiguredCheckoutSaysWhatIsMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "tfvars") {
 		t.Errorf("the error does not say what makes a root exportable: %v", err)
+	}
+}
+
+// "Give a path that does not exist yet" is the right answer when the occupant is
+// somebody's work and a pointless obstacle when it is last week's export of the
+// same estate — which is the common case. So it asks.
+func TestReplacingWhatIsThereIsOffered(t *testing.T) {
+	t.Run("declining removes nothing and goes back", func(t *testing.T) {
+		occupied := t.TempDir()
+		if err := os.WriteFile(filepath.Join(occupied, "mine.txt"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		var out bytes.Buffer
+		ask, painted := selectorFor(t, keyEnterSeq) // "no", the first row
+
+		err := clearTheWay(context.Background(), ask, &out, occupied)
+
+		if !errors.Is(err, errBack) {
+			t.Errorf("declining returned %v, want a step back", err)
+		}
+		if _, err := os.Stat(filepath.Join(occupied, "mine.txt")); err != nil {
+			t.Errorf("it deleted something after being told not to: %v", err)
+		}
+		// What is there is described before the question: nobody can decide from
+		// the word "not empty".
+		if !strings.Contains(out.String(), "1 file(s)") {
+			t.Errorf("it did not say what is in the way:\n%s", out.String())
+		}
+		if !strings.Contains(painted.String(), "Replace it?") {
+			t.Errorf("it did not ask:\n%s", painted.String())
+		}
+	})
+
+	t.Run("work that exists nowhere else is asked about twice", func(t *testing.T) {
+		noDrain(t)
+		occupied := t.TempDir()
+		if err := os.WriteFile(filepath.Join(occupied, "mine.txt"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		var out bytes.Buffer
+		// The menu, then the typed confirmation. One keypress is not the right
+		// price for work no clone anywhere holds.
+		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"yes\n")
+
+		if err := clearTheWay(context.Background(), ask, &out, occupied); err != nil {
+			t.Fatal(err)
+		}
+
+		entries, err := os.ReadDir(occupied)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("%d entries left after replacing", len(entries))
+		}
+	})
+
+	t.Run("the typed confirmation can be declined", func(t *testing.T) {
+		noDrain(t)
+		occupied := t.TempDir()
+		if err := os.WriteFile(filepath.Join(occupied, "mine.txt"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		var out bytes.Buffer
+		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"no\n")
+
+		if err := clearTheWay(context.Background(), ask, &out, occupied); err == nil {
+			t.Error("declining the confirmation went ahead anyway")
+		}
+		if _, err := os.Stat(filepath.Join(occupied, "mine.txt")); err != nil {
+			t.Errorf("it deleted something after a declined confirmation: %v", err)
+		}
+	})
+}
+
+// Some paths are refused before anything is offered: a confirmation is consent
+// to lose what was described, and in these the two are not the same thing.
+//
+// A templates checkout rather than the working directory, though both are
+// protected by the same rule. This test answers yes to everything, and a test
+// that answers yes while pointed at the source tree deletes the source tree the
+// moment the safeguard regresses — which is not a hypothetical. What this one
+// risks is a directory it made itself.
+func TestAProtectedPathIsNotEvenOffered(t *testing.T) {
+	noDrain(t)
+	checkout := fakeCheckout(t, "", "")
+	if err := os.WriteFile(filepath.Join(checkout, "mine.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+"yes\n")
+
+	err := clearTheWay(context.Background(), ask, &out, checkout)
+
+	if !errors.Is(err, infra.ErrProtectedPath) {
+		t.Fatalf("it offered to empty a templates checkout: %v", err)
+	}
+	if strings.Contains(painted.String(), "Replace it?") {
+		t.Errorf("it asked a question whose yes it would not honor:\n%s", painted.String())
+	}
+	if _, err := os.Stat(filepath.Join(checkout, "mine.txt")); err != nil {
+		t.Errorf("it removed something anyway: %v", err)
 	}
 }

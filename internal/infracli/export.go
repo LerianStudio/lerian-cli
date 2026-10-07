@@ -24,6 +24,16 @@ import (
 // that guesses where somebody's infrastructure gets published has guessed about
 // the wrong thing.
 func ExportRepository(ctx context.Context, out io.Writer, destination string) error {
+	return exportRepository(ctx, newPrompter(out), out, destination)
+}
+
+// exportRepository is the same thing with the prompter supplied.
+//
+// Split out because the post-run menu already has one, and building a second
+// from the same writer is a guess about whether anybody is there — a guess the
+// caller does not have to make. It is also what lets the questions below be
+// answered in a test.
+func exportRepository(ctx context.Context, ask *prompter, out io.Writer, destination string) error {
 	layout, source, err := resolveLayout("", os.Getenv("LERIAN_TF_REPO"), "")
 	if err != nil {
 		return err
@@ -33,7 +43,7 @@ func ExportRepository(ctx context.Context, out io.Writer, destination string) er
 	if err != nil {
 		return fmt.Errorf("cannot resolve %q: %w", destination, err)
 	}
-	if err := refuseNonEmpty(absolute); err != nil {
+	if err := clearTheWay(ctx, ask, out, absolute); err != nil {
 		return err
 	}
 
@@ -92,7 +102,7 @@ func ExportRepository(ctx context.Context, out io.Writer, destination string) er
 	}
 
 	fmt.Fprintf(out, "  %d file(s), one commit, branch main.\n\n", written+2)
-	offerGitHub(ctx, newPrompter(out), out, absolute, describeExport(ref))
+	offerGitHub(ctx, ask, out, absolute, describeExport(ref))
 	return nil
 }
 
@@ -413,24 +423,92 @@ func createWithRetries(
 	}
 }
 
-// refuseNonEmpty keeps the export from writing into somebody's existing work.
+// clearTheWay makes sure the destination is empty, asking about it when it is
+// not.
 //
-// An export is a copy of a whole tree; landing it on top of a repository that is
-// already there mixes two histories and leaves no obvious way back.
-func refuseNonEmpty(path string) error {
-	entries, err := os.ReadDir(path)
-	if os.IsNotExist(err) {
+// An export is a copy of a whole tree with a history of its own; landing it on
+// top of something else mixes the two. That used to be the end of the matter —
+// "give a path that does not exist yet" — which is the right answer when the
+// occupant is somebody's work and a pointless obstacle when it is last week's
+// export of the same estate, which is the common case.
+//
+// So it describes what is there and offers to replace it. Described first,
+// because "not empty" is not something anybody can decide from: whether that
+// directory is a scratch copy or six months of work is the entire question.
+func clearTheWay(ctx context.Context, ask *prompter, out io.Writer, path string) error {
+	occupant, err := infra.Inspect(ctx, path)
+	if err != nil {
+		return err
+	}
+	if occupant.Empty() {
 		return nil
 	}
+
+	// Nobody to ask. The old refusal is still the right answer here, and a script
+	// that meant to replace a directory can empty it itself.
+	if !ask.interactive {
+		return refuseNonEmpty(path, occupant)
+	}
+	// And some paths are refused whatever the answer: a confirmation is consent
+	// to lose what was described, and in these the two are not the same thing.
+	if err := infra.RefuseToEmpty(path); err != nil {
+		return err
+	}
+
+	theme := newStyle(out)
+	fmt.Fprintf(out, "\n  %s\n", theme.bold(path+" already has something in it"))
+	fmt.Fprintf(out, "  %s\n\n", occupant.Describe())
+
+	answer, err := ask.pick("Replace it?", replacePurpose(occupant), "",
+		[]option{
+			{value: "no", label: "leave that directory alone", note: "nothing is removed"},
+			{value: "yes", label: "replace everything there",
+				note: "deletes what is in that directory, then writes the export"},
+		}, "")
 	if err != nil {
-		return fmt.Errorf("cannot read %s: %w", path, err)
+		return err
 	}
-	if len(entries) > 0 {
-		return fmt.Errorf("%s is not empty\n"+
-			"An export writes a whole tree and a git history; landing it on top of\n"+
-			"something else mixes the two. Give a path that does not exist yet", path)
+	if answer != "yes" {
+		return errBack
 	}
+
+	// A second answer, typed, when what is there exists nowhere else. The menu
+	// above is one keypress, and one keypress is not the right price for work
+	// that no clone anywhere holds.
+	if occupant.AtRisk() {
+		if err := ask.confirm(ctx, out,
+			"Delete "+path+" and everything in it? This cannot be undone"); err != nil {
+			return err
+		}
+	}
+
+	if err := infra.EmptyDirectory(path); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "\n  Emptied %s\n", path)
 	return nil
+}
+
+// replacePurpose says what is at stake, which depends on whether anything else
+// in the world holds a copy.
+func replacePurpose(occupant infra.Occupant) string {
+	if occupant.AtRisk() {
+		return "What is there is not on any remote. Replacing it loses it for good."
+	}
+	if occupant.Repository {
+		return "Its commits are on a remote, so that copy survives. This directory does not."
+	}
+	return "Everything in that directory is deleted first."
+}
+
+// refuseNonEmpty keeps the export from writing into somebody's existing work
+// when there is nobody to ask about it.
+func refuseNonEmpty(path string, occupant infra.Occupant) error {
+	return fmt.Errorf("%s is not empty: %s\n"+
+		"An export writes a whole tree and a git history; landing it on top of\n"+
+		"something else mixes the two. Give a path that does not exist yet, or\n"+
+		"run this from a terminal, where it offers to replace what is there",
+		path, occupant.Describe())
 }
 
 // configuredUnits is every root this checkout has variables for, in the order

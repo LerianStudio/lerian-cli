@@ -3,6 +3,9 @@ package infracli
 import (
 	"bytes"
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -324,5 +327,32 @@ func TestTheQuestionIsNotAskedTwice(t *testing.T) {
 	}
 	if painted.String() != "" {
 		t.Errorf("it asked again after exporting:\n%s", painted.String())
+	}
+}
+
+// "Leave that directory alone" means "somewhere else", not "never mind". Ending
+// the step there would make somebody reopen the menu to say the same thing with
+// a different path.
+func TestAnOccupiedDestinationIsAskedAboutAgain(t *testing.T) {
+	occupied := t.TempDir()
+	if err := os.WriteFile(filepath.Join(occupied, "mine.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	// The occupied path, then "leave it alone", then q at the path prompt — which
+	// only arrives if the question came back.
+	ask, painted := selectorFor(t, occupied+"\n"+keyEnterSeq+"q\n")
+
+	err := exportFromMenu(context.Background(), ask, &out)
+
+	if !errors.Is(err, infra.ErrAborted) {
+		t.Errorf("leaving the second prompt returned %v", err)
+	}
+	if asked := strings.Count(painted.String()+out.String(), "Where should the repository go?"); asked < 2 {
+		t.Errorf("the path was asked %d time(s), want it asked again:\n%s", asked, painted.String())
+	}
+	if _, err := os.Stat(filepath.Join(occupied, "mine.txt")); err != nil {
+		t.Errorf("it removed something: %v", err)
 	}
 }

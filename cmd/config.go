@@ -188,7 +188,15 @@ yours, because where your infrastructure gets published is not this tool's
 guess to make.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return infracli.ExportRepository(cmd.Context(), cmd.OutOrStdout(), args[0])
+		err := infracli.ExportRepository(cmd.Context(), cmd.OutOrStdout(), args[0])
+		// Leaving an occupied directory alone is a decision, not a failure. The
+		// path came in as an argument, so there is no second one to offer here —
+		// but a red line under "nothing was removed" would be alarming about a
+		// directory that is exactly as it was.
+		if errors.Is(err, infracli.ErrBack) || errors.Is(err, infra.ErrAborted) {
+			return nil
+		}
+		return err
 	},
 	SilenceUsage: true,
 }

@@ -168,13 +168,23 @@ func exportFromMenu(ctx context.Context, ask *prompter, out io.Writer) error {
 		home = ""
 	}
 
-	where, err := ask.ask("Where should the repository go?",
-		"A directory that does not exist yet. Nothing is pushed; the remote stays yours.",
-		filepath.Join(home, "infrastructure"), "lerian config repo <path>")
-	if err != nil {
-		return err
+	// Asked again when the destination was occupied and the answer was to leave
+	// it alone. That answer means "somewhere else", not "never mind" — ending the
+	// step there would make somebody reopen the menu to say the same thing with a
+	// different path.
+	for {
+		where, err := ask.ask("Where should the repository go?",
+			"A directory that does not exist yet. Nothing is pushed; the remote stays yours.",
+			filepath.Join(home, "infrastructure"), "lerian config repo <path>")
+		if err != nil {
+			return err
+		}
+
+		err = exportRepository(ctx, ask, out, where)
+		if !errors.Is(err, errBack) {
+			return err
+		}
 	}
-	return ExportRepository(ctx, out, where)
 }
 
 // afterPurpose says what the rows below operate on, which is the part that makes

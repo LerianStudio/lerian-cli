@@ -1139,6 +1139,43 @@ other, by reading the `source` lines: a list kept in Go would be a second copy o
 what the HCL says and would go stale the first time a root picks up a dependency.
 Registry and git sources are left alone — they are fetched, not copied.
 
+**A directory that already has something in it is asked about, not refused.**
+"Give a path that does not exist yet" is the right answer when the occupant is
+somebody's work and a pointless obstacle when it is last week's export of the
+same estate — which is the common case:
+
+```
+  /Users/you/infrastructure already has something in it
+  12 file(s), a git repository, 3 commit(s), and commits no remote has
+
+  Replace it?
+  What is there is not on any remote. Replacing it loses it for good.
+❯ leave that directory alone   nothing is removed
+  replace everything there     deletes what is in that directory, then writes the export
+```
+
+What is there is described first, because nobody can decide from the words "not
+empty": whether that directory is a scratch copy or six months of work is the
+entire question, and git knows the answer — how many files, whether it is a
+repository, whether anything in it was never committed, whether any commit is
+missing from every remote.
+
+**Work that exists nowhere else is asked about twice**, the second time by typing
+`yes`. One keypress is not the right price for a directory no clone anywhere
+holds. A repository whose commits are all pushed gets the one question, and the
+line above says why: that copy survives, this directory does not.
+
+**Some paths are refused whatever the answer** — your home directory, the root of
+a filesystem, a templates checkout other runs read, and any directory holding the
+one the command is running in. A confirmation is consent to lose what was
+described, and in those the two are not the same thing. None is a plausible
+answer to "where should the export go", so refusing costs nobody anything.
+
+Declining re-asks for the path when the question came from the post-run menu:
+"leave that directory alone" means "somewhere else", not "never mind". Outside a
+terminal nothing is asked and nothing is removed — the refusal stands, now saying
+what is in the way.
+
 **What stays behind.** `.terraform` (a download cache: 1.5 GB against 6.5 MB of
 content), state, saved plans, and the `*.tfvars-example` files. The example is
 the question and the `.tfvars` beside it is the answer; shipping both invites
