@@ -548,14 +548,12 @@ func preflight(
 	// checkout never calls it — gating on it would demand a tool this command does
 	// not need. `lerian infra check` reports it, because that command answers the
 	// wider question of whether the machine can do everything.
-	// gh is reported for somebody watching and never gates — same reasoning as
-	// git, which is left out entirely. The difference is that this one has an
-	// offer attached to it at the end of a run, and a row saying it is absent is
-	// what makes that offer's absence explicable rather than a tool forgetting.
-	if watchingPreflight(ask) {
-		results = append(results, checkGH(ctx))
-	}
-
+	// No gh either, for the same reason git is left out: a run never touches
+	// GitHub. It was reported here for a while on the theory that a row saying
+	// "absent" explains why the export's offer does not appear — but a preflight
+	// is the list of what this run needs, and padding it with tools it will not
+	// call is how the list stops being read. The export asks for gh at the moment
+	// it needs it, and says how to install it there.
 	results = append(results, templatesResult(ctx, layout, source))
 
 	// Only worth asking when there is an AWS CLI to ask with: without one the

@@ -286,25 +286,18 @@ checks the machine before it asks anything:
   ==> Environment check
   ok       terraform    /opt/homebrew/bin/terraform
   ok       aws          /opt/homebrew/bin/aws
-  ok       gh           /opt/homebrew/bin/gh  (octocat)
   ok       templates    ~/.lerian/lerian-terraform-foundation @ v1.6.0
   ok       aws session  8 of 9 profiles resolve: dev, stg, prd and 5 more
 
-  5 checks, all ok.
+  4 checks, all ok.
 ```
 
-**`gh` is reported and never gates.** Nothing in a deploy touches GitHub; it is
-reached only by somebody who asked for the exported repository to be created for
-them. A machine without it reads `absent`, in grey, and the run carries on — a
-red line for a tool no run calls is how people learn to read past red lines:
-
-```
-  absent   gh           not installed — only for creating the exported repository on GitHub
-```
-
-The row is there so the absence of the offer at the end of a run is explicable
-rather than looking like the tool forgetting. `git` is not in this table at all,
-for the stricter version of the same reason: a run never clones.
+**`gh` is not in this table, and neither is `git`.** A run never touches GitHub
+and never clones, and a preflight is the list of what this run needs — padding it
+with tools it will not call is how the list stops being read. `lerian infra
+check` reports `gh`, because that command answers the wider question of what this
+machine can do; the export asks for it at the moment it needs it, and says how to
+install it there.
 
 It then asks which account, every run:
 
@@ -1274,8 +1267,36 @@ the difference between them is entirely in the text:
 
 Anything unrecognized passes through unchanged rather than acquiring a guess —
 `gh`'s own message is usually the better one, and a wrong hint costs more than no
-hint. Only the taken name is retried; there is nothing this screen can do about a
-missing scope, and asking again would produce the same failure twice.
+hint. Every failure but the taken name stops; there is nothing this screen can do
+about a missing scope, and asking again would produce the same failure twice.
+
+**A taken name is two different situations**, so the repository that is there is
+read before anything is offered:
+
+```
+  octocat/infrastructure already exists: private, last pushed to 2026-10-01T10:00:00Z
+
+  What should happen to octocat/infrastructure?
+  This commit is the whole history of the export; pushing it over replaces what is there.
+❯ use a different name   leaves that repository alone
+  push over it           force push — the history there is replaced by this one
+```
+
+It might be last week's export of this same estate, or six months of somebody
+else's work. Only the operator knows which, and "that name is taken" is not
+something to decide from — so GitHub is asked what is at the name, and the answer
+is printed.
+
+Pushing over takes a typed answer on top of the row, because a force push
+replaces a history on a server other people may have cloned. An **empty**
+repository skips that second question: there is nothing to replace, and asking
+twice about nothing is how confirmations stop being read. A repository `gh`
+cannot describe is never offered for overwrite at all — only the other answer
+remains.
+
+The remote is written in the protocol this machine's `gh` authenticates with. An
+`https` remote where the credentials are an ssh key asks for a password nobody
+has.
 
 It goes through `gh` rather than the GitHub API. `gh` already holds the
 credential, in the system keyring, shared with every other `gh` on the machine; a

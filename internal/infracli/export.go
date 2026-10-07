@@ -157,6 +157,7 @@ type gitHub interface {
 	GitProtocol(ctx context.Context) string
 	SetGitProtocol(ctx context.Context, protocol string) error
 	CreateRepository(ctx context.Context, dir string, repo infra.GHRepo) (string, error)
+	LookUpRepo(ctx context.Context, name string) (infra.RemoteRepo, error)
 }
 
 // newGitHub is a variable for the same reason.
@@ -458,10 +459,15 @@ func createWithRetries(
 			return
 		}
 
-		another, askErr := ask.ask("Another name?",
-			"The repository and its commit are already on disk; only the name is in the way.",
-			"", "")
-		if askErr != nil {
+		// The name is taken, which is two different situations: the repository
+		// over there is last week's export of this same estate, or it is somebody
+		// else's. Only the operator knows which, so both answers are offered.
+		another, overwrite := resolveTakenName(ctx, ask, out, gh, repo.Name)
+		switch {
+		case overwrite != nil:
+			pushOver(ctx, out, destination, *overwrite)
+			return
+		case another == "":
 			fmt.Fprintln(out)
 			pushByHand(out, destination)
 			return
@@ -471,6 +477,88 @@ func createWithRetries(
 		// and dropping it would quietly move the retry to the personal account.
 		repo.Name = qualify(ownerOf(repo.Name), another)
 	}
+}
+
+// resolveTakenName asks what to do about a name that already exists: push over
+// the repository that is there, or pick a different one.
+//
+// It reads the repository first. "That name is taken" is not something to decide
+// from — whether it holds last week's export of this estate or six months of
+// somebody else's work is the whole question, and GitHub knows the answer.
+//
+// Returns either a new name, or the repository to overwrite, or neither when the
+// operator leaves.
+func resolveTakenName(
+	ctx context.Context,
+	ask *prompter,
+	out io.Writer,
+	gh gitHub,
+	name string,
+) (string, *infra.RemoteRepo) {
+	existing, err := gh.LookUpRepo(ctx, name)
+	if err != nil {
+		// Unreadable: it exists — the create said so — and nothing can be said
+		// about it. Offering to overwrite something undescribed is the offer this
+		// function exists to avoid, so only the other answer is left.
+		fmt.Fprintf(out, "  %s\n", newStyle(out).dim("cannot read "+name+": "+err.Error()))
+		return askAnotherName(ask), nil
+	}
+
+	fmt.Fprintf(out, "\n  %s already exists: %s\n", existing.Name, existing.Describe())
+
+	answer, err := ask.pick("What should happen to "+existing.Name+"?",
+		"This commit is the whole history of the export; pushing it over replaces what is there.", "",
+		[]option{
+			{value: "another", label: "use a different name", note: "leaves that repository alone"},
+			{value: "overwrite", label: "push over it",
+				note: "force push — the history there is replaced by this one"},
+		}, "")
+	if err != nil {
+		return "", nil
+	}
+	if answer != "overwrite" {
+		return askAnotherName(ask), nil
+	}
+
+	// Typed, and only when there is something to lose. A force push replaces a
+	// history on a server other people may have cloned, and that is not a
+	// one-keypress decision — but an empty repository has nothing to replace, and
+	// asking twice about nothing is how confirmations stop being read.
+	if !existing.Empty {
+		if err := ask.confirm(ctx, out,
+			"Replace the history of "+existing.Name+"? Anyone who cloned it will have to reset"); err != nil {
+			return "", nil
+		}
+	}
+	return "", &existing
+}
+
+// askAnotherName is the other answer, and leaving is an empty string.
+func askAnotherName(ask *prompter) string {
+	another, err := ask.ask("Another name?",
+		"The repository and its commit are already on disk; only the name is in the way.",
+		"", "")
+	if err != nil {
+		return ""
+	}
+	return another
+}
+
+// pushOver points the export at an existing repository and replaces it.
+func pushOver(ctx context.Context, out io.Writer, destination string, existing infra.RemoteRepo) {
+	git, err := infra.NewGitCLI()
+	if err != nil {
+		fmt.Fprintf(out, "\n  %v\n\n", err)
+		pushByHand(out, destination)
+		return
+	}
+
+	if err := infra.PushTo(ctx, git, destination, existing.RemoteURL, true); err != nil {
+		fmt.Fprintf(out, "\n  %v\n\n", err)
+		pushByHand(out, destination)
+		return
+	}
+	fmt.Fprintf(out, "  Pushed over %s\n\n", existing.URL)
 }
 
 // clearTheWay makes sure the destination is empty, asking about it when it is

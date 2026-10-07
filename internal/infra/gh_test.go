@@ -370,3 +370,131 @@ func TestNoDescriptionMeansNoFlag(t *testing.T) {
 		t.Errorf("an empty description was passed:\n%s", argv)
 	}
 }
+
+// The remote has to be in the protocol this machine's gh authenticates with. An
+// https remote where the credentials are an ssh key asks for a password nobody
+// has.
+func TestTheRemoteFollowsTheConfiguredProtocol(t *testing.T) {
+	view := `{"url":"https://github.com/octocat/estate","sshUrl":"git@github.com:octocat/estate.git",` +
+		`"isPrivate":true,"isEmpty":false,"pushedAt":"2026-10-01T10:00:00Z","nameWithOwner":"octocat/estate"}`
+
+	t.Run("ssh", func(t *testing.T) {
+		gh := fakeGH(t, `case "$1" in
+  config) echo ssh ;;
+  repo)   echo '`+view+`' ;;
+esac
+exit 0`)
+
+		repo, err := gh.LookUpRepo(context.Background(), "estate")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repo.RemoteURL != "git@github.com:octocat/estate.git" {
+			t.Errorf("remote = %q", repo.RemoteURL)
+		}
+		// The web address is what gets printed, and stays the web address.
+		if repo.URL != "https://github.com/octocat/estate" {
+			t.Errorf("url = %q", repo.URL)
+		}
+	})
+
+	t.Run("https", func(t *testing.T) {
+		gh := fakeGH(t, `case "$1" in
+  config) echo https ;;
+  repo)   echo '`+view+`' ;;
+esac
+exit 0`)
+
+		repo, err := gh.LookUpRepo(context.Background(), "estate")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repo.RemoteURL != "https://github.com/octocat/estate" {
+			t.Errorf("remote = %q", repo.RemoteURL)
+		}
+		if !repo.Private || repo.Empty {
+			t.Errorf("read %+v", repo)
+		}
+		if !strings.Contains(repo.Describe(), "private, last pushed to 2026-10-01T10:00:00Z") {
+			t.Errorf("describe = %q", repo.Describe())
+		}
+	})
+
+	t.Run("an empty repository says it has nothing to lose", func(t *testing.T) {
+		gh := fakeGH(t, `case "$1" in
+  config) echo https ;;
+  repo)   echo '{"url":"u","sshUrl":"s","isEmpty":true,"nameWithOwner":"octocat/estate"}' ;;
+esac
+exit 0`)
+
+		repo, err := gh.LookUpRepo(context.Background(), "estate")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(repo.Describe(), "nothing to overwrite") {
+			t.Errorf("describe = %q", repo.Describe())
+		}
+	})
+}
+
+// The force push replaces a history on a server. It is a separate argument so
+// that no caller gets it by omission.
+func TestPushingOverReplacesAndPushingNormallyDoesNot(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		force bool
+		want  string
+	}{
+		{"force", true, "--force"},
+		{"plain", false, "push\n-u"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorded := filepath.Join(t.TempDir(), "argv")
+			git := GitCLI{Binary: fakeGitRecording(t, recorded)}
+
+			if err := PushTo(context.Background(), git, t.TempDir(),
+				"git@github.com:octocat/estate.git", test.force); err != nil {
+				t.Fatal(err)
+			}
+
+			argv, err := os.ReadFile(recorded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.force && !strings.Contains(string(argv), "--force") {
+				t.Errorf("a force push did not force:\n%s", argv)
+			}
+			if !test.force && strings.Contains(string(argv), "--force") {
+				t.Errorf("a plain push forced:\n%s", argv)
+			}
+			// And the remote is replaced rather than added, because a previous
+			// attempt leaves one behind.
+			if !strings.Contains(string(argv), "remote\nremove\norigin") {
+				t.Errorf("it did not replace an existing origin:\n%s", argv)
+			}
+		})
+	}
+}
+
+// A url argv would misread is refused before git sees it.
+func TestARemoteURLArgvWouldMisreadIsRefused(t *testing.T) {
+	git := GitCLI{Binary: "/nonexistent/git"}
+
+	for _, url := range []string{"", "  ", "--upload-pack=evil"} {
+		err := PushTo(context.Background(), git, t.TempDir(), url, false)
+		if err == nil || !strings.Contains(err.Error(), "is not a remote url") {
+			t.Errorf("%q: %v", url, err)
+		}
+	}
+}
+
+// fakeGitRecording writes a git that appends every invocation's argv to a file.
+func fakeGitRecording(t *testing.T, recorded string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + recorded + "\nexit 0\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}

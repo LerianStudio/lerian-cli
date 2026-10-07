@@ -39,6 +39,9 @@ type fakeGitHub struct {
 	// failFirst fails the first create only, so a retry can be observed.
 	failFirst error
 	attempts  int
+
+	existing  infra.RemoteRepo
+	lookUpErr error
 }
 
 func (f *fakeGitHub) GHStatus(context.Context) (infra.GHAccount, bool) {
@@ -87,6 +90,17 @@ func (f *fakeGitHub) SetGitProtocol(_ context.Context, protocol string) error {
 	f.protocol = protocol
 	f.protocolSet = true
 	return nil
+}
+
+func (f *fakeGitHub) LookUpRepo(_ context.Context, name string) (infra.RemoteRepo, error) {
+	if f.lookUpErr != nil {
+		return infra.RemoteRepo{}, f.lookUpErr
+	}
+	repo := f.existing
+	if repo.Name == "" {
+		repo.Name = name
+	}
+	return repo, nil
 }
 
 func (f *fakeGitHub) CreateRepository(_ context.Context, dir string, repo infra.GHRepo) (string, error) {
@@ -476,8 +490,9 @@ func TestATakenNameIsAskedAboutRatherThanGivenUpOn(t *testing.T) {
 	withGitHub(t, gh, nil)
 
 	var out bytes.Buffer
-	// publish · the default name · private · then a second name.
-	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq+"estate-2\n")
+	// publish · the default name · private · "use a different name" · the name.
+	ask, _ := selectorFor(t,
+		keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq+keyEnterSeq+"estate-2\n")
 
 	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
 
@@ -745,4 +760,118 @@ func exportWithFacts(t *testing.T) string {
 	// and the account could then go unmentioned without any test noticing.
 	write("backend/dev.hcl", "bucket = \"tfstate-for-dev\"\nregion = \"us-east-2\"\n")
 	return dir
+}
+
+// "That name is taken" is not something to decide from: whether it holds last
+// week's export of this same estate or six months of somebody else's work is the
+// whole question, and GitHub knows the answer.
+func TestATakenNameOffersToPushOverIt(t *testing.T) {
+	t.Run("what is there is described before the choice", func(t *testing.T) {
+		gh := &fakeGitHub{
+			loggedIn:  true,
+			owners:    []infra.GHOwner{{Login: "octocat"}},
+			failFirst: &infra.CreateFailure{NameTaken: true, Advice: "That name is taken."},
+			existing: infra.RemoteRepo{
+				Name: "octocat/estate", URL: "https://github.com/octocat/estate",
+				Private: true, UpdatedAt: "2026-10-01T10:00:00Z",
+			},
+		}
+		withGitHub(t, gh, nil)
+
+		var out bytes.Buffer
+		// publish · name · private · then leave the choice alone.
+		ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq+"q")
+
+		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+
+		screen := out.String() + painted.String()
+		if !strings.Contains(screen, "octocat/estate already exists") {
+			t.Errorf("it did not say what is there:\n%s", screen)
+		}
+		if !strings.Contains(screen, "private, last pushed to 2026-10-01T10:00:00Z") {
+			t.Errorf("it did not describe it:\n%s", screen)
+		}
+		if !strings.Contains(painted.String(), "push over it") {
+			t.Errorf("it did not offer to overwrite:\n%s", painted.String())
+		}
+		// And the safe answer is the one the cursor starts on.
+		if !strings.Contains(painted.String(), "❯ use a different name") {
+			t.Errorf("the cursor starts on the overwrite:\n%s", painted.String())
+		}
+	})
+
+	t.Run("replacing a repository with history takes a typed answer", func(t *testing.T) {
+		noDrain(t)
+		gh := &fakeGitHub{
+			loggedIn:  true,
+			owners:    []infra.GHOwner{{Login: "octocat"}},
+			failFirst: &infra.CreateFailure{NameTaken: true},
+			existing:  infra.RemoteRepo{Name: "octocat/estate", UpdatedAt: "2026-10-01T10:00:00Z"},
+		}
+		withGitHub(t, gh, nil)
+
+		var out bytes.Buffer
+		// publish · name · private · "push over it" · decline the confirmation.
+		ask, painted := selectorFor(t,
+			keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq+keyDownSeq+keyEnterSeq+"no\n")
+
+		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+
+		// The question has to have been asked. Asserting only that nothing was
+		// pushed passed with the confirmation removed entirely — the push failed
+		// anyway, for an unrelated reason. The prompt is written to the
+		// prompter's own writer, not to the one offerGitHub reports through.
+		screen := painted.String() + out.String()
+		if !strings.Contains(screen, "Replace the history of octocat/estate?") {
+			t.Errorf("it did not ask before replacing a history:\n%s", screen)
+		}
+		if strings.Contains(screen, "Pushed over") {
+			t.Errorf("it pushed after the confirmation was declined:\n%s", screen)
+		}
+	})
+
+	t.Run("an empty repository is not asked about twice", func(t *testing.T) {
+		gh := &fakeGitHub{
+			loggedIn:  true,
+			owners:    []infra.GHOwner{{Login: "octocat"}},
+			failFirst: &infra.CreateFailure{NameTaken: true},
+			existing:  infra.RemoteRepo{Name: "octocat/estate", Empty: true},
+		}
+		withGitHub(t, gh, nil)
+
+		var out bytes.Buffer
+		ask, _ := selectorFor(t,
+			keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq+keyDownSeq+keyEnterSeq)
+
+		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+
+		// It got as far as pushing, which is where a non-existent directory makes
+		// it fail — the point is that no second question stood in the way.
+		if strings.Contains(out.String(), "Replace the history") {
+			t.Errorf("it asked about replacing nothing:\n%s", out.String())
+		}
+	})
+
+	t.Run("a repository that cannot be read is never offered for overwrite", func(t *testing.T) {
+		gh := &fakeGitHub{
+			loggedIn:  true,
+			owners:    []infra.GHOwner{{Login: "octocat"}},
+			failFirst: &infra.CreateFailure{NameTaken: true},
+			lookUpErr: errCreate("infra: cannot read octocat/estate: exit status 1"),
+		}
+		withGitHub(t, gh, nil)
+
+		var out bytes.Buffer
+		ask, painted := selectorFor(t,
+			keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq+"estate-2\n")
+
+		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+
+		if strings.Contains(painted.String(), "push over it") {
+			t.Errorf("it offered to overwrite something it could not describe:\n%s", painted.String())
+		}
+		if gh.created == nil || gh.created.Name != "octocat/estate-2" {
+			t.Errorf("it did not fall through to a new name: %+v", gh.created)
+		}
+	})
 }

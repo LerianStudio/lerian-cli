@@ -2,6 +2,7 @@ package infra
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -493,4 +494,123 @@ func newCreateFailure(err error, said string) *CreateFailure {
 			"one you can create in. gh auth status says who you are signed in as."
 	}
 	return failure
+}
+
+// RemoteRepo is a repository that already exists on GitHub.
+//
+// Read before offering to overwrite it. "That name is taken" is not enough to
+// decide from: the taken name might be last week's export of this same estate,
+// or somebody else's work that happens to be called infrastructure.
+type RemoteRepo struct {
+	Name string
+	// URL is the web address, which is what gets printed.
+	URL string
+	// RemoteURL is what git remote add takes, in the protocol this gh is
+	// configured for — ssh or https.
+	RemoteURL string
+	// Private says whether the thing about to be overwritten is visible.
+	Private bool
+	// Empty marks a repository with no commits: nothing to lose, and the
+	// confirmation can say so.
+	Empty bool
+	// UpdatedAt is when it was last pushed to, as GitHub reports it.
+	UpdatedAt string
+}
+
+// Describe is the line the confirmation stands on.
+func (r RemoteRepo) Describe() string {
+	if r.Empty {
+		return "empty — nothing to overwrite"
+	}
+	visibility := "public"
+	if r.Private {
+		visibility = "private"
+	}
+	description := visibility + ", last pushed to " + r.UpdatedAt
+	return description
+}
+
+// LookUpRepo reads what is at a name, so an overwrite is a decision rather than
+// a guess.
+func (g GHCLI) LookUpRepo(ctx context.Context, name string) (RemoteRepo, error) {
+	if err := (GHRepo{Name: name}).validate(); err != nil {
+		return RemoteRepo{}, err
+	}
+
+	fields := "url,sshUrl,isPrivate,isEmpty,pushedAt,nameWithOwner"
+	// #nosec G204 -- the binary is the literal "gh", the field list is a literal,
+	// and the name is checked above for the only thing argv is vulnerable to.
+	command := exec.CommandContext(ctx, g.binary(), "repo", "view", name, "--json", fields)
+
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	output, err := command.Output()
+	if err != nil {
+		return RemoteRepo{}, fmt.Errorf("infra: cannot read %s: %w\n%s", name, err,
+			strings.TrimSpace(stderr.String()))
+	}
+
+	var view struct {
+		URL           string `json:"url"`
+		SSHURL        string `json:"sshUrl"`
+		IsPrivate     bool   `json:"isPrivate"`
+		IsEmpty       bool   `json:"isEmpty"`
+		PushedAt      string `json:"pushedAt"`
+		NameWithOwner string `json:"nameWithOwner"`
+	}
+	if err := json.Unmarshal(output, &view); err != nil {
+		return RemoteRepo{}, fmt.Errorf("infra: cannot read what gh said about %s: %w", name, err)
+	}
+
+	repo := RemoteRepo{
+		Name:      view.NameWithOwner,
+		URL:       view.URL,
+		RemoteURL: view.URL,
+		Private:   view.IsPrivate,
+		Empty:     view.IsEmpty,
+		UpdatedAt: view.PushedAt,
+	}
+	// The protocol this machine's gh is set to, because that is the one its
+	// credentials are for. An https remote on a machine that authenticates over
+	// ssh asks for a password that nobody has.
+	if g.GitProtocol(ctx) == "ssh" && view.SSHURL != "" {
+		repo.RemoteURL = view.SSHURL
+	}
+	if repo.UpdatedAt == "" {
+		repo.UpdatedAt = "an unknown time"
+	}
+	return repo, nil
+}
+
+// PushTo points this repository at a remote and pushes to it.
+//
+// force is a separate argument and never defaulted: it replaces whatever
+// history is on the other end, and the caller has to have asked about that.
+func PushTo(ctx context.Context, git GitCLI, dir, remoteURL string, force bool) error {
+	if strings.TrimSpace(remoteURL) == "" || strings.HasPrefix(remoteURL, "-") {
+		return fmt.Errorf("infra: %q is not a remote url", remoteURL)
+	}
+
+	// Replaced rather than added: an export that already tried once has an origin
+	// pointing at the repository that attempt failed on.
+	if _, err := git.runRaw(ctx, dir, "remote", "remove", "origin"); err != nil {
+		// No origin to remove is the normal case, not a failure.
+		_ = err
+	}
+	if _, err := git.runRaw(ctx, dir, "remote", "add", "origin", remoteURL); err != nil {
+		return fmt.Errorf("infra: cannot point this repository at %s: %w", remoteURL, err)
+	}
+
+	args := []string{"push", "-u", "origin", "main"}
+	if force {
+		// --force-with-lease is not what is wanted here. It refuses when the
+		// remote moved since a fetch this repository never did — which is always,
+		// for a tree created seconds ago — so it would refuse every time while
+		// reading as a safety feature.
+		args = []string{"push", "--force", "-u", "origin", "main"}
+	}
+	if _, err := git.runRaw(ctx, dir, args...); err != nil {
+		return fmt.Errorf("infra: push to %s failed: %w", remoteURL, err)
+	}
+	return nil
 }
