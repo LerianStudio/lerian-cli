@@ -118,6 +118,14 @@ func PlanExport(layout Layout, units []Unit) (ExportPlan, error) {
 	plan := ExportPlan{}
 	seen := map[string]bool{}
 
+	// The checkout as the filesystem sees it, for the symlink check below. A
+	// checkout reached through a symlink is normal — /tmp is one on macOS — so
+	// both ends have to be resolved or every path under it looks external.
+	canonicalRoot, err := filepath.EvalSymlinks(layout.Root)
+	if err != nil {
+		canonicalRoot = layout.Root
+	}
+
 	var follow func(dir string) error
 	follow = func(dir string) error {
 		if seen[dir] {
@@ -152,6 +160,18 @@ func PlanExport(layout Layout, units []Unit) (ExportPlan, error) {
 					// over a root that is perfectly valid Terraform.
 					continue
 				}
+				// Checked before following it, and on the resolved path rather than
+				// the written one. A module symlinked to somewhere outside the
+				// checkout passes the lexical test — nothing in "_modules/x" says
+				// where it really is — and then fails during the copy, after the
+				// destination has already been emptied.
+				if escapes, escapeErr := escapesCheckout(canonicalRoot, target); escapeErr != nil {
+					return escapeErr
+				} else if escapes {
+					return fmt.Errorf("infra: %s is a link to somewhere outside the checkout;"+
+						" it cannot be exported", layout.rel(target))
+				}
+
 				if err := follow(target); err != nil {
 					return err
 				}
@@ -180,6 +200,12 @@ func PlanExport(layout Layout, units []Unit) (ExportPlan, error) {
 		if _, err := os.Stat(unit.Dir); err != nil {
 			plan.Missing = append(plan.Missing, unit.Name)
 			continue
+		}
+		if escapes, escapeErr := escapesCheckout(canonicalRoot, unit.Dir); escapeErr != nil {
+			return plan, escapeErr
+		} else if escapes {
+			return plan, fmt.Errorf("infra: %s is a link to somewhere outside the checkout;"+
+				" it cannot be exported", unit.Name)
 		}
 		if err := follow(unit.Dir); err != nil {
 			return plan, err
@@ -238,6 +264,29 @@ func exportBase(layout Layout, files []string) string {
 		}
 	}
 	return base
+}
+
+// escapesCheckout is whether a path, followed to wherever it really is, lands
+// outside the checkout.
+//
+// Separate from escapesRoot, which reads a path and nothing else: this one asks
+// the filesystem. A "../.." in the source text is visible without help; a
+// symlink is not, and the difference only shows up at copy time — by which point
+// the destination has been emptied.
+func escapesCheckout(canonicalRoot, path string) (bool, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		// It resolved a moment ago, for os.Stat. Anything that changed since is
+		// not this function's to diagnose, and treating it as outside would
+		// refuse an export over a race.
+		return false, nil
+	}
+
+	rel, err := filepath.Rel(canonicalRoot, resolved)
+	if err != nil {
+		return false, fmt.Errorf("infra: cannot place %s relative to the checkout: %w", path, err)
+	}
+	return escapesRoot(rel), nil
 }
 
 // escapesRoot is whether a repo-relative path leaves the repository.

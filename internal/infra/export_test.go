@@ -979,3 +979,113 @@ func countFilesUnder(t *testing.T, root string) int {
 	}
 	return count
 }
+
+// A lexical check reads the path as written; a symlink is not written anywhere.
+// A module linked outside the checkout passed the plan, and then failed during
+// the copy — after the destination had been emptied, which is the one moment
+// when failing is expensive.
+func TestAModuleLinkedOutsideTheCheckoutIsRefused(t *testing.T) {
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "infra-base/vpc", `module "x" { source = "../../_modules/sneaky" }`)
+
+	// A real directory outside the checkout, and a link to it from inside.
+	outside := filepath.Join(t.TempDir(), "elsewhere")
+	writeFile(t, filepath.Join(outside, "main.tf"), "")
+	link := filepath.Join(layout.AWSDir(), "_modules", "sneaky")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+
+	_, err := PlanExport(layout, []Unit{
+		{Name: "vpc", Dir: filepath.Join(layout.AWSDir(), "infra-base", "vpc")},
+	})
+
+	if err == nil {
+		t.Fatal("a module linked outside the checkout was planned")
+	}
+	if !strings.Contains(err.Error(), "outside the checkout") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+// And a link that stays inside is fine: a checkout is allowed to have symlinks
+// in it, and refusing them all would reject layouts the templates may use.
+func TestAModuleLinkedInsideTheCheckoutIsFollowed(t *testing.T) {
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "infra-base/vpc", `module "x" { source = "../../_modules/aliased" }`)
+	writeModule(t, layout, "real", "")
+
+	link := filepath.Join(layout.AWSDir(), "_modules", "aliased")
+	if err := os.Symlink(filepath.Join(layout.AWSDir(), "_modules", "real"), link); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+
+	plan, err := PlanExport(layout, []Unit{
+		{Name: "vpc", Dir: filepath.Join(layout.AWSDir(), "infra-base", "vpc")},
+	})
+
+	if err != nil {
+		t.Fatalf("a link inside the checkout was refused: %v", err)
+	}
+	if len(plan.Modules) != 1 {
+		t.Errorf("the module was not followed: %v", plan.Modules)
+	}
+}
+
+// The checkout itself is often reached through a symlink — /tmp is one on macOS
+// — so both ends have to be resolved. Comparing a resolved module against an
+// unresolved root makes every path under it look external.
+func TestACheckoutBehindASymlinkStillExports(t *testing.T) {
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "infra-base/vpc", `module "x" { source = "../../_modules/naming" }`)
+	writeModule(t, layout, "naming", "")
+
+	// Reach the same checkout through a link.
+	link := filepath.Join(t.TempDir(), "checkout")
+	if err := os.Symlink(layout.Root, link); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	linked, err := NewLayout(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := PlanExport(linked, []Unit{
+		{Name: "vpc", Dir: filepath.Join(linked.AWSDir(), "infra-base", "vpc")},
+	})
+
+	if err != nil {
+		t.Fatalf("a checkout reached through a symlink was refused: %v", err)
+	}
+	if len(plan.Roots) != 1 || len(plan.Modules) != 1 {
+		t.Errorf("planned %d roots and %d modules", len(plan.Roots), len(plan.Modules))
+	}
+}
+
+// The roots take the same check as the modules. A root linked outside the
+// checkout copies from somewhere nobody named, and fails during the copy for
+// the same reason — after the destination has been emptied.
+func TestARootLinkedOutsideTheCheckoutIsRefused(t *testing.T) {
+	layout := exportCheckout(t)
+
+	outside := filepath.Join(t.TempDir(), "elsewhere")
+	writeFile(t, filepath.Join(outside, "main.tf"), "")
+	writeFile(t, filepath.Join(outside, "envs", "dev.tfvars"), "x = 1\n")
+
+	link := filepath.Join(layout.AWSDir(), "infra-base", "borrowed")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+
+	_, err := PlanExport(layout, []Unit{{Name: "infra-base/borrowed", Dir: link}})
+
+	if err == nil {
+		t.Fatal("a root linked outside the checkout was planned")
+	}
+	if !strings.Contains(err.Error(), "outside the checkout") {
+		t.Errorf("error = %v", err)
+	}
+}
