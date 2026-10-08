@@ -338,7 +338,7 @@ func TestAnOccupiedDestinationIsAskedAboutAgain(t *testing.T) {
 	// destination is ever looked at, and the test passes or fails on whether the
 	// machine running it happens to have a clone — which is how this first went
 	// green here and red in CI.
-	t.Setenv("LERIAN_TF_REPO", fakeCheckout(t, "", ""))
+	t.Setenv("LERIAN_TF_REPO", configuredCheckout(t))
 
 	occupied := t.TempDir()
 	if err := os.WriteFile(filepath.Join(occupied, "mine.txt"), []byte("x"), 0o600); err != nil {
@@ -371,7 +371,7 @@ func TestAPathThatCanNeverWorkIsAskedAboutAgain(t *testing.T) {
 	// test made. Pointing the destination at the working directory would prove
 	// the same thing while risking the source tree if the safeguard regressed —
 	// which has happened here once already.
-	checkout := fakeCheckout(t, "", "")
+	checkout := configuredCheckout(t)
 	t.Setenv("LERIAN_TF_REPO", checkout)
 
 	var out bytes.Buffer
@@ -391,4 +391,30 @@ func TestAPathThatCanNeverWorkIsAskedAboutAgain(t *testing.T) {
 	if !strings.Contains(screen, "refusing to empty") {
 		t.Errorf("it did not say why that path cannot work:\n%s", screen)
 	}
+}
+
+// configuredCheckout is a checkout with one root actually configured.
+//
+// The export plans before it touches the destination, so a checkout with no
+// envs/<env>.tfvars anywhere fails before the destination is ever looked at —
+// which is the right order, and makes an unconfigured fixture useless for
+// testing what happens at the destination.
+func configuredCheckout(t *testing.T) string {
+	t.Helper()
+	checkout := fakeCheckout(t, "", "")
+
+	root := filepath.Join(checkout, "examples", "aws", "infra-base", "vpc")
+	if err := os.MkdirAll(filepath.Join(root, "envs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"main.tf":         "output \"x\" { value = 1 }\n",
+		"envs/dev.tfvars": "size = 1\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(name)),
+			[]byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return checkout
 }

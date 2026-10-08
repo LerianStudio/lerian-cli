@@ -833,3 +833,149 @@ func TestTheReadmeGetsBackToTheBackendInTheKeptLayout(t *testing.T) {
 		t.Errorf("the troubleshooting command does not name the real path:\n%s", readme)
 	}
 }
+
+// `source` is an attribute of other things too — aws_s3_object takes one and it
+// points at a file. Following it means calling ReadDir on a file, which failed
+// the whole export over a root that is perfectly valid Terraform.
+func TestASourceThatIsNotAModuleIsNotFollowed(t *testing.T) {
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "infra-base/vpc", `
+resource "aws_s3_object" "policy" {
+  source = "./files/policy.json"
+}
+
+module "naming" { source = "../../_modules/naming" }
+`)
+	writeFile(t, filepath.Join(layout.AWSDir(), "infra-base", "vpc", "files", "policy.json"), "{}")
+	writeModule(t, layout, "naming", "")
+
+	plan, err := PlanExport(layout, []Unit{
+		{Name: "vpc", Dir: filepath.Join(layout.AWSDir(), "infra-base", "vpc")},
+	})
+
+	if err != nil {
+		t.Fatalf("a file source aborted the export: %v", err)
+	}
+	// The module beside it is still followed — inline, which is why the pattern
+	// cannot be anchored to the start of a line.
+	if len(plan.Modules) != 1 || !strings.HasSuffix(plan.Modules[0], "naming") {
+		t.Errorf("the module was not followed: %v", plan.Modules)
+	}
+	// And the file is not in the module list.
+	for _, module := range plan.Modules {
+		if strings.Contains(module, "policy.json") {
+			t.Errorf("a file was exported as a module: %v", plan.Modules)
+		}
+	}
+}
+
+// An attribute that merely ends in the word is not a module source.
+func TestAnAttributeEndingInSourceIsNotAModuleSource(t *testing.T) {
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "infra-base/vpc", `
+locals {
+  lambda_source = "../../_modules/not-a-module"
+}
+`)
+	// The target exists, so only the pattern can keep it out.
+	writeModule(t, layout, "not-a-module", "")
+
+	plan, err := PlanExport(layout, []Unit{
+		{Name: "vpc", Dir: filepath.Join(layout.AWSDir(), "infra-base", "vpc")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Modules) != 0 {
+		t.Errorf("lambda_source was read as a module source: %v", plan.Modules)
+	}
+}
+
+// The warning before a public repository has to read the configuration from
+// where Export wrote it. With the templates' prefix kept, reading the top level
+// left out the account ids and the bucket names — the two most sensitive facts,
+// missing from the list somebody confirms against.
+func TestThePublishingWarningFindsTheConfigurationInEitherLayout(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		base string
+		at   string
+	}{
+		{"stripped", "examples/aws", "."},
+		{"kept", "", "examples/aws"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, filepath.Join(dir, test.at, "environments.conf"),
+				"[dev]\naccount_id = 111122223333\n")
+			writeFile(t, filepath.Join(dir, test.at, "backend", "dev.hcl"),
+				"bucket = \"tfstate-for-dev\"\n")
+
+			plan := ExportPlan{Base: test.base, Config: []string{
+				"examples/aws/environments.conf", "examples/aws/backend/dev.hcl",
+			}}
+
+			facts := strings.Join(WhatPublishingReveals(dir, plan), " | ")
+
+			if !strings.Contains(facts, "AWS account 111122223333") {
+				t.Errorf("the account is missing from the warning: %q", facts)
+			}
+			if !strings.Contains(facts, "state bucket tfstate-for-dev") {
+				t.Errorf("the bucket is missing from the warning: %q", facts)
+			}
+		})
+	}
+}
+
+// WriteExportMeta adds three files on top of what was copied, and three callers
+// report a total that includes them. The last time one was added — the
+// Makefile — all three reported one too few.
+func TestTheMetadataCountMatchesWhatIsWritten(t *testing.T) {
+	layout := exportCheckout(t)
+	writeRoot(t, layout, "bootstrap", "")
+	writeFile(t, layout.ConfigFile(), "dev=111111111111\n")
+
+	plan, err := PlanExport(layout, []Unit{{Name: "bootstrap", Dir: layout.BootstrapDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destination := filepath.Join(t.TempDir(), "estate")
+	copied, err := Export(layout, plan, destination, "v1.11.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := countFilesUnder(t, destination)
+
+	if err := WriteExportMeta(destination, "v1.11.0", plan); err != nil {
+		t.Fatal(err)
+	}
+	after := countFilesUnder(t, destination)
+
+	if added := after - before; added != MetaFiles {
+		t.Errorf("WriteExportMeta wrote %d files, MetaFiles says %d", added, MetaFiles)
+	}
+	// And the total a caller would report is the whole tree.
+	if copied+MetaFiles != after {
+		t.Errorf("copied %d + %d metadata = %d, but the tree holds %d",
+			copied, MetaFiles, copied+MetaFiles, after)
+	}
+}
+
+func countFilesUnder(t *testing.T, root string) int {
+	t.Helper()
+	count := 0
+	err := filepath.WalkDir(root, func(_ string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			count++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return count
+}

@@ -160,7 +160,11 @@ func checkGH(ctx context.Context) checkResult {
 
 	account, loggedIn := gh.GHStatus(ctx)
 	if !loggedIn {
-		result.summary += "  (not logged in — gh auth login, or the CLI offers it)"
+		// Not ok: the row exists to say whether a repository can be created from
+		// here, and a logged-out gh cannot. optional keeps it out of the verdict,
+		// so this reads "absent" in grey rather than failing anything.
+		result.ok = false
+		result.summary = binaryPath("gh") + "  (not logged in — gh auth login, or the CLI offers it)"
 		return result
 	}
 	if name := account.String(); name != "not logged in" {

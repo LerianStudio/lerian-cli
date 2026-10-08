@@ -88,10 +88,6 @@ func exportRepository(ctx context.Context, ask *prompter, out io.Writer, destina
 	if err != nil {
 		return fmt.Errorf("cannot resolve %q: %w", destination, err)
 	}
-	if err := clearTheWay(ctx, ask, out, absolute, checkoutsInUse(layout)); err != nil {
-		return err
-	}
-
 	catalog, err := infra.Discover(layout)
 	if err != nil {
 		return err
@@ -111,6 +107,16 @@ func exportRepository(ctx context.Context, ask *prompter, out io.Writer, destina
 
 	plan, err := infra.PlanExport(layout, units)
 	if err != nil {
+		return err
+	}
+
+	// After the plan, never before. Emptying the destination first meant that a
+	// checkout with nothing configured, or a module resolving outside it, left
+	// the directory the operator agreed to replace already gone — and the thing
+	// they agreed to was "deletes what is in that directory, then writes the
+	// export". When nothing is going to be written, nothing should have been
+	// deleted.
+	if err := clearTheWay(ctx, ask, out, absolute, checkoutsInUse(layout)); err != nil {
 		return err
 	}
 
@@ -141,18 +147,20 @@ func exportRepository(ctx context.Context, ask *prompter, out io.Writer, destina
 	// here would report "export failed" over a tree that is sitting there
 	// complete.
 	if err != nil {
-		fmt.Fprintf(out, "  %d file(s) written. git is not installed, so no repository was made.\n\n", written)
+		fmt.Fprintf(out, "  %d file(s) written. git is not installed, so no repository was made.\n\n",
+			written+infra.MetaFiles)
 		return nil
 	}
 	// Same: the files are there either way, and what failed is printed rather
 	// than swallowed.
 	if err := infra.InitRepository(ctx, git, absolute, ref); err != nil {
-		fmt.Fprintf(out, "  %d file(s) written, but the repository was not initialized: %v\n\n", written, err)
+		fmt.Fprintf(out, "  %d file(s) written, but the repository was not initialized: %v\n\n",
+			written+infra.MetaFiles, err)
 		return nil
 	}
 
-	fmt.Fprintf(out, "  %d file(s), one commit, branch main.\n\n", written+2)
-	offerGitHub(ctx, ask, out, absolute, describeExport(ref))
+	fmt.Fprintf(out, "  %d file(s), one commit, branch main.\n\n", written+infra.MetaFiles)
+	offerGitHub(ctx, ask, out, absolute, describeExport(ref), plan)
 	return nil
 }
 
@@ -224,7 +232,8 @@ var newGitHub = func() (gitHub, error) {
 // Nothing happens without three separate answers: yes, this name, this
 // visibility. Each one is a thing somebody could want different, and the last is
 // the one that cannot be taken back by deleting a directory.
-func offerGitHub(ctx context.Context, ask *prompter, out io.Writer, destination, description string) {
+func offerGitHub(ctx context.Context, ask *prompter, out io.Writer,
+	destination, description string, plan infra.ExportPlan) {
 	if ask == nil || !ask.interactive {
 		pushByHand(out, destination)
 		return
@@ -259,7 +268,7 @@ func offerGitHub(ctx context.Context, ask *prompter, out io.Writer, destination,
 		pushByHand(out, destination)
 		return
 	}
-	createOnGitHub(ctx, ask, out, gh, destination, description)
+	createOnGitHub(ctx, ask, out, gh, destination, description, plan)
 }
 
 // signedIntoGitHub makes sure gh can act, logging in if it cannot.
@@ -306,6 +315,7 @@ func createOnGitHub(
 	out io.Writer,
 	gh gitHub,
 	destination, description string,
+	plan infra.ExportPlan,
 ) {
 	owner, err := pickOwner(ctx, ask, gh)
 	if err != nil {
@@ -321,7 +331,7 @@ func createOnGitHub(
 	}
 	name = qualify(owner, name)
 
-	visibility, err := pickVisibility(ctx, ask, out, destination, name)
+	visibility, err := pickVisibility(ctx, ask, out, destination, name, plan)
 	if err != nil {
 		pushByHand(out, destination)
 		return
@@ -418,7 +428,8 @@ func qualify(owner, name string) string {
 // one, and it is irreversible in the way that matters: a repository made public
 // has been readable by crawlers before anybody notices, and making it private
 // afterwards does not unpublish what was already fetched.
-func pickVisibility(ctx context.Context, ask *prompter, out io.Writer, destination, name string) (string, error) {
+func pickVisibility(ctx context.Context, ask *prompter, out io.Writer,
+	destination, name string, plan infra.ExportPlan) (string, error) {
 	for {
 		visibility, err := ask.pick("Public or private?",
 			"The next answer creates "+name+" and pushes this commit.", "",
@@ -433,7 +444,7 @@ func pickVisibility(ctx context.Context, ask *prompter, out io.Writer, destinati
 			return visibility, nil
 		}
 
-		if confirmPublic(ctx, ask, out, destination, name) {
+		if confirmPublic(ctx, ask, out, destination, name, plan) {
 			return visibility, nil
 		}
 		// Back to the same question rather than out of the flow: somebody who
@@ -449,11 +460,12 @@ func pickVisibility(ctx context.Context, ask *prompter, out io.Writer, destinati
 // sentence people click past, because it describes a possibility; the account
 // number is a fact, and seeing it is the difference between a warning and a
 // decision.
-func confirmPublic(ctx context.Context, ask *prompter, out io.Writer, destination, name string) bool {
+func confirmPublic(ctx context.Context, ask *prompter, out io.Writer,
+	destination, name string, plan infra.ExportPlan) bool {
 	theme := newStyle(out)
 	fmt.Fprintf(out, "\n  %s\n", theme.alert("A public repository is readable by anyone, including crawlers."))
 	fmt.Fprintf(out, "  %s\n", "Pushing this publishes:")
-	for _, fact := range infra.WhatPublishingReveals(destination) {
+	for _, fact := range infra.WhatPublishingReveals(destination, plan) {
 		fmt.Fprintf(out, "    %s\n", fact)
 	}
 	fmt.Fprintf(out, "  %s\n", theme.dim(

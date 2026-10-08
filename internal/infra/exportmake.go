@@ -139,6 +139,13 @@ func localRoots(plan ExportPlan) []string {
 // and `make pln eks dev` would sit there doing nothing instead of saying there
 // is no such target.
 func writeMakePositional(out *strings.Builder) {
+	// Only a command-line value confirms. make imports the environment into its
+	// own variables, so reading GROUP_CONFIRMED directly would let a value
+	// exported in a shell skip every prompt in this file — including the one in
+	// front of destroy. `origin` is how make tells the two apart.
+	fmt.Fprintf(out, "CONFIRMED_BY_GROUP := "+
+		"$(if $(filter command line,$(origin GROUP_CONFIRMED)),$(GROUP_CONFIRMED))\n\n")
+
 	fmt.Fprintf(out, "VERBS := plan apply destroy output init test\n")
 	fmt.Fprintf(out, "ifneq ($(filter $(firstword $(MAKECMDGOALS)),$(VERBS)),)\n")
 	fmt.Fprintf(out, "  ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))\n")
@@ -241,7 +248,7 @@ func writeMakeTargets(out *strings.Builder) {
 
 		fmt.Fprintf(out, "group-%s:\n", verb)
 		if verb == "apply" || verb == "destroy" {
-			fmt.Fprintf(out, "\t@test -n \"$(GROUP_CONFIRMED)\" || { \\\n")
+			fmt.Fprintf(out, "\t@test -n \"$(CONFIRMED_BY_GROUP)\" || { \\\n")
 			fmt.Fprintf(out, "\t\tprintf '  %s these in %%s, in order:\\n' '$(ENV)'; \\\n", verb)
 			fmt.Fprintf(out, "\t\tfor root in %s; do echo \"    $$root\"; done; \\\n", order)
 			fmt.Fprintf(out, "\t\tprintf '  Type yes to continue: '; \\\n")
@@ -259,11 +266,12 @@ func writeMakeTargets(out *strings.Builder) {
 		if verb != "plan" {
 			// The same bar the CLI sets: these write, and a Makefile that applies
 			// on one word is a Makefile somebody applies to the wrong environment.
-			// GROUP_CONFIRMED, not CONFIRMED: the group sets it when its own prompt
-			// has been answered, and it is a make variable rather than an
-			// environment one, so a CONFIRMED=1 left in somebody's shell cannot
-			// silence this.
-			fmt.Fprintf(out, "\t@test -n \"$(GROUP_CONFIRMED)\" || { \\\n")
+			// CONFIRMED_BY_GROUP, not GROUP_CONFIRMED read directly: make imports
+			// every environment variable as a make variable, so `export
+			// GROUP_CONFIRMED=1` in somebody's shell would silence this prompt and
+			// the group's. Only a command-line value counts, and the group passes
+			// one — which reaches here through MAKEFLAGS.
+			fmt.Fprintf(out, "\t@test -n \"$(CONFIRMED_BY_GROUP)\" || { \\\n")
 			fmt.Fprintf(out, "\t\tprintf '  %s %%s in %%s. Type yes to continue: ' '$(RESOLVED)' '$(ENV)'; \\\n", verb)
 			fmt.Fprintf(out, "\t\tread -r answer; [ \"$$answer\" = yes ] || { echo '  stopped.'; exit 1; }; }\n")
 		}

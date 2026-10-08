@@ -135,7 +135,7 @@ func TestCreatingOnGitHubIsPrivateUnlessAskedOtherwise(t *testing.T) {
 	// name, which a bare newline takes · private, the row the cursor starts on.
 	ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq)
 
-	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 	if gh.created == nil {
 		t.Fatalf("nothing was created:\n%s", painted.String())
@@ -166,7 +166,7 @@ func TestKeepingItLocalCreatesNothing(t *testing.T) {
 	var out bytes.Buffer
 	ask, _ := selectorFor(t, keyEnterSeq) // "keep it here", the first row
 
-	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 	if gh.created != nil {
 		t.Errorf("a repository was created after declining: %+v", gh.created)
@@ -188,7 +188,7 @@ func TestLoggingInIsOfferedAndChecked(t *testing.T) {
 		// publish · log in now · the default name · private
 		ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+keyEnterSeq+"\n"+keyEnterSeq)
 
-		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 		if !gh.loginRan {
 			t.Fatalf("no login was offered:\n%s", painted.String())
@@ -205,7 +205,7 @@ func TestLoggingInIsOfferedAndChecked(t *testing.T) {
 		var out bytes.Buffer
 		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+keyEnterSeq+"\n"+keyEnterSeq)
 
-		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 		if gh.created != nil {
 			t.Error("it created a repository with no login behind it")
@@ -222,7 +222,7 @@ func TestLoggingInIsOfferedAndChecked(t *testing.T) {
 		var out bytes.Buffer
 		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+keyDownSeq+keyEnterSeq) // publish, then cancel
 
-		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 		if gh.loginRan {
 			t.Error("it logged in after the login was declined")
@@ -241,7 +241,7 @@ func TestNoGHSaysSoAndLeavesTheCommands(t *testing.T) {
 	var out bytes.Buffer
 	ask, _ := selectorFor(t, "")
 
-	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 	if !strings.Contains(out.String(), "gh is not installed") {
 		t.Errorf("the absence was not explained:\n%s", out.String())
@@ -260,7 +260,7 @@ func TestAFailedCreateReportsAndFallsBack(t *testing.T) {
 	var out bytes.Buffer
 	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq)
 
-	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 	if !strings.Contains(out.String(), "Name already exists") {
 		t.Errorf("what gh said was dropped:\n%s", out.String())
@@ -277,7 +277,7 @@ func TestWithoutATerminalItJustSaysWhatToRun(t *testing.T) {
 	withGitHub(t, gh, nil)
 
 	var out bytes.Buffer
-	offerGitHub(context.Background(), &prompter{out: &out}, &out, "/tmp/some-export", exportDescription)
+	offerGitHub(context.Background(), &prompter{out: &out}, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 	if gh.created != nil {
 		t.Error("it created a repository with nobody to ask")
@@ -494,7 +494,7 @@ func TestATakenNameIsAskedAboutRatherThanGivenUpOn(t *testing.T) {
 	ask, _ := selectorFor(t,
 		keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq+keyEnterSeq+"estate-2\n")
 
-	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 	if gh.created == nil {
 		t.Fatalf("it gave up on a name that was taken:\n%s", out.String())
@@ -520,7 +520,7 @@ func TestAFailureThatIsNotTheNameStops(t *testing.T) {
 	var out bytes.Buffer
 	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq)
 
-	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 	if strings.Contains(out.String(), "Another name?") {
 		t.Errorf("it asked for another name over a scope problem:\n%s", out.String())
@@ -545,7 +545,7 @@ func TestAFailedPushDoesNotSuggestStartingOver(t *testing.T) {
 	var out bytes.Buffer
 	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq)
 
-	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 	if strings.Contains(out.String(), "git remote add origin") {
 		t.Errorf("it told them to add a remote that is already there:\n%s", out.String())
@@ -570,7 +570,7 @@ func TestTheOwnerIsChosenRatherThanAssumed(t *testing.T) {
 	// publish · the second owner (acme) · the default name · private
 	ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq)
 
-	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 	if gh.created == nil {
 		t.Fatalf("nothing was created:\n%s", painted.String())
@@ -609,7 +609,7 @@ func TestOneOwnerIsNotAQuestion(t *testing.T) {
 	var out bytes.Buffer
 	ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq)
 
-	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+	offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 	if strings.Contains(painted.String(), "Where should it be created?") {
 		t.Errorf("it asked with one answer available:\n%s", painted.String())
@@ -661,7 +661,7 @@ func TestPublicCostsATypedAnswer(t *testing.T) {
 		// publish · the default name · public (the second row) · then type yes.
 		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyDownSeq+keyEnterSeq+"yes\n")
 
-		offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription)
+		offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription, exportPlanFor(t))
 
 		if gh.created == nil {
 			t.Fatalf("nothing was created:\n%s", out.String())
@@ -682,7 +682,7 @@ func TestPublicCostsATypedAnswer(t *testing.T) {
 		ask, painted := selectorFor(t,
 			keyDownSeq+keyEnterSeq+"\n"+keyDownSeq+keyEnterSeq+"no\n"+keyEnterSeq)
 
-		offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription)
+		offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription, exportPlanFor(t))
 
 		if gh.created == nil {
 			t.Fatalf("declining public ended the export:\n%s", painted.String())
@@ -703,7 +703,7 @@ func TestPublicCostsATypedAnswer(t *testing.T) {
 		var out bytes.Buffer
 		ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq)
 
-		offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription)
+		offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription, exportPlanFor(t))
 
 		if strings.Contains(out.String(), "readable by anyone") {
 			t.Errorf("a private repository was warned about:\n%s", out.String())
@@ -726,7 +726,7 @@ func TestTheWarningNamesWhatWouldBePublished(t *testing.T) {
 	// Decline, so nothing is created and the warning is all there is to read.
 	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyDownSeq+keyEnterSeq+"no\n"+keyEnterSeq)
 
-	offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription)
+	offerGitHub(context.Background(), ask, &out, exportWithFacts(t), exportDescription, exportPlanFor(t))
 
 	for _, want := range []string{
 		"AWS account 111122223333",     // read out of environments.conf
@@ -782,7 +782,7 @@ func TestATakenNameOffersToPushOverIt(t *testing.T) {
 		// publish · name · private · then leave the choice alone.
 		ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq+"q")
 
-		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 		screen := out.String() + painted.String()
 		if !strings.Contains(screen, "octocat/estate already exists") {
@@ -815,7 +815,7 @@ func TestATakenNameOffersToPushOverIt(t *testing.T) {
 		ask, painted := selectorFor(t,
 			keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq+keyDownSeq+keyEnterSeq+"no\n")
 
-		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 		// The question has to have been asked. Asserting only that nothing was
 		// pushed passed with the confirmation removed entirely — the push failed
@@ -843,7 +843,7 @@ func TestATakenNameOffersToPushOverIt(t *testing.T) {
 		ask, _ := selectorFor(t,
 			keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq+keyDownSeq+keyEnterSeq)
 
-		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 		// It got as far as pushing, which is where a non-existent directory makes
 		// it fail — the point is that no second question stood in the way.
@@ -865,7 +865,7 @@ func TestATakenNameOffersToPushOverIt(t *testing.T) {
 		ask, painted := selectorFor(t,
 			keyDownSeq+keyEnterSeq+"\n"+keyEnterSeq+"estate-2\n")
 
-		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription)
+		offerGitHub(context.Background(), ask, &out, "/tmp/some-export", exportDescription, exportPlanFor(t))
 
 		if strings.Contains(painted.String(), "push over it") {
 			t.Errorf("it offered to overwrite something it could not describe:\n%s", painted.String())
@@ -874,4 +874,12 @@ func TestATakenNameOffersToPushOverIt(t *testing.T) {
 			t.Errorf("it did not fall through to a new name: %+v", gh.created)
 		}
 	})
+}
+
+// exportPlanFor is the plan the warning reads its facts out of. Its Base matches
+// the fixture's layout, so configPath finds the files where exportWithFacts put
+// them.
+func exportPlanFor(t *testing.T) infra.ExportPlan {
+	t.Helper()
+	return infra.ExportPlan{Base: "examples/aws"}
 }

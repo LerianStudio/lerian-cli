@@ -958,3 +958,52 @@ func TestABlockingCheckStillFailsBesideAnOptionalOne(t *testing.T) {
 		t.Errorf("the optional row was counted:\n%s", out.String())
 	}
 }
+
+// The gh row exists to say whether a repository can be created from here, and a
+// logged-out gh cannot. It read "ok  (not logged in)", which is two statements
+// that contradict each other.
+func TestALoggedOutGHIsNotOK(t *testing.T) {
+	gh := fakeGHBinary(t, `echo "You are not logged into any GitHub hosts." >&2; exit 1`)
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result := checkGH(context.Background())
+
+	if result.ok {
+		t.Errorf("a logged-out gh reported ok: %+v", result)
+	}
+	// Still optional, so it reads "absent" and fails nothing.
+	if !result.optional {
+		t.Error("it would block a run over a tool no run calls")
+	}
+	if result.blocking() {
+		t.Error("it is counted as a failure")
+	}
+	if !strings.Contains(result.summary, "not logged in") {
+		t.Errorf("it does not say why: %q", result.summary)
+	}
+}
+
+// And a logged-in one is ok, with the account named.
+func TestALoggedInGHIsOK(t *testing.T) {
+	gh := fakeGHBinary(t, `echo "✓ Logged in to github.com account octocat (keyring)" >&2; exit 0`)
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result := checkGH(context.Background())
+
+	if !result.ok {
+		t.Errorf("a logged-in gh reported not ok: %+v", result)
+	}
+	if !strings.Contains(result.summary, "octocat") {
+		t.Errorf("it does not name the account: %q", result.summary)
+	}
+}
+
+// fakeGHBinary writes a gh on a PATH of its own.
+func fakeGHBinary(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "gh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}

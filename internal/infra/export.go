@@ -15,7 +15,12 @@ import (
 
 // localSource matches a module source that points inside this repository.
 // Registry and git sources are left alone: they are fetched, not copied.
-var localSource = regexp.MustCompile(`source\s*=\s*"(\.{1,2}/[^"]+)"`)
+// The boundary is a space or a brace, not the start of a line: anchoring to the
+// line misses `module "x" { source = "../y" }`, which is valid HCL, and missing
+// a module is worse than following one too many — the export would silently
+// leave out something a root needs. What the boundary does rule out is an
+// attribute that merely ends in the word, such as `lambda_source`.
+var localSource = regexp.MustCompile(`(?:^|[\s{])source\s*=\s*"(\.{1,2}/[^"]+)"`)
 
 // ExportPlan is what an export would copy, worked out before anything is
 // written.
@@ -134,9 +139,17 @@ func PlanExport(layout Layout, units []Unit) (ExportPlan, error) {
 			}
 			for _, match := range localSource.FindAllStringSubmatch(string(content), -1) {
 				target := filepath.Clean(filepath.Join(dir, match[1]))
-				if _, statErr := os.Stat(target); statErr != nil {
+				info, statErr := os.Stat(target)
+				switch {
+				case statErr != nil:
 					// A source that does not resolve is the template's problem, and
 					// terraform reports it better than this can.
+					continue
+				case !info.IsDir():
+					// Not a module. `source` is an attribute of other things too —
+					// aws_s3_object takes one, and it points at a file. Following it
+					// means calling ReadDir on a file, which fails the whole export
+					// over a root that is perfectly valid Terraform.
 					continue
 				}
 				if err := follow(target); err != nil {
@@ -451,6 +464,11 @@ crash.*.log
 // The provenance matters more than it looks: this is a copy taken at one tag,
 // and six months from now the question "what has changed in the templates since"
 // has no answer unless the tag is written down.
+// MetaFiles is how many files WriteExportMeta adds on top of what was copied:
+// the .gitignore, the README and the Makefile. A constant because three callers
+// report a total, and the last time one was added they all reported one too few.
+const MetaFiles = 3
+
 func WriteExportMeta(destination, templatesRef string, plan ExportPlan) error {
 	if err := os.WriteFile(filepath.Join(destination, ".gitignore"), []byte(exportIgnore), 0o600); err != nil {
 		return fmt.Errorf("infra: cannot write .gitignore: %w", err)
@@ -515,20 +533,28 @@ func InitRepository(ctx context.Context, git GitCLI, destination, templatesRef s
 // Read from the export itself rather than from what this run happens to know:
 // the question is what is in that directory, and the directory is the thing
 // being published.
-func WhatPublishingReveals(destination string) []string {
+func WhatPublishingReveals(destination string, plan ExportPlan) []string {
 	facts := make([]string, 0, 4)
 
-	accounts := distinct(matchesIn(filepath.Join(destination, "environments.conf"), accountLine))
+	// Through configPath, because the files are not always at the top level: when
+	// something sat outside the templates' directory the prefix stays, and
+	// reading only the top level left the warning without the account ids and the
+	// bucket names — the two most sensitive facts, missing from the list somebody
+	// confirms a public repository against.
+	accounts := distinct(matchesIn(
+		filepath.Join(destination, configPath(plan, "environments.conf")), accountLine))
 	if len(accounts) > 0 {
 		facts = append(facts, "AWS account "+strings.Join(accounts, ", "))
 	}
 
+	backendDir := filepath.Join(destination,
+		filepath.Dir(configPath(plan, filepath.Join("backend", "x.hcl"))))
+
 	var buckets []string
-	entries, err := os.ReadDir(filepath.Join(destination, "backend"))
+	entries, err := os.ReadDir(backendDir)
 	if err == nil {
 		for _, entry := range entries {
-			buckets = append(buckets, matchesIn(
-				filepath.Join(destination, "backend", entry.Name()), bucketLine)...)
+			buckets = append(buckets, matchesIn(filepath.Join(backendDir, entry.Name()), bucketLine)...)
 		}
 	}
 	if buckets = distinct(buckets); len(buckets) > 0 {

@@ -237,3 +237,56 @@ func TestWhatCountsAsACheckoutInUse(t *testing.T) {
 		}
 	}
 }
+
+// The destination is emptied only after the plan succeeds. It used to be
+// cleared first, so a checkout with nothing configured — or a module resolving
+// outside it — left the directory the operator agreed to replace already gone,
+// with nothing written in its place.
+func TestNothingIsDeletedWhenThereIsNothingToExport(t *testing.T) {
+	noDrain(t)
+	// A checkout with no envs/<env>.tfvars anywhere: the export has nothing to do.
+	t.Setenv("LERIAN_TF_REPO", fakeCheckout(t, "", ""))
+
+	occupied := t.TempDir()
+	if err := os.WriteFile(filepath.Join(occupied, "mine.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	// Answers yes to everything, so only the ordering can save the file — and
+	// through the internal entry point, because the public one builds a
+	// non-interactive prompter under go test and would refuse before it could
+	// ever delete anything, proving nothing.
+	ask, _ := selectorFor(t, keyDownSeq+keyEnterSeq+"yes\n")
+
+	err := exportRepository(context.Background(), ask, &out, occupied)
+
+	if err == nil {
+		t.Fatal("it reported success with nothing configured")
+	}
+	if _, statErr := os.Stat(filepath.Join(occupied, "mine.txt")); statErr != nil {
+		t.Errorf("it emptied the directory and then failed: %v", statErr)
+	}
+}
+
+// And the question is not even asked, because asking about a destination for an
+// export that cannot happen is a prompt with no decision behind it.
+func TestTheDestinationIsNotAskedAboutWhenThereIsNothingToExport(t *testing.T) {
+	noDrain(t)
+	t.Setenv("LERIAN_TF_REPO", fakeCheckout(t, "", ""))
+
+	occupied := t.TempDir()
+	if err := os.WriteFile(filepath.Join(occupied, "mine.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	ask, painted := selectorFor(t, keyDownSeq+keyEnterSeq+"yes\n")
+
+	_ = exportRepository(context.Background(), ask, &out, occupied)
+
+	if strings.Contains(painted.String()+out.String(), "Replace it?") {
+		t.Errorf("it asked about replacing a directory it was never going to write to:\n%s",
+			painted.String()+out.String())
+	}
+}
