@@ -105,7 +105,7 @@ its state, and `bootstrap` is what creates it:
   What do you want to operate on?
   ❯ [x] bootstrap    state bucket and lock table
     [ ] infra-base   needs the state backend — run bootstrap first
-    [ ] midaz        needs the state backend — run bootstrap first
+    [ ] flowker      needs the state backend — run bootstrap first
 ```
 
 **Every run after.** The backend is there, and the whole catalog is on the
@@ -114,7 +114,7 @@ table — with the rows saying which of them this checkout has variables for:
 ```
   What do you want to operate on?
   ❯ [x] infra-base   the VPC then the cluster
-    [ ] midaz        documentdb postgres rabbitmq valkey  ·  not configured here yet
+    [ ] flowker      documentdb valkey                    ·  not configured here yet
     [ ] fetcher      documentdb rabbitmq s3 valkey        ·  not configured here yet
 ```
 
@@ -229,7 +229,7 @@ lerian infra --env dev --target infra-base       --action apply
 lerian infra --env dev --target shared-resources --action apply
 
 # Read the helm values of a product back out
-lerian infra --env dev --target midaz --action helm-values --format yaml
+lerian infra --env dev --target <product> --action helm-values --format yaml
 ```
 
 Run `lerian infra --help` for the full reference: every flag, the account guard,

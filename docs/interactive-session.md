@@ -29,11 +29,6 @@ rather than printing a help page:
     logout  Remove authentication credentials
 ```
 
-The menu is a shorter list than the command set. `midaz` is reached with ledger
-ids, regions and sizes a menu has no way to ask for, so picking it from a list
-would land you on a help page rather than on anything you chose to do — it stays
-a command (`lerian midaz ledger list` is unaffected) and stays out of the menu.
-
 `r` goes back one question; `q` leaves. The questions come in a sequence, and a
 wrong turn on the first one used to cost the whole run — the only way to correct
 it was ctrl-c, which throws away the answers that were right along with the one

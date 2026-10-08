@@ -11,13 +11,13 @@
 [![Status](https://img.shields.io/badge/status-beta-orange)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](./LICENSE)
 
-Official command-line interface for the Lerian platform. One binary, `lerian`, to sign in, deploy AWS infrastructure from the Lerian Terraform templates, and manage Midaz ledger deployments.
+Official command-line interface for the Lerian platform. One binary, `lerian`, to sign in to the Lerian platform and to deploy AWS infrastructure from the Lerian Terraform templates, with an interactive session for people and plain flags for pipelines.
 
 > **Status: beta.** Releases are published from `develop` as `-beta` and from `release-candidate` as `-rc`. Command names and flags can still change. See [`CHANGELOG.md`](./CHANGELOG.md) for what moved.
 
 ## 🎯 Purpose
 
-Give every Lerian operator one tool for the repeatable parts of running the platform. It replaces the separate `lerian-infra` binary and the `deploy.sh` script behind it, and it is where product commands (Midaz today, others later) live. It prompts when run in a terminal and never prompts in CI, so the same command works for a person and for a pipeline.
+Give every Lerian operator one tool for the repeatable parts of running the platform. It replaces the separate `lerian-infra` binary and the `deploy.sh` script behind it. It prompts when run in a terminal and never prompts in CI, so the same command works for a person and for a pipeline.
 
 ## 🧩 What it does (today)
 
@@ -27,17 +27,154 @@ Give every Lerian operator one tool for the repeatable parts of running the plat
 | `lerian auth` | Signs in to the Lerian platform (not AWS) with a named profile | [Authentication](#authentication) |
 | `lerian infra` | Drives the Terraform roots of [lerian-terraform-foundation](https://github.com/LerianStudio/lerian-terraform-foundation) on AWS, from bootstrap to per-product services | [`docs/infra.md`](./docs/infra.md) |
 | `lerian config` | Shows or resets what the CLI remembers on this machine | [`docs/infra.md`](./docs/infra.md#what-the-cli-remembers-and-how-to-forget-it) |
-| `lerian midaz ledger` | Creates, lists, describes and deletes Midaz ledger deployments, plus logs, port-forward, SQL, backup and events | [`docs/midaz.md`](./docs/midaz.md) |
 | `lerian version` | Prints build information | — |
-
-Flowker, Reporter, Tracer and Fees are planned and not available yet.
 
 Safety properties worth knowing before you run `infra`:
 
 - **Account guard.** Three checks run before anything touches AWS, with no flag to bypass them.
 - **Dry run.** `--dry-run` resolves and prints the whole execution plan without a single AWS call.
-- **Output formats.** `table`, `json` and `yaml` through `--output`.
 - **CI-safe.** Outside a terminal nothing is ever asked; a missing flag is named in the error.
+
+## 👀 How it works
+
+Output captured from a build of `develop`, trimmed and with paths shortened. Account ids and addresses are placeholders. The account picker is copied from [`docs/infra.md`](./docs/infra.md), not captured.
+
+### The interactive session
+
+`lerian` with nothing after it, in a terminal, opens a session: it offers the commands, runs the one you pick, and asks again when it is done. `q` closes it. Piped, redirected or in CI it prints its help instead, so scripts never wait on a prompt. More in [`docs/interactive-session.md`](./docs/interactive-session.md).
+
+```
+  ██╗     ███████╗██████╗ ██╗ █████╗ ███╗   ██╗        ██████╗██╗     ██╗
+  ██║     ██╔════╝██╔══██╗██║██╔══██╗████╗  ██║       ██╔════╝██║     ██║
+  ██║     █████╗  ██████╔╝██║███████║██╔██╗ ██║ █████╗██║     ██║     ██║
+  ██║     ██╔══╝  ██╔══██╗██║██╔══██║██║╚██╗██║ ╚════╝██║     ██║     ██║
+  ███████╗███████╗██║  ██║██║██║  ██║██║ ╚████║       ╚██████╗███████╗██║
+  ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝        ╚═════╝╚══════╝╚═╝
+
+  ────────────────────────────────────────────────────  development build
+
+  What do you want to do?
+  ↑↓ move · enter choose · r back · q cancel
+  ❯ auth     Sign in to the Lerian platform (not AWS)
+    config   Show or reset what this tool remembers
+    infra    Deploy the AWS stacks of lerian-terraform-foundation
+    version  Print version information
+```
+
+### Know where you stand
+
+`lerian config` reads files only and makes no AWS call, so it works offline. It groups what it finds by who owns it: this tool, the templates checkout, AWS, and the tools it shells out to.
+
+```
+$ lerian auth login --api-url https://api.lerian.studio --api-key $KEY --tenant-id $TENANT
+Successfully logged in to profile 'default'
+
+$ lerian config
+
+==> This tool
+  config     ~/.lerian/config.yaml
+  profile    default   (Lerian platform, not AWS)
+  logins     default
+
+==> Templates
+  checkout   none found — lerian infra init --clone
+
+==> AWS
+  config     ~/.aws/config
+  profiles   none — aws configure sso, or credentials in the environment
+  whether they work is an AWS call: lerian infra check makes it
+
+==> Tools
+  terraform  /usr/local/bin/terraform
+  aws        /usr/bin/aws
+  git        /usr/bin/git
+```
+
+### Check the machine first
+
+`lerian infra check` reports every missing dependency in one pass, without touching AWS, so it doubles as a CI gate.
+
+```
+$ lerian infra check --repo ~/lerian-terraform-foundation
+
+==> Environment check
+  ok       aws        /usr/bin/aws
+  ok       terraform  /usr/local/bin/terraform
+  ok       git        /usr/bin/git
+  ok       templates  ~/lerian-terraform-foundation @ untagged  (--repo)
+
+  4 checks, all ok. No AWS call was made.
+```
+
+### Configure an environment
+
+`lerian infra init` writes the files a fresh checkout needs. In a terminal it asks for what it cannot discover; in CI every answer is a flag. `--dry-run` shows what would be written and writes nothing.
+
+```
+$ lerian infra init --repo ~/lerian-terraform-foundation --env dev --profile '' --region us-east-2 --account 123456789012 \
+    --targets infra-base --api-cidr 203.0.113.7 --dry-run
+
+==> Configuration
+  environment dev
+  account     123456789012
+  profile     <ambient credentials>
+  region      us-east-2
+  api access  203.0.113.7/32
+  datastores  dedicated
+
+==> Files
+
+  FILE                                         ACTION   WHAT IT IS
+  examples/aws/environments.conf               created  which AWS account this environment may touch
+  examples/aws/infra-base/vpc/envs/dev.tfvars  created  foundation
+  examples/aws/infra-base/eks/envs/dev.tfvars  created  foundation
+  examples/aws/bootstrap/envs/dev.tfvars       created  state backend
+
+  dry run — nothing was written
+```
+
+### See the plan before anything runs
+
+`--dry-run` resolves the order, the state keys and the account, and makes no AWS call at all.
+
+```
+$ lerian infra --repo ~/lerian-terraform-foundation --env dev --target bootstrap,infra-base --dry-run
+
+==> Preflight
+  templates   ~/lerian-terraform-foundation @ untagged  (--repo)
+  environment dev
+  account     123456789012  (declared in examples/aws/environments.conf)
+  region      us-east-2
+  backend     MISSING — run --target bootstrap --action apply
+  target      bootstrap,infra-base
+  action      plan
+
+==> Execution plan (dry run — no AWS call was made)
+
+  stage 1: bootstrap
+      bootstrap                                    local state, workspace=dev
+
+  stage 2: infra-base/vpc
+      infra-base/vpc                               aws/infra-base/vpc/terraform.tfstate
+
+  stage 3: infra-base/eks
+      infra-base/eks                               aws/infra-base/eks/terraform.tfstate
+
+  ok  all 3 stack(s) ready
+```
+
+### Pick the account, every run
+
+Run `lerian infra` in a terminal without `--env` and it asks. The account is the question that matters, so the region is named beside it and the environment is not asked at all.
+
+```
+  Which AWS account?
+  Everything is created there. The state backend and the sizing follow from it.
+  ❯ lerian-sandbox           account 524121347244  ·  us-east-2
+    default                  session expired — choose to log in
+    other-profile            account 239025757440  ·  not set up here yet — choosing it sets it up
+    sign in as someone else  ends the session for every AWS tool on this machine
+```
 
 ## 📁 Directory layout
 
@@ -48,13 +185,10 @@ Safety properties worth knowing before you run `infra`:
 │   ├── lerian/                       # main entrypoint
 │   ├── auth/                         # lerian auth login / logout
 │   ├── infra/                        # lerian infra
-│   └── midaz/ledger/                 # lerian midaz ledger ...
 ├── internal/
-│   ├── client/                       # HTTP client for the Lerian API
 │   ├── config/                       # ~/.lerian/config.yaml, profiles, reset
 │   ├── infra/                        # Terraform orchestration, account guard, tfvars
 │   ├── infracli/                     # terminal face of infra: wizard, prompts, check, init
-│   ├── kubectl/                      # Kubernetes operations used by midaz commands
 │   ├── output/                       # table / json / yaml printer
 │   └── version/                      # build identity
 ├── docs/                             # command references, CI/CD, testing strategy
@@ -182,21 +316,10 @@ lerian infra --env dev --target bootstrap  --action apply
 lerian infra --env dev --target infra-base --action apply
 
 # Read the helm values of a product back out
-lerian infra --env dev --target midaz --action helm-values --format yaml
+lerian infra --env dev --target <product> --action helm-values --format yaml
 ```
 
 Run with no `--env` in a terminal and it asks instead. `lerian infra --help` has every flag, the ordering rules and the environment variables it reads. Full walkthrough: [`docs/infra.md`](./docs/infra.md).
-
-### Midaz
-
-```bash
-lerian midaz ledger create --name my-ledger --region us-east-1 --env dev
-lerian midaz ledger list -o json
-lerian midaz ledger describe <ledger-id>
-lerian midaz ledger logs <ledger-id> --follow
-```
-
-Deployment modes (SaaS, private, sandbox), regions, sizes and every operation: [`docs/midaz.md`](./docs/midaz.md).
 
 ### Configuration
 
@@ -240,13 +363,6 @@ lerian auth login
 
 **401 Unauthorized** — the API key or tenant ID in the active profile is wrong. Run `lerian config` to see which profile is active, then `lerian auth login` again with the right values.
 
-**Ledger creation times out**
-
-```bash
-lerian midaz ledger describe <ledger-id>
-lerian midaz ledger events <ledger-id>
-```
-
 **`lerian infra` fails before it starts** — run `lerian infra check`. It reports every missing dependency in one pass and makes no AWS call.
 
 ## 🧪 Testing & operations
@@ -265,7 +381,7 @@ Pull requests to `develop`, `release-candidate` and `main` run PR validation (li
 
 ## 🛠️ Development
 
-Requirements: Go 1.26+, Make. `kubectl` is needed only for the Midaz operations commands.
+Requirements: Go 1.26+, Make.
 
 ```bash
 git clone https://github.com/LerianStudio/lerian-cli.git
@@ -291,11 +407,11 @@ Both live in `~/.local/bin`. The dev version string carries the branch and a `-d
 
 ### Commits and pull requests
 
-Commits follow [Conventional Commits](https://www.conventionalcommits.org/), and the type decides the release version. PR titles are checked against an allowed scope list (`auth`, `cli`, `cmd`, `config`, `deps`, `docs`, `infra`, `ledger`, `output`, `tests`, and others in [`pr-validation.yml`](./.github/workflows/pr-validation.yml)). See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/), and the type decides the release version. PR titles are checked against an allowed scope list (`auth`, `cli`, `cmd`, `config`, `deps`, `docs`, `infra`, `output`, `tests`, and others in [`pr-validation.yml`](./.github/workflows/pr-validation.yml)). See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
 ## 📚 References
 
-- Command references: [`docs/infra.md`](./docs/infra.md), [`docs/midaz.md`](./docs/midaz.md), [`docs/interactive-session.md`](./docs/interactive-session.md)
+- Command references: [`docs/infra.md`](./docs/infra.md), [`docs/interactive-session.md`](./docs/interactive-session.md)
 - CI/CD: [`docs/ci-cd/README.md`](./docs/ci-cd/README.md)
 - Terraform templates: [lerian-terraform-foundation](https://github.com/LerianStudio/lerian-terraform-foundation)
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
