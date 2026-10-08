@@ -1,0 +1,253 @@
+#!/bin/sh
+set -e
+
+# Lerian CLI Upgrader
+# Usage: curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/upgrade.sh | sh
+# Or:    curl -fsSL ... | sh -s -- --version v1.3.0
+#
+# It replaces the binary already on this machine, in the directory it is already
+# in. Installing somewhere else and leaving the old one on PATH is the failure
+# this exists to avoid: `lerian version` then reports whichever the shell finds
+# first, and the upgrade looks as though it did nothing.
+
+REPO="LerianStudio/lerian-cli"
+PROJECT_NAME="lerian-cli"
+BINARY_NAME="lerian"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+info()    { printf "${BLUE}[INFO]${NC} %s\n" "$1"; }
+success() { printf "${GREEN}[OK]${NC} %s\n" "$1"; }
+warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
+error()   { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; exit 1; }
+
+VERSION=""
+CHECK_ONLY=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --version|-v)
+            VERSION="$2"
+            [ -n "$VERSION" ] || error "--version needs a tag, e.g. --version v1.3.0"
+            shift 2
+            ;;
+        --check|-c)
+            CHECK_ONLY="yes"
+            shift
+            ;;
+        --help|-h)
+            echo "Lerian CLI Upgrader"
+            echo ""
+            echo "Usage: curl -fsSL <url> | sh -s -- [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --version, -v <version>  Upgrade (or downgrade) to a specific version"
+            echo "  --check, -c              Say what is installed and what is available, change nothing"
+            echo "  --help, -h               Show this message"
+            echo ""
+            echo "Environment variables:"
+            echo "  INSTALL_DIR              Where to write. Default: the directory the"
+            echo "                           current binary is in, or ~/.local/bin"
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            ;;
+    esac
+done
+
+detect_os() {
+    case "$(uname -s)" in
+        Linux*)  echo "Linux" ;;
+        Darwin*) echo "Darwin" ;;
+        *)       error "Unsupported operating system: $(uname -s)" ;;
+    esac
+}
+
+detect_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64)  echo "x86_64" ;;
+        arm64|aarch64) echo "arm64" ;;
+        armv7l)        echo "armv7" ;;
+        *)             error "Unsupported architecture: $(uname -m)" ;;
+    esac
+}
+
+check_gh() {
+    command -v gh >/dev/null 2>&1 || \
+        error "GitHub CLI (gh) is required but not installed.\n\nInstall it from: https://cli.github.com/\n\nThen authenticate with: gh auth login"
+    gh auth status >/dev/null 2>&1 || \
+        error "GitHub CLI is not authenticated.\n\nRun: gh auth login"
+}
+
+# Where the binary being replaced lives. Upgrading in place is the whole point:
+# writing to a different directory leaves two binaries on PATH and the shell
+# picks whichever comes first, which is rarely the new one.
+find_current() {
+    CURRENT_PATH=$(command -v "$BINARY_NAME" 2>/dev/null || true)
+    if [ -z "$CURRENT_PATH" ]; then
+        CURRENT_DIR=""
+        CURRENT_VERSION=""
+        return
+    fi
+
+    # Follow the whole chain, not one link: a package manager that puts a link
+    # in /usr/local/bin pointing at a link in /opt would otherwise have the
+    # middle one replaced and the real binary left alone. Bounded, because a
+    # loop of symlinks is a thing that exists.
+    hops=0
+    while [ -L "$CURRENT_PATH" ] && [ "$hops" -lt 20 ]; do
+        LINK_TARGET=$(readlink "$CURRENT_PATH")
+        case "$LINK_TARGET" in
+            /*) CURRENT_PATH="$LINK_TARGET" ;;
+            *)  CURRENT_PATH="$(dirname "$CURRENT_PATH")/$LINK_TARGET" ;;
+        esac
+        hops=$((hops + 1))
+    done
+    [ -L "$CURRENT_PATH" ] && error "Too many symlinks from $(command -v "$BINARY_NAME")"
+
+    CURRENT_DIR=$(dirname "$CURRENT_PATH")
+
+    # The line WITH the version on it, not the first line: `lerian version`
+    # prints a blank line before its table, so head -1 read an empty string —
+    # and awk succeeds on one, so the `|| echo unknown` fallback never fired and
+    # the version came out empty.
+    CURRENT_VERSION=$("$CURRENT_PATH" version 2>/dev/null | grep -i version | head -1 | awk '{print $NF}')
+    [ -n "$CURRENT_VERSION" ] || CURRENT_VERSION="unknown"
+}
+
+latest_version() {
+    # --exclude-pre-releases: an upgrade should land on a release, not on
+    # whatever beta was cut this afternoon. --version takes one deliberately.
+    gh release list --repo "$REPO" --exclude-pre-releases --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || \
+        error "Failed to read the releases. Make sure you have access to $REPO"
+}
+
+upgrade() {
+    OS=$(detect_os)
+    ARCH=$(detect_arch)
+
+    check_gh
+    find_current
+
+    if [ -z "$CURRENT_DIR" ]; then
+        warn "$BINARY_NAME is not on your PATH — there is nothing to upgrade."
+        echo ""
+        echo "Install it first:"
+        echo "  curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/install.sh | sh"
+        exit 1
+    fi
+
+    info "Installed: $CURRENT_VERSION  ($CURRENT_PATH)"
+
+    if [ -z "$VERSION" ]; then
+        VERSION=$(latest_version)
+    fi
+    # gh prints "null" for an empty list, and an empty string when the query
+    # fails in a way that still exits zero. Either one would be compared against
+    # the installed version, found different, and reported as an upgrade.
+    if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+        error "No release found for $REPO.\n\nCheck your access: gh release list --repo $REPO"
+    fi
+    info "Available: $VERSION"
+
+    # Compared as written, not ordered: the tags carry pre-release suffixes and
+    # a shell cannot order those reliably. Equal means nothing to do; anything
+    # else is a move the operator asked for, in either direction.
+    if [ "v${CURRENT_VERSION#v}" = "v${VERSION#v}" ]; then
+        success "Already on $VERSION — nothing to do."
+        exit 0
+    fi
+
+    if [ -n "$CHECK_ONLY" ]; then
+        info "Run without --check to move to $VERSION."
+        exit 0
+    fi
+
+    # The file itself, name and all — not $INSTALL_DIR/lerian. A symlink can
+    # point at a binary with a different name (`lerian -> lerian-v1.2.1` is how
+    # some packagers keep versions side by side), and writing "lerian" beside it
+    # creates a second file the symlink does not use: the upgrade reports success
+    # and the old binary is still what runs.
+    #
+    # An INSTALL_DIR given explicitly still wins. That is somebody saying where
+    # to put it, which is a different request from "upgrade what I have".
+    if [ -n "$INSTALL_DIR" ]; then
+        TARGET="$INSTALL_DIR/$BINARY_NAME"
+    else
+        TARGET="$CURRENT_PATH"
+        INSTALL_DIR=$(dirname "$TARGET")
+    fi
+
+    # Writable before anything is downloaded: finding out afterwards means a
+    # download thrown away and a confusing error at the last step.
+    if [ ! -w "$INSTALL_DIR" ]; then
+        # No alternate INSTALL_DIR here: writing the new binary somewhere else
+        # leaves the old one exactly where the shell will keep finding it, which
+        # is the failure this script exists to avoid. The answer is to be able to
+        # write where it already is.
+        error "$INSTALL_DIR is not writable.\n\nRe-run it under sudo — note that gh has to be authenticated for\nthe user running it, so \`sudo -E\` or a root gh login:\n\n  curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/upgrade.sh | sudo -E sh"
+    fi
+
+    VERSION_NO_V="${VERSION#v}"
+    ARCHIVE_NAME="${PROJECT_NAME}_${VERSION_NO_V}_${OS}_${ARCH}.tar.gz"
+
+    TMP_DIR=$(mktemp -d)
+    trap 'rm -rf "$TMP_DIR"' EXIT
+    cd "$TMP_DIR"
+
+    info "Downloading $ARCHIVE_NAME..."
+    if ! gh release download "$VERSION" --repo "$REPO" --pattern "$ARCHIVE_NAME" 2>/dev/null; then
+        printf "${RED}[ERROR]${NC} Failed to download %s\n\nAvailable assets for %s:\n" "$ARCHIVE_NAME" "$VERSION" >&2
+        gh release view "$VERSION" --repo "$REPO" --json assets -q '.assets[].name' 2>/dev/null || true
+        exit 1
+    fi
+
+    if gh release download "$VERSION" --repo "$REPO" --pattern "checksums.txt" 2>/dev/null; then
+        EXPECTED=$(grep "$ARCHIVE_NAME" checksums.txt | awk '{print $1}')
+        if [ -n "$EXPECTED" ]; then
+            if command -v sha256sum >/dev/null 2>&1; then
+                ACTUAL=$(sha256sum "$ARCHIVE_NAME" | awk '{print $1}')
+            elif command -v shasum >/dev/null 2>&1; then
+                ACTUAL=$(shasum -a 256 "$ARCHIVE_NAME" | awk '{print $1}')
+            else
+                warn "No sha256sum or shasum found, skipping verification"
+                ACTUAL="$EXPECTED"
+            fi
+            [ "$EXPECTED" = "$ACTUAL" ] || \
+                error "Checksum verification failed!\nExpected: $EXPECTED\nActual: $ACTUAL"
+            success "Checksum verified"
+        fi
+    else
+        warn "Checksums file not found, skipping verification"
+    fi
+
+    tar -xzf "$ARCHIVE_NAME"
+
+    # Staged INSIDE the install directory first, then renamed over the target.
+    # mv from the temporary directory would be a copy whenever the two are on
+    # different filesystems — /tmp usually is — and a copy interrupted halfway
+    # leaves a truncated binary at the path the shell resolves. A rename within
+    # one filesystem cannot do that.
+    STAGED="$INSTALL_DIR/.$BINARY_NAME.new.$$"
+    if ! cp "$BINARY_NAME" "$STAGED"; then
+        rm -f "$STAGED"
+        error "Could not write to $INSTALL_DIR"
+    fi
+    chmod +x "$STAGED"
+
+    if ! mv "$STAGED" "$TARGET"; then
+        rm -f "$STAGED"
+        error "Could not replace $TARGET"
+    fi
+
+    success "Upgraded $CURRENT_VERSION → $VERSION  ($TARGET)"
+    echo ""
+    info "Verify:"
+    echo "  $BINARY_NAME version"
+}
+
+upgrade
