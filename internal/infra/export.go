@@ -275,10 +275,12 @@ func exportBase(layout Layout, files []string) string {
 // the destination has been emptied.
 func escapesCheckout(canonicalRoot, path string) (bool, error) {
 	resolved, err := filepath.EvalSymlinks(path)
+	//nolint:nilerr // It resolved a moment ago, for os.Stat. Anything that
+	// changed between then and here is a race this function cannot diagnose, and
+	// answering "outside" would refuse an export over it. The caller's question
+	// is "does this escape", and the honest answer to an unreadable path is no —
+	// terraform reports the unreadable path better than this can.
 	if err != nil {
-		// It resolved a moment ago, for os.Stat. Anything that changed since is
-		// not this function's to diagnose, and treating it as outside would
-		// refuse an export over a race.
 		return false, nil
 	}
 
