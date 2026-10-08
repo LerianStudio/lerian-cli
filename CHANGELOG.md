@@ -1,5 +1,19 @@
 # Lerian-cli Changelog
 
+## [1.4.0](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.4.0)
+
+Features:
+- Added an upgrade script to enhance the installation process. (@bedatty)
+
+Fixes:
+- Corrected the process to replace the resolved file instead of a name beside it. (@bedatty)
+- Addressed six issues found in the upgrader script to improve functionality. (@bedatty)
+- Merged changes from the `develop` branch into `main` to ensure consistency. (@bedatty)
+
+[Compare changes](https://github.com/LerianStudio/lerian-cli/compare/v1.3.0...v1.4.0)
+
+---
+
 ## [1.3.0](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.3.0)
 
 Features:
