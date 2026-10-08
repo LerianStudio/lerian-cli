@@ -13,7 +13,21 @@
 
 Official command-line interface for the Lerian platform. One binary, `lerian`, to sign in to the Lerian platform and to deploy AWS infrastructure from the Lerian Terraform templates, with an interactive session for people and plain flags for pipelines.
 
-> **Status: beta.** Releases are published from `develop` as `-beta` and from `release-candidate` as `-rc`. Command names and flags can still change. See [`CHANGELOG.md`](./CHANGELOG.md) for what moved.
+> **Status: beta.** Command names and flags can still change. See [`CHANGELOG.md`](./CHANGELOG.md) for what moved.
+
+## Contents
+
+- [Purpose](#-purpose) — what this is for
+- [What it does (today)](#-what-it-does-today) — the command groups, and the safety properties
+- [How it works](#-how-it-works) — captured output: the session, the preflight, the plan
+- [Directory layout](#-directory-layout)
+- **[Install](#-install)** — one command, plus packages, `go install` and completions
+- **[Upgrade](#-upgrade)** — move to the current release in place
+- [Usage](#-usage) — flags, authentication, infrastructure, configuration
+- [Troubleshooting](#-troubleshooting)
+- [Testing & operations](#-testing--operations)
+- [Development](#-development) — building, trying a change, commits
+- [References](#-references)
 
 ## 🎯 Purpose
 
@@ -195,6 +209,7 @@ Run `lerian infra` in a terminal without `--env` and it asks. The account is the
 │   └── version/                      # build identity
 ├── docs/                             # command references, CI/CD, testing strategy
 ├── scripts/install.sh                # release installer
+├── scripts/upgrade.sh                # in-place upgrade to the current release
 ├── Makefile
 ├── .goreleaser.yml / .releaserc.yml  # release pipeline
 └── .github/workflows/                # pr-validation, release, routine
@@ -208,14 +223,26 @@ The installer downloads the latest release through the GitHub CLI, so it needs [
 curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | sh
 ```
 
+It installs the latest **release**, verifies the checksum, writes to
+`~/.local/bin`, and says so if that is not on your `PATH`. A `-beta` is something
+to ask for by name.
+
+It works out the platform from `uname`, so there is nothing to pass: **Linux**
+(`x86_64`, `arm64`, `armv7`) and **macOS** (`x86_64`, `arm64`). Anything else
+stops with `Unsupported operating system` rather than downloading the wrong
+archive — see Windows below.
+
 Options:
 
 ```bash
-# Specific version
-curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | sh -s -- --version v1.0.0
+# A specific version, release or pre-release
+curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | sh -s -- --version v1.3.0
 
-# Custom install directory (default: ~/.local/bin)
+# Somewhere else (default: ~/.local/bin)
 curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | INSTALL_DIR=/usr/local/bin sh
+
+# The newest pre-release instead of the newest release
+curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | INCLUDE_PRERELEASE=1 sh
 ```
 
 Verify:
@@ -227,31 +254,49 @@ lerian version
 <details>
 <summary><strong>Other installation methods</strong></summary>
 
-**Manual download**
+**Manual download** — the archives are named after the project, `lerian-cli_*`,
+and hold a binary called `lerian`.
 
 ```bash
-# Example for Linux amd64
-gh release download --repo LerianStudio/lerian-cli --pattern "lerian_*_Linux_x86_64.tar.gz"
-tar -xzf lerian_*_Linux_x86_64.tar.gz
+# Linux x86_64 — swap for Linux_arm64, Darwin_arm64 or Darwin_x86_64
+gh release download --repo LerianStudio/lerian-cli --pattern "lerian-cli_*_Linux_x86_64.tar.gz"
+tar -xzf lerian-cli_*_Linux_x86_64.tar.gz
 sudo mv lerian /usr/local/bin/
 ```
 
-**Linux packages**
+**Linux packages** — one per architecture, so name the one you want rather than
+downloading all of them.
 
 ```bash
 # Debian/Ubuntu
-gh release download --repo LerianStudio/lerian-cli --pattern "*.deb"
-sudo dpkg -i lerian_*.deb
+gh release download --repo LerianStudio/lerian-cli --pattern "lerian-cli_*_linux_x86_64.deb"
+sudo dpkg -i lerian-cli_*_linux_x86_64.deb
 
 # RHEL/Fedora
-gh release download --repo LerianStudio/lerian-cli --pattern "*.rpm"
-sudo rpm -i lerian_*.rpm
+gh release download --repo LerianStudio/lerian-cli --pattern "lerian-cli_*_linux_x86_64.rpm"
+sudo rpm -i lerian-cli_*_linux_x86_64.rpm
+
+# Alpine
+gh release download --repo LerianStudio/lerian-cli --pattern "lerian-cli_*_linux_x86_64.apk"
+sudo apk add --allow-untrusted lerian-cli_*_linux_x86_64.apk
 ```
+
+**Windows** — a binary is published, but neither script installs it: both are
+`sh`, and run under Git Bash they stop at `Unsupported operating system` rather
+than unpack a `.zip` as if it were a tarball. Download and extract it yourself.
+
+```powershell
+gh release download --repo LerianStudio/lerian-cli --pattern "lerian-cli_*_Windows_x86_64.zip"
+Expand-Archive lerian-cli_*_Windows_x86_64.zip -DestinationPath .
+# then put lerian.exe somewhere on PATH
+```
+
+Upgrading there is the same download again, over the old binary.
 
 **Go install** — requires Go 1.26+ and access to the private repository via `GOPRIVATE`.
 
 ```bash
-go install github.com/LerianStudio/lerian-cli/cmd/lerian@latest
+GOPRIVATE=github.com/LerianStudio/* go install github.com/LerianStudio/lerian-cli/cmd/lerian@latest
 ```
 
 **From source** — see Development below.
@@ -276,6 +321,38 @@ lerian completion powershell > lerian.ps1
 ```
 
 </details>
+
+## 🔄 Upgrade
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/upgrade.sh | sh
+```
+
+It replaces the binary **where it already is**, which is the part that matters:
+installing to a second directory leaves two on `PATH`, the shell picks whichever
+comes first, and the upgrade looks as though it did nothing. It follows a symlink
+to the real file, verifies the checksum, and keeps the old binary until the new
+one is in place — so a failure leaves a working CLI.
+
+```bash
+# What is installed, what is available — changes nothing
+curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/upgrade.sh | sh -s -- --check
+
+# A specific version, in either direction
+curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/upgrade.sh | sh -s -- --version v1.3.0
+```
+
+```
+[INFO] Installed: 1.2.1  (/Users/you/.local/bin/lerian)
+[INFO] Available: v1.3.0
+[OK] Upgraded 1.2.1 → v1.3.0
+```
+
+Like the installer, it moves to the latest **release** and leaves pre-releases
+alone unless you name one. Already on that version, it says so and stops.
+
+Installed through a package manager or `go install`? Upgrade the same way you
+installed: `dpkg -i` the new `.deb`, or re-run `go install`.
 
 ## ▶️ Usage
 
@@ -379,7 +456,7 @@ make test-race     # race detector
 make lint          # golangci-lint
 ```
 
-Pull requests to `develop`, `release-candidate` and `main` run PR validation (lint, tests, coverage gate, title scope check). Pushes to those branches cut the release.
+Pull requests to `develop` and `main` run PR validation (lint, tests, coverage gate, title scope check). Pushes to those branches cut the release.
 
 ## 🛠️ Development
 
