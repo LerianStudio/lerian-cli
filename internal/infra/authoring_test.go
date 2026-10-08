@@ -32,11 +32,11 @@ func TestListAWSProfiles(t *testing.T) {
 	dir := awsHome(t,
 		// "[profile x]" in config, bare "[default]", plus a section that is neither
 		// and must not become a profile.
-		"[profile lerian-dev]\nregion = us-east-2\n\n"+
+		"[profile acme-dev]\nregion = us-east-2\n\n"+
 			"[default]\nregion = us-east-1\n\n"+
 			"[sso-session lerian]\nsso_start_url = https://example.awsapps.com/start\n",
-		// Bare sections in credentials; lerian-dev repeats and must not lose its region.
-		"[ci-user]\naws_access_key_id = AKIAEXAMPLE\n\n[lerian-dev]\n",
+		// Bare sections in credentials; acme-dev repeats and must not lose its region.
+		"[ci-user]\naws_access_key_id = AKIAEXAMPLE\n\n[acme-dev]\n",
 	)
 
 	profiles, err := listAWSProfilesIn(dir)
@@ -48,7 +48,7 @@ func TestListAWSProfiles(t *testing.T) {
 	for _, profile := range profiles {
 		got[profile.Name] = profile
 	}
-	for _, name := range []string{"lerian-dev", "default", "ci-user"} {
+	for _, name := range []string{"acme-dev", "default", "ci-user"} {
 		if _, ok := got[name]; !ok {
 			t.Errorf("expected profile %q, got %v", name, profiles)
 		}
@@ -57,11 +57,11 @@ func TestListAWSProfiles(t *testing.T) {
 		t.Error("an sso-session section must not be listed as a profile")
 	}
 	// config carries the region and must win over the bare credentials entry.
-	if got["lerian-dev"].Region != "us-east-2" {
-		t.Errorf("lerian-dev region = %q, want us-east-2", got["lerian-dev"].Region)
+	if got["acme-dev"].Region != "us-east-2" {
+		t.Errorf("acme-dev region = %q, want us-east-2", got["acme-dev"].Region)
 	}
-	if got["lerian-dev"].Source != "config" {
-		t.Errorf("lerian-dev source = %q, want config", got["lerian-dev"].Source)
+	if got["acme-dev"].Source != "config" {
+		t.Errorf("acme-dev source = %q, want config", got["acme-dev"].Source)
 	}
 }
 
@@ -204,7 +204,7 @@ func readFile(t *testing.T, path string) string {
 
 func TestWriteEnvironmentsConfCreates(t *testing.T) {
 	layout := authoringCheckout(t)
-	spec := EnvSpec{Environment: "dev", AccountID: "123456789012", Profile: "lerian-dev", Region: "us-east-2"}
+	spec := EnvSpec{Environment: "dev", AccountID: "123456789012", Profile: "acme-dev", Region: "us-east-2"}
 
 	result, err := WriteEnvironmentsConf(layout, []EnvSpec{spec}, WriteOptions{})
 	if err != nil {
@@ -230,7 +230,7 @@ func TestWriteEnvironmentsConfPreservesCommentsAndOtherSections(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	original := "# our own note about prd\n[prd]\naccount_id = 345678901234\nprofile    = lerian-prd\nregion     = us-east-1\n"
+	original := "# our own note about prd\n[prd]\naccount_id = 345678901234\nprofile    = acme-prd\nregion     = us-east-1\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -568,9 +568,9 @@ func TestEveryTemplatePlaceholderIsKnown(t *testing.T) {
 // technically correct and practically useless.
 func TestLoginHintCollapsesASharedSSOSession(t *testing.T) {
 	resolved := []ResolvedProfile{
-		{Profile: AWSProfile{Name: "dev", SSOSession: "acme-sso"}, Err: errors.New("expired")},
-		{Profile: AWSProfile{Name: "stg", SSOSession: "acme-sso"}, Err: errors.New("expired")},
-		{Profile: AWSProfile{Name: "prd", SSOSession: "acme-sso"}, Err: errors.New("expired")},
+		{Profile: AWSProfile{Name: "dev", SSOSession: "acme-sso", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: AWSProfile{Name: "stg", SSOSession: "acme-sso", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: AWSProfile{Name: "prd", SSOSession: "acme-sso", CanSignIn: true}, Err: errors.New("expired")},
 	}
 
 	hint := LoginHint(resolved)
@@ -581,8 +581,10 @@ func TestLoginHintCollapsesASharedSSOSession(t *testing.T) {
 
 func TestLoginHintNamesProfilesWithoutASession(t *testing.T) {
 	resolved := []ResolvedProfile{
-		{Profile: AWSProfile{Name: "shared", SSOSession: "acme-sso"}, Err: errors.New("expired")},
-		{Profile: AWSProfile{Name: "standalone"}, Err: errors.New("expired")},
+		// Expired means there was something to expire: both of these have SSO, one
+		// through a shared session and one through the older per-profile settings.
+		{Profile: AWSProfile{Name: "shared", SSOSession: "acme-sso", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: AWSProfile{Name: "standalone", CanSignIn: true}, Err: errors.New("expired")},
 		// A working profile contributes nothing to the hint.
 		{Profile: AWSProfile{Name: "fine"}, Caller: Caller{Account: "123456789012"}},
 	}
@@ -1024,3 +1026,81 @@ func TestUpsertStillRewritesAChangedSection(t *testing.T) {
 		t.Errorf("the changed value was not written:\n%s", got)
 	}
 }
+
+// A profile that declares nothing but a region cannot be logged into: there is no
+// SSO session to revive and no key to use. Telling somebody their session expired
+// sends them to a login that fails with "Unable to locate credentials", which
+// says nothing about what is actually missing.
+func TestAProfileWithNoCredentialsIsRecognizable(t *testing.T) {
+	dir := t.TempDir()
+	body := "[default]\nregion = us-east-1\n\n" +
+		"[profile with-sso]\nsso_session = acme-sso\nregion = us-east-2\n\n" +
+		"[profile old-style]\nsso_start_url = https://acme.awsapps.com/start\nregion = us-east-2\n"
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	profiles, err := listAWSProfilesIn(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byName := map[string]AWSProfile{}
+	for _, profile := range profiles {
+		byName[profile.Name] = profile
+	}
+
+	if byName["default"].CanSignIn {
+		t.Error("a profile with only a region was reported as something to sign in to")
+	}
+	if !byName["with-sso"].CanSignIn {
+		t.Error("a profile with an sso_session cannot be signed in to")
+	}
+	// The older per-profile SSO config has no sso_session but does log in through
+	// `aws sso login --profile`.
+	if !byName["old-style"].CanSignIn {
+		t.Error("a profile with sso_start_url cannot be signed in to")
+	}
+}
+
+// The hint lists commands to run, so a profile that cannot be logged into does
+// not belong in it: `aws sso login --profile default` on a section holding only a
+// region fails with "Unable to locate credentials", and the operator has no way
+// to know which of the listed commands was the pointless one.
+func TestTheLoginHintOnlyNamesProfilesThatCanSignIn(t *testing.T) {
+	resolved := []ResolvedProfile{
+		{Profile: AWSProfile{Name: "default"}, Err: errors.New("no credentials")},
+		{Profile: AWSProfile{Name: "with-session", SSOSession: "acme", CanSignIn: true}, Err: errors.New("expired")},
+		{Profile: AWSProfile{Name: "old-style", CanSignIn: true}, Err: errors.New("expired")},
+	}
+
+	hint := LoginHint(resolved)
+
+	if strings.Contains(hint, "--profile default") {
+		t.Errorf("the hint offers a login for a profile that cannot be logged into:\n%s", hint)
+	}
+	if !strings.Contains(hint, "--sso-session acme") {
+		t.Errorf("the session that can be revived is missing:\n%s", hint)
+	}
+	if !strings.Contains(hint, "--profile old-style") {
+		t.Errorf("the per-profile SSO config is missing:\n%s", hint)
+	}
+}
+
+// templatesCheckout is a real checkout of lerian-terraform-foundation, or a
+// skip. It lived in the compatibility file that went with the chart mapping;
+// the placeholder test above still reads the real repository.
+func templatesCheckout(t *testing.T) string {
+	t.Helper()
+	path := os.Getenv(templatesCheckoutEnv)
+	if path == "" {
+		t.Skipf("%s not set; this test reads a real checkout of lerian-terraform-foundation", templatesCheckoutEnv)
+	}
+	if !IsCheckout(path) {
+		t.Fatalf("%s=%s is not a checkout: examples/aws/_modules or examples/aws/backend missing",
+			templatesCheckoutEnv, path)
+	}
+	return path
+}
+
+const templatesCheckoutEnv = "LERIAN_TEMPLATES_CHECKOUT"

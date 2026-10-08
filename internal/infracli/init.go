@@ -74,11 +74,11 @@ THE AWS CLI
   it into credentials, so a machine without it is refused by name rather than
   through a credential error.
 
-  Configure one profile per account you deploy into. dev, stg and prd are separate
-  AWS accounts, so that is normally three:
+  Configure one profile per AWS account you deploy into. How many that is, and
+  whether the environments share an account, is your organization's decision:
 
-    aws configure sso --profile lerian-dev    # IAM Identity Center
-    aws configure --profile lerian-dev        # access key and secret
+    aws configure sso --profile <name>    # IAM Identity Center
+    aws configure --profile <name>        # access key and secret
 
   Either works — nothing here assumes SSO; the AWS CLI reads whatever the profile
   declares. In a terminal with no --profile, the profiles found in ~/.aws are listed
@@ -106,9 +106,11 @@ THE TEMPLATES
                         and the error lists the tags that exist. v1.6.0 is the
                         oldest with the AWS layout this tool drives.
   --clone               Clone the templates into the managed checkout, which lives
-                        at ~/lerian/lerian-terraform-foundation. Not hidden, and
-                        named after the repository, because it is an ordinary git
-                        checkout you are meant to be able to open and use by hand.
+                        at ~/.lerian/lerian-terraform-foundation — alongside the
+                        configuration, so everything this tool manages is in one
+                        place. It is an ordinary git checkout: open it, read it and
+                        run terraform in it by hand. --templates-dir puts it
+                        elsewhere.
   --no-clone            Fail instead of cloning when no checkout is found.
   --sync                Move the managed checkout to --templates-ref, then exit.
                         Your environments.conf and every envs/*.tfvars survive it:
@@ -131,12 +133,17 @@ Examples:
   lerian infra init --env dev
   lerian infra init --env dev --clone --templates-ref v1.6.0
   lerian infra init --env dev --sync --templates-ref v1.7.0
-  lerian infra init --env dev --profile lerian-dev --region us-east-2 \
+  lerian infra init --env dev --profile <name> --region <region> \
       --targets infra-base,midaz --api-cidr auto
 `
 
 type initOptions struct {
 	repo string
+	// zoneLister answers "which hosted zones does this account have" when a
+	// template asks for one. Here so a test can answer without credentials; a run
+	// leaves it nil and gets the AWS CLI.
+	zoneLister infra.ZoneLister
+
 	// templatesDir relocates the managed checkout, for a read-only home, a network
 	// home, or an operator who keeps tooling under XDG.
 	templatesDir string
@@ -198,7 +205,7 @@ func runInit(ctx context.Context, args []string, stdout, stderr io.Writer) error
 
 	flags.StringVar(&opts.repo, "repo", "", "path to the checkout")
 	flags.StringVar(&opts.templatesDir, "templates-dir", "",
-		"where the managed checkout lives (default ~/lerian/lerian-terraform-foundation)")
+		"where the managed checkout lives (default ~/.lerian/lerian-terraform-foundation)")
 	flags.StringVar(&opts.templatesRef, "templates-ref", "",
 		"templates tag to clone or sync to, e.g. v1.6.0 (required by --clone and --sync)")
 	flags.StringVar(&opts.environment, "env", "", "dev, stg or prd")
@@ -287,11 +294,16 @@ func runInit(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	}
 
 	if !opts.autoApprove {
-		if err := ask.confirm(stderr, fmt.Sprintf("Write %d file(s)?", len(plan.writes))); err != nil {
+		if err := ask.confirm(ctx, stderr, fmt.Sprintf("Write %d file(s)?", len(plan.writes))); err != nil {
 			return err
 		}
 	}
-	return plan.commit(layout)
+	if err := plan.commit(layout); err != nil {
+		return err
+	}
+
+	printNextStep(stdout, layout, plan.env.Environment)
+	return nil
 }
 
 // initPlan is the whole decision, computed before anything is written, so the
@@ -361,6 +373,14 @@ func (p initPlan) commit(layout infra.Layout) error {
 
 // buildInitPlan resolves every decision, asking when it can and failing with the
 // flag name when it cannot, then computes the writes as a dry run.
+// zones is the lister this run should use.
+func (o initOptions) zones() infra.ZoneLister {
+	if o.zoneLister != nil {
+		return o.zoneLister
+	}
+	return infra.CLIZones{}
+}
+
 func buildInitPlan(
 	ctx context.Context,
 	layout infra.Layout,
@@ -379,10 +399,10 @@ func buildInitPlan(
 			return plan, fmt.Errorf("--env is required\n"+
 				"Valid values: %s.", strings.Join(infra.Environments, ", "))
 		}
-		answer, err := ask.ask(
+		answer, err := ask.pick(
 			"Which environment are you setting up?",
 			"Picks the AWS account, the state bucket and the sizing of every resource.",
-			"dev", "--env")
+			"--env", environmentOptions(layout), "dev")
 		if err != nil {
 			return plan, err
 		}
@@ -423,22 +443,24 @@ func buildInitPlan(
 		Region:      region,
 	}
 
-	// Targets decide which tfvars get written.
-	targets := strings.TrimSpace(opts.targets)
-	if targets == "" {
-		answer, err := ask.ask(
-			"What do you want to configure?",
-			"infra-base is the VPC and the cluster. Add products to configure their "+
-				"datastores too, e.g. infra-base,midaz",
-			"infra-base", "--targets")
-		if err != nil {
-			return plan, err
-		}
-		targets = answer
-	}
+	// Discovered before the question, not after: the answer is a choice from this
+	// catalog, so the catalog has to exist to be offered.
 	catalog, err := infra.Discover(layout)
 	if err != nil {
 		return plan, err
+	}
+
+	// Targets decide which tfvars get written.
+	targets := strings.TrimSpace(opts.targets)
+	if targets == "" {
+		answer, err := ask.pickMany(
+			"What do you want to configure?",
+			configurePurpose(),
+			"--targets", targetOptions(catalog), []string{"infra-base"})
+		if err != nil {
+			return plan, err
+		}
+		targets = strings.Join(answer, ",")
 	}
 	stages, err := infra.Resolve(layout, catalog, targets)
 	if err != nil {
@@ -477,11 +499,11 @@ func buildInitPlan(
 	// than one per service.
 	mode := strings.TrimSpace(opts.mode)
 	if mode == "" && len(plan.units) > 0 {
-		answer, err := ask.ask(
+		answer, err := ask.pick(
 			"Should each product own its datastores, or share one set?",
-			"dedicated = every product gets its own. shared = they all resolve one "+
-				"tier you provision separately (cheaper from the third product on).",
-			infra.DedicatedMode, "--mode")
+			"Applies to every datastore of the target: mixing the two inside one "+
+				"product is not supported yet.",
+			"--mode", modeOptions(), infra.DedicatedMode)
 		if err != nil {
 			return plan, err
 		}
@@ -558,6 +580,16 @@ func buildInitPlan(
 	// know about is still fillable without waiting for a release.
 	for token, value := range opts.set {
 		replacements[token] = value
+	}
+
+	// Whatever is left is asked for, here, while the answer still matters to the
+	// file about to be written. Before this, a token survived into the file and
+	// the run refused at the preflight — after every other question had been
+	// answered, over a value that was knowable all along.
+	if err := resolvePlaceholders(ctx, ask, opts.zones(),
+		append(append([]infra.Unit{}, plan.units...), plan.sharedUnits...),
+		environment, plan.env.Profile, replacements); err != nil {
+		return plan, err
 	}
 	for _, unit := range plan.sharedUnits {
 		// No Mode here: the tier roots have no such variable. They are the owner,
@@ -669,7 +701,7 @@ func resolveCredentials(
 		return "", "", caller, errors.New("no --profile given\n" +
 			"Name the profile for this environment, or state that the credentials\n" +
 			"already in the environment are the ones to use:\n" +
-			"  --profile lerian-dev\n" +
+			"  --profile <name>\n" +
 			"  --profile ''            ambient credentials (CI, IRSA)\n" +
 			"Outside a terminal there is nobody to ask, and picking an identity to\n" +
 			"create infrastructure with is not a guess this tool makes.")
@@ -682,14 +714,18 @@ func resolveCredentials(
 			// Always asked, even when the profile declares one. Which region the
 			// infrastructure is born in is a decision; inheriting it silently from
 			// ~/.aws/config is how somebody discovers it after the bill.
+			// No suggestion of our own. Where the infrastructure lands is the
+			// operator's decision, and offering the region we happen to use makes the
+			// most likely keypress create everything in Ohio. The profile's own region
+			// is a suggestion worth making; ours is not — so when nothing was passed,
+			// the profile is read for one rather than opening the list at its top.
+			source := "given with --region"
 			suggestion := region
 			if suggestion == "" {
-				suggestion = "us-east-2"
+				suggestion = profileRegion(opts.profile)
+				source = "from the " + opts.profile + " profile"
 			}
-			region, err = ask.ask(
-				"Which AWS region will the infrastructure be created in?",
-				"Every resource lands here. Moving later means recreating them.",
-				suggestion, "--region")
+			region, err = askForRegion(ask, suggestion, source)
 			if err != nil {
 				return "", "", caller, err
 			}
@@ -729,7 +765,15 @@ func resolveCredentials(
 	}
 
 	resolved := infra.ResolveProfiles(ctx, infra.CLIIdentity{}, profiles, region)
-	ask.printProfiles(resolved)
+	// The table is printed only for the typed path. When the selector runs, the
+	// rows ARE the list: printing them first and then asking the operator to type
+	// one of the names back is the thing this replaced.
+	//
+	// The selector's own fallbacks print the options themselves, so a terminal that
+	// cannot go raw still sees the account behind each profile.
+	if !ask.selecting() {
+		ask.printProfiles(resolved)
+	}
 
 	usable := make([]infra.ResolvedProfile, 0, len(resolved))
 	for _, entry := range resolved {
@@ -748,10 +792,10 @@ func resolveCredentials(
 	}
 
 	preset := usable[0].Profile.Name
-	chosen, err := ask.ask(
+	chosen, err := ask.pick(
 		"Which AWS profile should be used?",
-		"Its account is where everything is created. Check the ACCOUNT column above.",
-		preset, "--profile")
+		"Its account is where everything is created. Pick by the account, not by the name.",
+		"--profile", profileOptions(resolved), preset)
 	if err != nil {
 		return "", "", caller, err
 	}
@@ -763,15 +807,9 @@ func resolveCredentials(
 			return "", "", caller, fmt.Errorf("profile %q does not resolve: %w\n"+
 				"  aws sso login --profile %s", chosen, entry.Err, chosen)
 		}
-		effective := region
-		if effective == "" {
-			effective = entry.Profile.Region
-		}
-		if effective == "" {
-			effective, err = ask.text("AWS region", "us-east-2", "--region")
-			if err != nil {
-				return "", "", caller, err
-			}
+		effective, err := regionFor(ask, entry.Profile.Name, region, entry.Profile.Region)
+		if err != nil {
+			return "", "", caller, err
 		}
 		return chosen, effective, entry.Caller, nil
 	}
@@ -819,15 +857,24 @@ func resolveAPICIDR(ctx context.Context, opts initOptions, ask *prompter) (strin
 			// template would write "2001:db8::1/32".
 			return validateBareAddress(detected)
 		}
-		answer, err := ask.ask(
+		answer, err := ask.pick(
 			"Which address may reach the Kubernetes API?",
-			"Only this address can talk to the cluster's control plane. "+
-				"The default is what this machine appears to come from.",
-			detected, "--api-cidr")
+			"Only this address can talk to the cluster's control plane.",
+			"--api-cidr", egressOptions(detected), detected)
 		if err != nil {
 			return "", err
 		}
-		return validateBareAddress(answer)
+		if answer != typedAddressChoice {
+			return validateBareAddress(answer)
+		}
+
+		typed, err := ask.ask(
+			"Which address may reach the Kubernetes API?",
+			"A public address, no mask.", "", "--api-cidr")
+		if err != nil {
+			return "", err
+		}
+		return validateBareAddress(typed)
 	}
 	return validateBareAddress(value)
 }
@@ -943,6 +990,40 @@ func printSharedTierNotice(out io.Writer, plan initPlan) {
 			plan.env.Environment, name)
 	}
 	fmt.Fprintln(out)
+}
+
+// configurePurpose is the line under the targets question.
+//
+// It names bootstrap because bootstrap is not on the list: it is configured
+// whatever else is chosen — it is the first thing that has to run, and it needs a
+// tfvars like every other root. Its absence from a list of everything else reads
+// as an oversight unless the question says otherwise.
+func configurePurpose() string {
+	// One line, and short enough to survive an 80-column terminal: the selector
+	// fits this to width-2, and a long one loses its end — which is where the part
+	// nobody knows yet was sitting. 77 characters.
+	//
+	// "comes too" alone said that bootstrap is not optional without saying why,
+	// which is the half worth keeping: it makes the backend the other targets
+	// write their state to.
+	return "infra-base is the VPC and cluster. bootstrap comes too: it makes the backend."
+}
+
+// printNextStep names what has to run before anything else can.
+//
+// Until the state backend exists there is exactly one thing that works, and the
+// operator has just finished answering questions — the moment to say it is now,
+// not when a later run fails on a bucket that is not there.
+func printNextStep(out io.Writer, layout infra.Layout, environment string) {
+	if backendExists(layout, environment) {
+		return
+	}
+
+	theme := newStyle(out)
+	fmt.Fprintf(out, "\n  %s\n", theme.bold("Next: create the state backend."))
+	fmt.Fprintf(out, "  %s\n\n", theme.dim(
+		"Everything else keeps its state in the bucket this creates, so nothing else can run yet."))
+	fmt.Fprintf(out, "    lerian infra --env %s --target bootstrap --action apply\n\n", environment)
 }
 
 // targetsBootstrap reports whether the bootstrap root is already in the list.
@@ -1083,4 +1164,113 @@ func printModeDisclaimer(out io.Writer, plan initPlan) {
 				"is your responsibility — Lerian ships the templates and the defaults, "+
 				"not a sizing for traffic it cannot measure.", "    ", 76)+"\n\n")
 	}
+}
+
+// environmentOptions is the closed set every environment-keyed file agrees on:
+// envs/<env>.tfvars, backend/<env>.hcl and the bootstrap workspace.
+// environmentOptions lists the three environments, each with the AWS account it
+// lands in.
+//
+// The account is the consequence of this answer and the one fact worth reading
+// before giving it. It used to appear only on the confirmation before an apply —
+// so a plan never named it at all, and an apply named it after every other
+// question had been answered. environments.conf already declares it, and it is
+// the same number the account guard later refuses to run against if it does not
+// match.
+//
+// An environment the configuration says nothing about keeps its plain
+// description: claiming an account that cannot be read would be worse than not
+// naming one.
+func environmentOptions(layout infra.Layout) []option {
+	options := make([]option, 0, len(infra.Environments))
+	for _, name := range infra.Environments {
+		// The same words the setup menu uses. Two descriptions of one thing drift,
+		// and the one somebody reads second is the one that would be wrong.
+		note := environmentNotes[name]
+		if config, err := infra.LoadEnvConfig(layout, name); err == nil && config.AccountID != "" {
+			note += "  ·  account " + config.AccountID
+			if config.Profile != "" {
+				note += " via " + config.Profile
+			}
+		}
+		options = append(options, option{value: name, label: name, note: note})
+	}
+	return options
+}
+
+// modeOptions spells out the trade-off that used to live in the prompt's prose,
+// where it had to be read before the answer could be typed.
+func modeOptions() []option {
+	return []option{
+		{
+			value: infra.DedicatedMode,
+			label: infra.DedicatedMode,
+			note:  "every product gets its own datastores",
+		},
+		{
+			value: infra.SharedMode,
+			label: infra.SharedMode,
+			note:  "all products resolve one tier you provision separately — cheaper from the third product on",
+		},
+	}
+}
+
+// profileOptions turns the resolved profiles into rows, carrying the account each
+// one reaches — which is the question an operator actually has. It is not "which
+// profiles exist" but "which one is the right account", and choosing the wrong
+// account here is the most expensive typo this tool allows.
+//
+// A profile whose session expired is shown and disabled rather than hidden:
+// hiding it would remove the explanation for why the expected account is absent.
+func profileOptions(resolved []infra.ResolvedProfile) []option {
+	options := make([]option, 0, len(resolved))
+	for _, entry := range resolved {
+		note := "session expired"
+		if entry.Usable() {
+			note = "account " + entry.Caller.Account
+			if entry.Profile.Region != "" {
+				note += " · " + entry.Profile.Region
+			}
+		}
+		options = append(options, option{
+			value:    entry.Profile.Name,
+			label:    entry.Profile.Name,
+			note:     note,
+			disabled: !entry.Usable(),
+		})
+	}
+	return options
+}
+
+// targetOptions is the same catalog `--list` prints, offered as rows. A product
+// carries its services as the note, which is what makes "midaz" decidable without
+// leaving the question to go and look.
+func targetOptions(catalog infra.Catalog) []option {
+	options := make([]option, 0, 2+len(catalog.Names))
+	// Shown rather than left to the line above the list. bootstrap is configured
+	// whatever else is chosen, and a list of everything else reads as an oversight
+	// — or as a choice somebody made wrong — until the row is there with a tick in
+	// it. Fixed, not merely preticked: unticking it has no effect, and a box that
+	// moves without changing anything is worse than one that does not move.
+	options = append(options, option{
+		value: "bootstrap",
+		label: "bootstrap",
+		// Short enough to survive 80 columns beside the label and the box: the
+		// previous wording lost its end, and the end was the word "configured".
+		note:  "always configured — it makes the state backend",
+		fixed: true,
+	})
+	options = append(options, option{
+		value: "infra-base",
+		label: "infra-base",
+		note:  "the VPC and the cluster",
+	})
+	for _, name := range catalog.Names {
+		options = append(options, option{
+			value: name,
+			label: name,
+			note:  strings.Join(catalog.Products[name], " "),
+		})
+	}
+	return options
 }

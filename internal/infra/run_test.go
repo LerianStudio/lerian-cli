@@ -2,6 +2,7 @@ package infra
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -14,6 +15,16 @@ import (
 // The two-phase rule: every unit of a stage is planned, the operator confirms
 // once, and only then is anything applied. Confirming service by service would ask
 // the operator to answer with no idea what the next answer contains.
+// outputs builds the shape terraform output returns. It lived beside the Helm
+// collection until that was removed; the Outputs tests still need it.
+func outputs(pairs map[string]string) map[string]json.RawMessage {
+	raw := make(map[string]json.RawMessage, len(pairs))
+	for name, value := range pairs {
+		raw[name] = json.RawMessage(value)
+	}
+	return raw
+}
+
 func TestExecutePlansTheWholeStageBeforeApplyingAnyOfIt(t *testing.T) {
 	terraform := newFakeTerraform()
 	stage := Stage{Name: "midaz", Units: units(
@@ -337,26 +348,6 @@ func TestOutputsStopsAtTheFirstFailure(t *testing.T) {
 			t.Errorf("kept reading after the failure: %v", terraform.calls)
 			break
 		}
-	}
-}
-
-func TestHelmValuesGoesThroughTheRunnersBackendAndEnvironment(t *testing.T) {
-	terraform := newFakeTerraform()
-	terraform.outputs["products/midaz/postgres"] = outputs(map[string]string{
-		"helm_values": `{"DB_HOST":"pg.internal"}`,
-	})
-	unit := units("products/midaz/postgres")[0]
-	runner := newTestRunner(t, terraform, nil, 1)
-
-	document, err := runner.HelmValues(context.Background(), []Unit{unit})
-	if err != nil {
-		t.Fatalf("HelmValues: %v", err)
-	}
-	if document.Values["DB_HOST"] != "pg.internal" {
-		t.Errorf("Values = %v", document.Values)
-	}
-	if got := terraform.initOptions[unit.Name].StateKey; got != unit.StateKey() {
-		t.Errorf("StateKey = %q, want %q", got, unit.StateKey())
 	}
 }
 

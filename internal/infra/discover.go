@@ -395,3 +395,16 @@ func SkipUnconfiguredShared(stages []Stage, env string) ([]Stage, []string) {
 	}
 	return out, skipped
 }
+
+// EngineOf is the last segment of a root's name — "postgres" for
+// products/midaz/postgres, "eks" for infra-base/eks.
+//
+// The engine is what a root provisions, and several places group by it: the
+// shared tier owns one root per engine, and the readiness report counts them.
+func EngineOf(unit Unit) string {
+	name := unit.Name
+	if index := strings.LastIndex(name, "/"); index >= 0 {
+		return name[index+1:]
+	}
+	return name
+}

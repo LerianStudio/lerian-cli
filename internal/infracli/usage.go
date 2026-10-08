@@ -28,6 +28,26 @@ FIRST RUN
   does touches an AWS resource. Run 'lerian infra init --help' for its flags —
   every question it asks has one, so CI never has to answer a prompt.
 
+RUNNING IT WITHOUT FLAGS
+  In a terminal, "lerian infra" with no --env asks instead of failing: environment,
+  target and action, chosen with the arrow keys. Target accepts several, toggled
+  with space; q cancels. Everything else about the run is unchanged, so three Enters are
+  exactly --env <the first> --target infra-base --action plan.
+
+  Passing --env skips all of it. A command that works today behaves identically,
+  and outside a terminal nothing is ever asked — the flag is named in an error, as
+  it always was, which is what keeps this usable from CI.
+
+  The same lists appear in init for --env, --targets, --mode and --profile. The
+  profile list carries the account each one reaches, because that is the real
+  question; a profile whose session expired is shown greyed out rather than hidden,
+  so a missing account explains itself.
+
+  The confirmation before an apply or a destroy is deliberately NOT a list: it
+  still wants the word "yes" typed. Enter is exactly the key that gets left in the
+  input queue during a long stage, and that prompt exists to not be answered by
+  accident.
+
 FLAGS
   --repo <path>           The lerian-terraform-foundation checkout to drive.
                           Rarely needed: running the command anywhere inside a
@@ -39,7 +59,7 @@ FLAGS
                             3. walk up from the working directory until a
                                directory holding examples/aws/_modules and
                                examples/aws/backend is found.
-                            4. the managed checkout, ~/lerian/lerian-terraform-foundation
+                            4. the managed checkout, ~/.lerian/lerian-terraform-foundation
                           The managed checkout is LAST on purpose: an operator
                           working inside a development checkout must keep driving
                           that one, not the managed tree that also happens to
@@ -99,9 +119,6 @@ FLAGS
                             plan          terraform plan only. Changes nothing.
                             apply         plan, show the summary, confirm, apply.
                             destroy       the same, for -destroy plans.
-                            helm-values   read helm_values from every service of
-                                          the target and merge them into one
-                                          document on stdout.
                             output        terraform output for every unit.
 
   --auto-approve          Skip the single confirmation before apply/destroy.
@@ -133,8 +150,6 @@ FLAGS
   --jobs <n>              Services inside one product run in parallel. Default 4.
                           Ordered stages (bootstrap, vpc, eks) are always
                           sequential regardless of this.
-
-  --format <json|yaml>    Output shape for --action helm-values. Default json.
 
   --dry-run               Resolve and print the execution plan — units, order,
                           state keys, backend file, profile, expected account —
@@ -175,14 +190,6 @@ THE SHARED TIER IS OPT-IN PER ENGINE
   switch. Shared mode leaves them alone: they still create a real bucket, and they
   still need to be applied along with the product.
 
-WHERE helm-values READS FROM
-  A product in shared mode creates nothing: its roots resolve the tier that owns
-  the datastores. For products whose chart mapping has been ported into this
-  binary, helm-values reads the tier's state directly and never touches the
-  product root, so there is no apply of a root that would build nothing. For every
-  other product it reads the product root's own helm_values output, which requires
-  that root to have been applied.
-
 ORDER
   apply    bootstrap -> infra-base/vpc -> infra-base/eks
                      -> shared-resources/* -> products/*
@@ -206,6 +213,10 @@ ENVIRONMENT VARIABLES
   NO_COLOR            Set to anything to disable bold and color. Color is also
                       off automatically when the output is not a terminal, so a
                       redirected file or a CI log never contains escape codes.
+  LERIAN_SELECT       plain falls back from the arrow-key lists to the typed
+                      prompts, for a terminal that cannot be switched to raw mode
+                      or renders the list badly. A terminal that refuses raw mode
+                      falls back on its own, without this.
   LERIAN_SPINNER      ascii falls back from the braille progress spinner to
                       | / - \, for a terminal or font that renders braille as
                       empty boxes.
@@ -218,14 +229,11 @@ EXAMPLES
   lerian infra --env stg --target infra-base/vpc --action plan
   lerian infra --env prd --target midaz --action apply --jobs 4
   lerian infra --env dev --target midaz/postgres --action destroy
-  lerian infra --env dev --target reporter --action helm-values --format yaml \
-    > reporter-dev-values.yaml
 
   A whole environment on shared datastores, from an empty account:
     lerian infra init --env dev                       # answer: shared
     lerian infra --env dev --target bootstrap        --action apply
     lerian infra --env dev --target infra-base       --action apply
     lerian infra --env dev --target shared-resources --action apply
-    lerian infra --env dev --target midaz --action helm-values --format yaml \
-      > midaz-dev-values.yaml
+    lerian infra --env dev --target midaz            --action apply
 `

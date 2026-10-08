@@ -3,11 +3,10 @@ package infra
 // The managed templates checkout.
 //
 // The binary and the Terraform templates ship from ONE tag, and that is not an
-// administrative convenience: the chart mapping compiled into this binary
-// (chartmap.go) and the helm_values expressions in the HCL are two halves of one
-// contract, and the test that keeps them agreeing runs against a single tree.
-// Pairing a binary with templates from another commit is how the same product
-// comes out one shape in shared mode and another in dedicated.
+// administrative convenience: this binary knows the layout, the variable names
+// and the placeholder tokens the HCL uses, and a checkout from another commit
+// can have renamed any of them. The failures that produces are not obvious —
+// a variable the root does not declare, a token nothing fills in.
 //
 // So a checkout this tool creates is pinned to the tag matching the binary, and
 // never to a branch. An operator who wants a moving target points --repo at their
@@ -43,7 +42,7 @@ const defaultTemplatesRepoURL = "https://github.com/LerianStudio/lerian-terrafor
 // So the tag is the operator's: `init --clone` and `--sync` take it as
 // --templates-ref and there is no default. What stays here is the one thing the
 // operator cannot know — the oldest HCL the chart mapping compiled into this binary
-// (chartmap.go) was written against. CI proves it by cloning this tag and running
+// was written against. CI proves it by cloning this tag and running
 // the compatibility test against it. Below this the shapes genuinely differ and the
 // CLI says so; at or above it, the contract is forward-compatible by convention and
 // a break is a bug in whichever side broke it.
@@ -80,10 +79,17 @@ func TemplatesRepoURL() string {
 //
 // Two decisions in one path:
 //
-// NOT HIDDEN. ~/lerian, not ~/.lerian. A dotfile directory says "tooling internals,
-// do not look", and this is the opposite: it is a real git checkout the operator is
-// meant to be able to open, read, fork and run terraform in by hand. Hiding it
-// would tell them not to.
+// UNDER ~/.lerian, with the configuration. Everything this tool manages on a
+// machine is then in one directory, which is the thing somebody has to find when
+// they want to inspect it, move it, back it up or delete it — and what `config
+// show` and every error message prints in full, so nothing depends on the
+// directory being noticed while browsing a home folder.
+//
+// It is still an ordinary git checkout meant to be opened, read, forked and run
+// by hand; the leading dot says "this tool put it here", not "keep out". Anyone
+// who wants it elsewhere says so — --templates-dir for one run, or
+// `lerian config templates <path>` for every run — and that answer wins over
+// this one.
 //
 // NO VERSION IN IT. The operator's configuration — environments.conf and every
 // envs/<env>.tfvars — is gitignored and therefore lives INSIDE the checkout. A
@@ -93,7 +99,13 @@ func TemplatesRepoURL() string {
 // The leaf keeps the REPOSITORY's own name, so what is on disk matches what
 // `git clone` of that URL would have produced and what every doc and error message
 // calls it.
-var managedCheckoutRel = filepath.Join("lerian", "lerian-terraform-foundation")
+var managedCheckoutRel = filepath.Join(".lerian", "lerian-terraform-foundation")
+
+// legacyCheckoutRel is where managed checkouts were put before the move under
+// ~/.lerian. It is read and never written: a clone already on a machine keeps
+// working, with whatever uncommitted tfvars are in it, instead of being silently
+// abandoned for an empty directory next door.
+var legacyCheckoutRel = filepath.Join("lerian", "lerian-terraform-foundation")
 
 // ErrNoGit is returned when git is absent. It is checked once, early, for the same
 // reason MinTerraformVersion is: discovering it halfway through a clone leaves a
@@ -116,6 +128,38 @@ func ManagedCheckoutPath(override string) (string, error) {
 		return "", fmt.Errorf("infra: cannot resolve the home directory: %w", err)
 	}
 	return filepath.Join(home, managedCheckoutRel), nil
+}
+
+// ManagedCheckoutPaths is every location a managed checkout may be found at,
+// preferred first. Use it to DISCOVER one; ManagedCheckoutPath is where a new one
+// goes.
+//
+// An override is the whole list when given: somebody who said where the checkout
+// is has not asked for a search.
+func ManagedCheckoutPaths(override string) []string {
+	path, err := ManagedCheckoutPath(override)
+	if err != nil {
+		return nil
+	}
+	if override != "" {
+		return []string{path}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return []string{path}
+	}
+	return []string{path, filepath.Join(home, legacyCheckoutRel)}
+}
+
+// FirstManagedCheckout is the first of those locations that actually holds one,
+// or the empty string.
+func FirstManagedCheckout(override string) string {
+	for _, path := range ManagedCheckoutPaths(override) {
+		if IsCheckout(path) {
+			return path
+		}
+	}
+	return ""
 }
 
 // Git runs the git operations the managed checkout needs. It is an interface so

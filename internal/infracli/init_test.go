@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -649,7 +650,7 @@ func TestInitWithoutTheAWSCLIExplainsTheDependency(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	_, stderr, err := runCLI(t, "init", "--repo", root, "--env", "dev",
-		"--profile", "lerian-dev", "--region", "us-east-2")
+		"--profile", "acme-dev", "--region", "us-east-2")
 	if err == nil {
 		t.Fatal("expected a refusal naming the AWS CLI")
 	}
@@ -669,7 +670,7 @@ func TestInitWithAnExplicitAccountStillWritesWithoutTheAWSCLI(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	_, stderr, err := runCLI(t, "init", "--repo", root, "--env", "dev",
-		"--profile", "lerian-dev", "--region", "us-east-2",
+		"--profile", "acme-dev", "--region", "us-east-2",
 		"--account", "123456789012", "--targets", "infra-base",
 		"--api-cidr", "203.0.113.7", "--auto-approve")
 	if err != nil {
@@ -692,7 +693,7 @@ func TestInitWithoutTheAWSCLIStillDemandsARegion(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	_, stderr, err := runCLI(t, "init", "--repo", root, "--env", "dev",
-		"--profile", "lerian-dev", "--account", "123456789012")
+		"--profile", "acme-dev", "--account", "123456789012")
 	if err == nil {
 		t.Fatal("expected a refusal about the region")
 	}
@@ -884,5 +885,368 @@ func TestAPICIDRTakesATypedBareAddressWhenDetectionFails(t *testing.T) {
 	}
 	if got != "203.0.113.7" {
 		t.Errorf("got %q, want %q", got, "203.0.113.7")
+	}
+}
+
+// A region is a closed set, so it is chosen rather than typed. Typing it means
+// remembering whether it is eu-west-1 or eu-west-01, and a typo here is caught at
+// the first API call rather than at the prompt.
+func TestTheRegionsAreAListToChooseFrom(t *testing.T) {
+	options := regionOptions("", "")
+
+	if len(options) < 15 {
+		t.Errorf("only %d regions offered", len(options))
+	}
+
+	byValue := map[string]option{}
+	for _, opt := range options {
+		byValue[opt.value] = opt
+	}
+	for _, want := range []string{"us-east-1", "us-east-2", "eu-west-1", "sa-east-1", "ap-southeast-1"} {
+		if _, ok := byValue[want]; !ok {
+			t.Errorf("%s is not in the list", want)
+		}
+	}
+	// Named, because "sa-east-1" is not where most people know São Paulo to be.
+	if !strings.Contains(byValue["sa-east-1"].note, "São Paulo") {
+		t.Errorf("sa-east-1 is not named: %q", byValue["sa-east-1"].note)
+	}
+}
+
+// The list is a convenience, not a gate. AWS adds regions, and this list is a
+// copy that will age — so there is always a way past it.
+func TestARegionNotInTheListCanStillBeGiven(t *testing.T) {
+	options := regionOptions("", "")
+
+	var escape *option
+	for index, opt := range options {
+		if opt.value == typedRegionChoice {
+			escape = &options[index]
+		}
+	}
+	if escape == nil {
+		t.Fatal("a region this list has never heard of cannot be entered")
+	}
+	if !strings.Contains(escape.note, "type") {
+		t.Errorf("the escape does not say what it does: %q", escape.note)
+	}
+}
+
+// A region already known — from --region, or from the profile — is what the
+// cursor opens on, and it is in the list even if this copy has never heard of it.
+func TestAKnownRegionIsWhereTheCursorOpens(t *testing.T) {
+	options := regionOptions("me-central-1", "")
+
+	if options[0].value != "me-central-1" {
+		t.Errorf("the list opens on %q, not on the region already known", options[0].value)
+	}
+}
+
+// Choosing a region is a pick, and "another region" falls through to typing one.
+func TestAskForRegionPicksOrFallsThroughToTyping(t *testing.T) {
+	// Enter on the first row, which is the region already known.
+	ask, _ := selectorFor(t, keyEnterSeq)
+	chosen, err := askForRegion(ask, "eu-west-2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chosen != "eu-west-2" {
+		t.Errorf("chose %q", chosen)
+	}
+}
+
+func TestAskForRegionRejectsSomethingThatIsNotARegion(t *testing.T) {
+	// The typed path validates: a region code has a shape, and a run with a
+	// misspelled one fails at the first API call rather than here.
+	if err := validateRegion("not a region"); err == nil {
+		t.Error("anything at all was accepted as a region")
+	}
+	if err := validateRegion("me-central-1"); err != nil {
+		t.Errorf("a real region was rejected: %v", err)
+	}
+	// One this list has never heard of, but shaped like a region, is fine: the
+	// list ages and the shape does not.
+	if err := validateRegion("ap-southeast-9"); err != nil {
+		t.Errorf("a well-formed region this copy does not know was rejected: %v", err)
+	}
+}
+
+// With an address detected there are two answers, not a blank line: use it, or
+// give another. Typing it back character by character is the work the detection
+// just did.
+func TestTheDetectedAddressIsAChoice(t *testing.T) {
+	options := egressOptions("203.0.113.7")
+
+	if len(options) != 2 {
+		t.Fatalf("got %d rows, want the detected one and the escape: %+v", len(options), options)
+	}
+	if options[0].value != "203.0.113.7" {
+		t.Errorf("the first row is %q, want what was detected", options[0].value)
+	}
+	if !strings.Contains(options[0].note, "this machine") {
+		t.Errorf("the row does not say where the address came from: %q", options[0].note)
+	}
+	if options[1].value != typedAddressChoice {
+		t.Errorf("there is no way to give a different address: %+v", options)
+	}
+}
+
+// bootstrap is not on the list because it is not a choice: init configures it
+// whatever else is picked, since it is the first thing that has to run and it
+// needs a tfvars like every other root. The question says so, rather than leaving
+// its absence to be read as an oversight.
+func TestTheConfigureQuestionSaysBootstrapIsIncluded(t *testing.T) {
+	purpose := configurePurpose()
+
+	// What it has to convey, not which words convey it: that bootstrap is there
+	// and that it is there because the others need what it makes. Pinning a
+	// particular word made this fail on a rewrite that said the same thing better.
+	if !strings.Contains(purpose, "bootstrap") {
+		t.Errorf("the question does not mention bootstrap at all: %q", purpose)
+	}
+	if !strings.Contains(purpose, "comes too") && !strings.Contains(strings.ToLower(purpose), "always") {
+		t.Errorf("the question does not say bootstrap is not optional: %q", purpose)
+	}
+}
+
+// And once the files are written, the next step is named: nothing else can run
+// until the state backend exists, and bootstrap is what creates it.
+func TestInitSaysWhatToRunNext(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	printNextStep(&out, layout, "dev")
+
+	if !strings.Contains(out.String(), "bootstrap") {
+		t.Errorf("the next step is not named:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "--action apply") {
+		t.Errorf("the command to run is not given:\n%s", out.String())
+	}
+}
+
+// With the backend already there, bootstrap has run and saying so would be noise.
+func TestInitIsQuietWhenBootstrapHasRun(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	writeBackendFile(t, checkout, "dev")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	printNextStep(&out, layout, "dev")
+
+	if strings.Contains(out.String(), "bootstrap") {
+		t.Errorf("an already-bootstrapped environment was told to bootstrap:\n%s", out.String())
+	}
+}
+
+// The profile's region is a suggestion, which means the cursor opens on it — not
+// an answer given on somebody's behalf.
+//
+// Two paths got this wrong in opposite ways: one used the profile's region
+// without asking at all, the other asked but opened the list on us-east-1
+// because it never read the profile. Both end with infrastructure in a region
+// nobody chose out loud.
+func TestTheProfileRegionIsASuggestionNotAnAnswer(t *testing.T) {
+	// The list opens on the profile's region when that is all we know, and says so
+	// — it used to claim "already chosen", which was not true of a value read off
+	// ~/.aws.
+	options := regionOptions("ap-northeast-1", "from the sandbox profile")
+	if options[0].value != "ap-northeast-1" {
+		t.Errorf("the list opens on %q, not on the profile's region", options[0].value)
+	}
+	if !strings.Contains(options[0].note, "sandbox profile") {
+		t.Errorf("the row does not say why it is first: %q", options[0].note)
+	}
+}
+
+// And asking happens even when the profile declares one: interactive means there
+// is somebody to confirm it with.
+func TestARegionIsAskedForEvenWhenTheProfileHasOne(t *testing.T) {
+	ask, painted := selectorFor(t, keyEnterSeq)
+
+	chosen, err := askForRegion(ask, "sa-east-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if chosen != "sa-east-1" {
+		t.Errorf("chose %q", chosen)
+	}
+	if !strings.Contains(painted.String(), "Which AWS region") {
+		t.Errorf("the region was taken without asking:\n%s", painted.String())
+	}
+}
+
+// The region of a chosen profile is asked about, not inherited.
+//
+// This is the path that matters — the one resolveCredentials takes after the
+// profile list — and the earlier test for it exercised askForRegion directly,
+// which is the half that was never broken. It stayed green with the fix removed.
+func TestTheRegionOfAChosenProfileIsAskedAbout(t *testing.T) {
+	ask, painted := selectorFor(t, keyEnterSeq)
+
+	chosen, err := regionFor(ask, "some-profile", "", "ap-northeast-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(painted.String(), "Which AWS region") {
+		t.Errorf("the profile's region was taken without asking:\n%s", painted.String())
+	}
+	if chosen != "ap-northeast-1" {
+		t.Errorf("chose %q; the profile's region is what the list opens on", chosen)
+	}
+}
+
+// A region that was stated is not asked about again.
+func TestAStatedRegionIsNotAskedAboutAgain(t *testing.T) {
+	ask, painted := selectorFor(t, "")
+
+	chosen, err := regionFor(ask, "some-profile", "eu-west-3", "ap-northeast-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if chosen != "eu-west-3" {
+		t.Errorf("chose %q, want the one that was passed", chosen)
+	}
+	if strings.Contains(painted.String(), "Which AWS region") {
+		t.Errorf("a stated region was asked about anyway:\n%s", painted.String())
+	}
+}
+
+// "already chosen" was not true: nobody had chosen it. The region came off the
+// profile in ~/.aws, and calling that a choice invites somebody to press enter
+// believing they are confirming their own earlier decision.
+func TestTheSuggestedRegionSaysWhereItCameFrom(t *testing.T) {
+	fromProfile := regionOptions("us-east-2", "from the acme-sandbox profile")
+	if fromProfile[0].value != "us-east-2" {
+		t.Fatalf("the list does not open on the suggestion: %+v", fromProfile[0])
+	}
+	if strings.Contains(fromProfile[0].note, "already chosen") {
+		t.Errorf("the row claims a choice nobody made: %q", fromProfile[0].note)
+	}
+	if !strings.Contains(fromProfile[0].note, "acme-sandbox profile") {
+		t.Errorf("the row does not say where it came from: %q", fromProfile[0].note)
+	}
+	// The place is still named, because that is the part a code does not say.
+	if !strings.Contains(fromProfile[0].note, "Ohio") {
+		t.Errorf("the row does not name the place: %q", fromProfile[0].note)
+	}
+}
+
+// The purpose line is one line, truncated to the terminal's width — so a long one
+// loses its end, which is where I had put the part nobody knows yet.
+func TestTheConfigurePurposeFitsOnOneLine(t *testing.T) {
+	purpose := configurePurpose()
+
+	// 78 rather than 100: the selector fits this to width-2, so 80 columns — the
+	// width every terminal has — leaves 78. A line that only fits a wide terminal
+	// loses its end on the narrow one, and the end is where the new part sits.
+	if len(purpose) > 78 {
+		t.Errorf("the purpose is %d characters; 80 columns leaves 78:\n%s", len(purpose), purpose)
+	}
+	for _, want := range []string{"bootstrap", "backend"} {
+		if !strings.Contains(purpose, want) {
+			t.Errorf("the purpose does not say %q, which is why bootstrap is not a choice: %q", want, purpose)
+		}
+	}
+}
+
+// bootstrap is configured whatever else is chosen, and a list of everything else
+// reads as an oversight — or as a choice somebody made wrong — until the row is
+// there with a tick in it.
+func TestBootstrapIsShownAsAlreadyIncluded(t *testing.T) {
+	options := targetOptions(infra.Catalog{Names: []string{"midaz"}})
+
+	if len(options) == 0 || options[0].value != "bootstrap" {
+		t.Fatalf("bootstrap is not the first row: %+v", options)
+	}
+	if !options[0].fixed {
+		t.Error("the bootstrap row is not fixed, so it paints unticked and can be toggled")
+	}
+	if options[0].disabled {
+		t.Error("bootstrap is marked unavailable; it is the opposite — always included")
+	}
+}
+
+// Fixed is not disabled. The cursor must skip it for the same reason it skips an
+// unavailable row — neither can answer anything — but it must not be labeled
+// "(unavailable)", which says the opposite of what is true.
+func TestAFixedRowIsSkippedButNotCalledUnavailable(t *testing.T) {
+	options := []option{
+		{value: "bootstrap", label: "bootstrap", fixed: true},
+		{value: "infra-base", label: "infra-base"},
+		{value: "midaz", label: "midaz"},
+	}
+
+	if got := firstEnabled(options); got != 1 {
+		t.Errorf("the cursor starts at %d, on a row that cannot be chosen", got)
+	}
+	// Wrapping upwards from the first selectable row goes past it, not onto it.
+	if got := step(options, 1, -1); got == 0 {
+		t.Error("moving up lands on the fixed row")
+	}
+	if got := jumpTo(options, 'b', 1); got == 0 {
+		t.Error("typing b jumps to the fixed row")
+	}
+}
+
+// The caller that draws the fixed row is the one that already adds it to the
+// plan. Returning it as well would have that caller add it twice.
+func TestAFixedRowIsNotReturnedAsAChoice(t *testing.T) {
+	options := []option{
+		{value: "bootstrap", label: "bootstrap", fixed: true},
+		{value: "infra-base", label: "infra-base"},
+	}
+	chosen := map[string]bool{"bootstrap": true, "infra-base": true}
+
+	got := selectedValues(options, chosen)
+
+	if slices.Contains(got, "bootstrap") {
+		t.Errorf("selectedValues = %v, want infra-base alone", got)
+	}
+	if !slices.Contains(got, "infra-base") {
+		t.Errorf("selectedValues = %v", got)
+	}
+}
+
+// The tick is the whole point of the row: it is what says "this is in the
+// answer" without anybody having to read the line above the list. Asserted on
+// what is painted, because the field being set says nothing about what the
+// operator sees.
+func TestTheFixedRowIsPaintedTicked(t *testing.T) {
+	var out bytes.Buffer
+	ask := &prompter{interactive: true, out: &out}
+
+	options := []option{
+		{value: "bootstrap", label: "bootstrap", note: "always", fixed: true},
+		{value: "infra-base", label: "infra-base"},
+	}
+	ask.paintOptions("What do you want to configure?", "", options, map[string]bool{}, 1, true, 0)
+
+	painted := stripANSI(out.String())
+	var bootstrapLine string
+	for _, line := range strings.Split(painted, "\n") {
+		if strings.Contains(line, "bootstrap") {
+			bootstrapLine = line
+		}
+	}
+
+	if bootstrapLine == "" {
+		t.Fatalf("no bootstrap row was painted:\n%s", painted)
+	}
+	if !strings.Contains(bootstrapLine, "[x]") {
+		t.Errorf("the fixed row paints unticked: %q", bootstrapLine)
+	}
+	if strings.Contains(bootstrapLine, "unavailable") {
+		t.Errorf("the fixed row says it is unavailable: %q", bootstrapLine)
 	}
 }

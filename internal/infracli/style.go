@@ -8,7 +8,7 @@ import (
 // style decides whether this run may emit ANSI.
 //
 // Three conditions, all of which must hold, because the same output is routinely
-// redirected: `--action helm-values > values.yaml` must produce a YAML file with
+// redirected: `--action output > outputs.json` must produce a file with
 // no escape sequences in it, and a CI log full of color codes is worse than a
 // plain one.
 //
@@ -55,6 +55,20 @@ func (s style) alert(text string) string {
 		return text
 	}
 	return "\x1b[1;31m" + text + "\x1b[0m"
+}
+
+// pass is green, and it marks a verdict that is already spelled out beside it.
+//
+// The rule in this file is that color never carries meaning on its own, and this
+// does not break it: the word "ok" is right there, so a reader without color — a
+// color-blind operator, a saved log, a redirected report — loses nothing. The
+// color only makes a clean check scannable at a glance, which is the whole job
+// of a block that is printed on every run.
+func (s style) pass(text string) string {
+	if !s.enabled {
+		return text
+	}
+	return "\x1b[32m" + text + "\x1b[0m"
 }
 
 // dim is for text that is present but should not compete: the in-flight line,

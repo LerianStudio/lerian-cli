@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -77,14 +78,15 @@ func TestCLI_VersionCommand(t *testing.T) {
 
 	outputStr := string(output)
 
-	// Check for expected components
+	// Every field is still there. The layout changed; what it reports did not,
+	// and the commit is what somebody pastes into an issue.
 	expectedStrings := []string{
-		"lerian version",
-		"commit:",
-		"built at:",
-		"built by:",
-		"go version:",
-		"platform:",
+		"version",
+		"commit",
+		"built",
+		"go",
+		runtime.Version(),
+		runtime.GOOS + "/" + runtime.GOARCH,
 	}
 
 	for _, expected := range expectedStrings {
@@ -93,10 +95,16 @@ func TestCLI_VersionCommand(t *testing.T) {
 		}
 	}
 
-	// Should be multi-line
+	// One row per field.
 	lines := strings.Split(strings.TrimSpace(outputStr), "\n")
-	if len(lines) < 6 {
-		t.Errorf("Expected at least 6 lines of output, got %d", len(lines))
+	if len(lines) < 4 {
+		t.Errorf("Expected at least 4 lines of output, got %d", len(lines))
+	}
+
+	// Redirected — which is what CombinedOutput does — it carries no escape
+	// sequences, so a version pasted into a bug report is readable.
+	if strings.Contains(outputStr, "\x1b") {
+		t.Errorf("Expected no escape sequences in redirected output: %q", outputStr)
 	}
 }
 

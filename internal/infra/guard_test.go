@@ -18,7 +18,7 @@ func writeBackend(t *testing.T, layout Layout, env, contents string) {
 	}
 }
 
-const devConfig = "[dev]\naccount_id = 123456789012\nprofile = lerian-dev\nregion = us-east-2\n"
+const devConfig = "[dev]\naccount_id = 123456789012\nprofile = acme-dev\nregion = us-east-2\n"
 
 func TestLoadBackendParsesTheGeneratedFile(t *testing.T) {
 	layout := writeConfig(t, devConfig)
@@ -142,7 +142,7 @@ func TestVerifyAccountRefusesTheWrongAccount(t *testing.T) {
 		Environment: "prd",
 		AccountID:   "345678901234",
 		Region:      "us-east-1",
-		Profile:     "lerian-prd",
+		Profile:     "acme-prd",
 	}
 	identity := &stubIdentity{caller: Caller{
 		Account: "123456789012",
@@ -157,7 +157,7 @@ func TestVerifyAccountRefusesTheWrongAccount(t *testing.T) {
 		"345678901234",                    // what the config declares
 		"123456789012",                    // what the credentials resolve to
 		"assumed-role/Developer/ferreira", // who that is
-		"lerian-prd",                      // which profile was used
+		"acme-prd",                        // which profile was used
 		"no flag to skip this",            // and that there is no way around it
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -171,7 +171,7 @@ func TestVerifyAccountAcceptsTheDeclaredAccount(t *testing.T) {
 		Environment: "dev",
 		AccountID:   "123456789012",
 		Region:      "us-east-2",
-		Profile:     "lerian-dev",
+		Profile:     "acme-dev",
 	}
 	identity := &stubIdentity{caller: Caller{
 		Account: "123456789012",
@@ -185,21 +185,21 @@ func TestVerifyAccountAcceptsTheDeclaredAccount(t *testing.T) {
 	if caller.ARN != "arn:aws:iam::123456789012:user/ci" {
 		t.Errorf("ARN = %q", caller.ARN)
 	}
-	if identity.gotProfile != "lerian-dev" || identity.gotRegion != "us-east-2" {
-		t.Errorf("resolved with profile %q region %q, want lerian-dev/us-east-2",
+	if identity.gotProfile != "acme-dev" || identity.gotRegion != "us-east-2" {
+		t.Errorf("resolved with profile %q region %q, want acme-dev/us-east-2",
 			identity.gotProfile, identity.gotRegion)
 	}
 }
 
 func TestVerifyAccountExplainsAnExpiredSSOSession(t *testing.T) {
-	config := EnvConfig{Environment: "dev", AccountID: "123456789012", Region: "us-east-2", Profile: "lerian-dev"}
+	config := EnvConfig{Environment: "dev", AccountID: "123456789012", Region: "us-east-2", Profile: "acme-dev"}
 	identity := &stubIdentity{err: errors.New("Error loading SSO Token: Token has expired")}
 
 	_, err := VerifyAccount(context.Background(), identity, config)
 	if err == nil {
 		t.Fatal("VerifyAccount succeeded, want an error")
 	}
-	if !strings.Contains(err.Error(), "aws sso login --profile lerian-dev") {
+	if !strings.Contains(err.Error(), "aws sso login --profile acme-dev") {
 		t.Errorf("error = %q, want the sso login instruction", err)
 	}
 }

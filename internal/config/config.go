@@ -20,6 +20,13 @@ type Profile struct {
 type Config struct {
 	CurrentProfile string             `yaml:"current-profile"`
 	Profiles       map[string]Profile `yaml:"profiles"`
+
+	// TemplatesCheckout is where lerian-terraform-foundation was cloned.
+	//
+	// It sits outside the profiles because it describes this machine rather than
+	// an account: the same checkout drives dev, stg and prd, and which one is
+	// current says nothing about where the templates live.
+	TemplatesCheckout string `yaml:"templates-checkout,omitempty"`
 }
 
 // GetConfigPath returns the path to the config file

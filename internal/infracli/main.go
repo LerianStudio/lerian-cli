@@ -47,11 +47,33 @@ type options struct {
 	repo string
 	// templatesDir relocates the managed checkout. A read-only home, a network
 	// home, or an operator who keeps tooling under XDG all need it somewhere else.
-	templatesDir          string
-	environment           string
-	target                string
-	action                string
-	format                string
+	templatesDir string
+	environment  string
+	target       string
+	action       string
+	// profile is the AWS profile chosen interactively, and profileChosen records
+	// that a choice was made at all.
+	//
+	// Two fields, for the same reason initOptions carries profileSet: the empty
+	// string is an answer — the credentials already in this environment, which have
+	// no profile name — and it is indistinguishable from the absence of one. A
+	// scripted run leaves both zero and the file decides, exactly as before.
+	profile       string
+	profileChosen bool
+
+	// account is who the chosen profile resolves to, carried from the account
+	// question to the environment one: which environments are available depends on
+	// it, since a checkout holds one account per environment.
+	account string
+
+	// targetsFromSetup records that init just chose the targets, so the question
+	// that would ask for them again is skipped.
+	targetsFromSetup bool
+
+	// backends lists the state backends an account holds. It is here so a test can
+	// answer the question without credentials; a run leaves it nil and gets the
+	// AWS CLI.
+	backends              infra.BackendLister
 	jobs                  int
 	minCredentialLifetime time.Duration
 	autoApprove           bool
@@ -69,6 +91,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return runInit(ctx, args[1:], stdout, stderr)
 		case "check":
 			return runCheck(ctx, args[1:], stdout, stderr)
+		case "cleanup", "clean":
+			return runCleanup(ctx, args[1:], stdout, stderr)
 		}
 	}
 
@@ -79,14 +103,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags.Usage = func() { fmt.Fprint(stderr, usage) }
 
 	flags.StringVar(&opts.templatesDir, "templates-dir", "",
-		"where the managed checkout lives (default ~/lerian/lerian-terraform-foundation)")
+		"where the managed checkout lives (default ~/.lerian/lerian-terraform-foundation)")
 	flags.StringVar(&opts.repo, "repo", "",
 		"path to the lerian-terraform-foundation checkout "+
 			"(default: $LERIAN_TF_REPO, else discovered by walking up from the working directory)")
 	flags.StringVar(&opts.environment, "env", "", "dev, stg or prd")
 	flags.StringVar(&opts.target, "target", "infra-base", "what to operate on")
-	flags.StringVar(&opts.action, "action", "plan", "plan, apply, destroy, output or helm-values")
-	flags.StringVar(&opts.format, "format", "json", "json or yaml, for --action helm-values")
+	flags.StringVar(&opts.action, "action", "plan", "plan, apply, destroy or output")
 	flags.IntVar(&opts.jobs, "jobs", 4, "how many services of one product run at once")
 	flags.BoolVar(&opts.autoApprove, "auto-approve", false, "skip the confirmation before apply/destroy")
 	flags.DurationVar(&opts.minCredentialLifetime, "min-credential-lifetime", 0,
@@ -130,7 +153,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	layout, source, err := resolveLayout(opts.repo, os.Getenv("LERIAN_TF_REPO"), opts.templatesDir)
 	if err != nil {
-		return err
+		// Nothing pointed anywhere. With a terminal that is a question, not a
+		// failure: the operator knows where the clone is, and telling them to set an
+		// environment variable and run again is a round trip for information they
+		// could give right now. The answer is written down, so it is asked once per
+		// machine rather than once per shell.
+		if ask := newPrompter(stderr); ask.interactive && errors.Is(err, errNoCheckoutAnywhere) {
+			answered, askErr := obtainCheckout(ctx, ask, stderr, opts.templatesDir)
+			if askErr != nil {
+				return askErr
+			}
+			if layout, err = infra.NewLayout(answered); err != nil {
+				return err
+			}
+			source = sourceAsked
+		} else {
+			return err
+		}
 	}
 
 	catalog, err := infra.Discover(layout)
@@ -142,6 +181,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if opts.list {
 		printTargets(stdout, layout, catalog)
 		return nil
+	}
+
+	// Where the command would fail for want of an answer, and there is a terminal
+	// to ask, it asks instead. Nothing else changes: --env present means no
+	// question, so every invocation that works today behaves exactly as it did,
+	// and without a terminal the error below is still what happens.
+	terraform, err := prepareChoices(ctx, newPrompter(stderr), catalog, &opts, layout, source, stderr)
+	if err != nil {
+		return err
 	}
 
 	if !infra.ValidEnvironment(opts.environment) {
@@ -164,25 +212,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if opts.format != "json" && opts.format != "yaml" {
-		return fmt.Errorf("invalid --format %q\nValid values: json, yaml.", opts.format)
-	}
 	if opts.jobs < 1 {
 		return fmt.Errorf("invalid --jobs %d\nMust be at least 1. Default 4; use 1 to run sequentially.",
 			opts.jobs)
 	}
-	if action == infra.ActionHelmValues {
-		if err := requireProductTarget(opts.target); err != nil {
-			return err
-		}
-	}
 
-	// helm-values writes a document to stdout, so `> values.yaml` captures the
-	// document and nothing else. Everything else goes to stderr in that mode.
 	progressOut := stdout
-	if action == infra.ActionHelmValues {
-		progressOut = stderr
-	}
 
 	// Target resolution is pure filesystem work and reports the most common typo,
 	// so it runs before the config is even opened: "unknown product 'ledger'" is a
@@ -196,6 +231,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	config = applyChosenProfile(config, opts.profile, opts.profileChosen)
 
 	// The shared tier is opt-in per engine. Dropping the ones this environment never
 	// configured is what lets "apply the shared tier" run as one parallel stage
@@ -230,25 +266,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	// The terraform binary is verified before anything is printed, not after: a
-	// preflight block that lists a terraform path it has not resolved yet would
-	// have to be interrupted to print it, and that is exactly what used to split
-	// the block in half — the path landed below the explanation, and the account
-	// line floated loose under it.
-	terraform, err := infra.NewCLI(ctx)
-	if err != nil {
-		return err
-	}
-	terraform.Profile = config.Profile
-
-	// The AWS CLI is checked here, next to the terraform check and before the first
-	// call that needs it. A dry run is exempt because it makes no AWS call at all:
-	// it resolves and prints the execution plan, nothing else.
-	if !opts.dryRun {
-		if err := infra.RequireAWSCLI(ctx); err != nil {
+	// Verified before anything is printed, not after: a preflight block that lists
+	// a terraform path it has not resolved yet would have to be interrupted to
+	// print it, and that is exactly what used to split the block in half — the
+	// path landed below the explanation, and the account line floated loose under
+	// it.
+	//
+	// Both tools are gated together so a machine missing both is told so once.
+	// Returning at the first gap sends the operator to install terraform, run
+	// again, and only then learn the AWS CLI is v1 — the same round trip
+	// 'lerian-infra check' exists to collapse.
+	// Already built when the questions were asked; built here otherwise. Either
+	// way it happens once, because the probe shells out to the binary.
+	if terraform == nil {
+		var err error
+		if terraform, _, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun); err != nil {
 			return err
 		}
 	}
+	terraform.Profile = config.Profile
 
 	// Resolved once, here, before anything runs in parallel. Four terraform
 	// processes starting together each refreshing the same SSO token is a race we
@@ -295,18 +331,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return printDryRun(progressOut, stages, opts, backend, readiness)
 	}
 
+	// Offered before refusing: the refusal names the file and the exact lines, so
+	// it already knows everything needed to fix them, and somebody is sitting in
+	// front of it.
+	readiness = fillPendingVarFiles(ctx, newPrompter(progressOut), infra.CLIZones{},
+		readiness, opts.environment, config.Profile)
+
 	if err := failOnUnready(readiness); err != nil {
 		return err
 	}
 
-	runDir, err := os.MkdirTemp("", "lerian-infra-")
+	// Created, restricted and claimed before it has a name the cleanup looks for,
+	// so a cleanup running alongside this one can never see it unclaimed.
+	runDir, err := newRunDir()
 	if err != nil {
-		return fmt.Errorf("cannot create the run directory: %w", err)
-	}
-	//nolint:gosec // G302 is written for files; a directory without the execute bit
-	// cannot be traversed, so 0700 is already the tightest usable mode here.
-	if err := os.Chmod(runDir, 0o700); err != nil {
-		return fmt.Errorf("cannot restrict the run directory: %w", err)
+		return err
 	}
 	// Saved plans can contain values read from state; the logs are kept so a
 	// failure can be read after the run.
@@ -330,14 +369,40 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	switch action {
-	case infra.ActionHelmValues:
-		return writeHelmValues(ctx, runner, allUnits, opts.format, stdout)
-	case infra.ActionOutput:
-		return writeOutputs(ctx, runner, allUnits, stdout)
-	default:
-		return execute(ctx, runner, stages, action, opts, config, runDir, logs, terraform.Credentials, progressOut)
+	// One function for every action, so the menu that follows a run can ask for
+	// another one without rebuilding the runner, the logs or the plans.
+	perform := func(action infra.Action) error {
+		switch action {
+		case infra.ActionOutput:
+			return writeOutputs(ctx, runner, allUnits, stdout)
+		default:
+			return execute(ctx, runner, terraform, stages, action, opts, config, runDir,
+				logs, terraform.Credentials, progressOut)
+		}
 	}
+
+	if err := perform(action); err != nil {
+		return err
+	}
+
+	// Asked again before every draw of the menu, not once before the first. An
+	// apply chosen FROM that menu is what creates the cluster, so a decision taken
+	// beforehand is a decision taken when there was nothing to point at — which is
+	// exactly when somebody needs the offer most.
+	ask := newPrompter(progressOut)
+	kubectl := func() (func() error, string) {
+		facts, found, why := readClusterFacts(ctx, terraform, allUnits)
+		if !found {
+			return nil, why
+		}
+		return func() error {
+			return pointKubectl(ctx, ask, progressOut, facts, config.Region, config.Profile)
+		}, ""
+	}
+
+	// Inside the run, not after it: the saved plans are removed when this function
+	// returns, and they are what the detail is read from.
+	return afterRun(ctx, ask, runner, terraform, stages, action, progressOut, perform, kubectl)
 }
 
 // checkoutSource says which of the four ways of finding a checkout was the one
@@ -346,10 +411,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 type checkoutSource string
 
 const (
-	sourceFlag      checkoutSource = "--repo"
-	sourceEnv       checkoutSource = "$LERIAN_TF_REPO"
-	sourceWorkingIn checkoutSource = "the working directory"
-	sourceManaged   checkoutSource = "managed"
+	sourceFlag       checkoutSource = "--repo"
+	sourceEnv        checkoutSource = "$LERIAN_TF_REPO"
+	sourceWorkingIn  checkoutSource = "the working directory"
+	sourceManaged    checkoutSource = "managed"
+	sourceRemembered checkoutSource = "remembered"
+	sourceAsked      checkoutSource = "answered just now"
 )
 
 // resolveLayout finds the checkout to drive, in this order of precedence:
@@ -384,11 +451,22 @@ func resolveLayout(flagRepo, envRepo, templatesDir string) (infra.Layout, checko
 		}
 	}
 	if root == "" {
-		managed, err := infra.ManagedCheckoutPath(templatesDir)
-		if err != nil {
-			return infra.Layout{}, "", err
+		// A recorded answer before the managed path: one is somebody saying which
+		// checkout to use, the other is a directory happening to exist at a
+		// conventional location. With the convention first, a client who cloned the
+		// templates somewhere of their own could not make this use it — the question
+		// was never asked, because the managed path had already answered.
+		//
+		// It still loses to the working directory: standing inside a checkout means
+		// that one, whatever was written down on a previous run.
+		if remembered := rememberedCheckout(); remembered != "" {
+			root, source = remembered, sourceRemembered
 		}
-		if infra.IsCheckout(managed) {
+	}
+	if root == "" {
+		// Both locations: the one under ~/.lerian and the one managed checkouts
+		// used to go to. A machine that cloned before the move keeps working.
+		if managed := infra.FirstManagedCheckout(templatesDir); managed != "" {
 			root, source = managed, sourceManaged
 		}
 	}
@@ -425,21 +503,36 @@ func resolveLayout(flagRepo, envRepo, templatesDir string) (infra.Layout, checko
 // mismatch gets noticed by someone who never runs init — and it stays a note on the
 // line, not a block, because a plan or a destroy is not the moment to lecture.
 func templatesLine(ctx context.Context, layout infra.Layout, source checkoutSource) string {
+	line, _ := inspectTemplates(ctx, layout, source)
+	return line
+}
+
+// inspectTemplates returns the line describing the checkout and the ref it found,
+// in one pass. The ref is returned rather than recovered by a second call because
+// reading it shells out to git, and the caller that judges the checkout needs the
+// same answer the line was built from.
+func inspectTemplates(ctx context.Context, layout infra.Layout, source checkoutSource) (string, string) {
 	line := layout.Root
-	if git, err := infra.NewGitCLI(); err == nil {
-		state := infra.InspectCheckout(ctx, git, layout.Root, source == sourceManaged)
-		ref := state.Ref
-		if ref == "" {
-			ref = "untagged"
-		}
-		line += " @ " + ref
-		if infra.RefBelowMin(state.Ref) {
-			line += fmt.Sprintf("  (%s)  — older than %s, the oldest this binary reads",
-				source, infra.TemplatesMinRef)
-			return line
-		}
+
+	git, err := infra.NewGitCLI()
+	if err != nil {
+		// No git means no ref to read. The path is still worth reporting, and the
+		// checkout is still verifiable by its directories.
+		return fmt.Sprintf("%s  (%s)", line, source), ""
 	}
-	return fmt.Sprintf("%s  (%s)", line, source)
+
+	state := infra.InspectCheckout(ctx, git, layout.Root, source == sourceManaged)
+	ref := state.Ref
+	if ref == "" {
+		ref = "untagged"
+	}
+	line += " @ " + ref
+	if infra.RefBelowMin(state.Ref) {
+		line += fmt.Sprintf("  (%s)  — older than %s, the oldest this binary reads",
+			source, infra.TemplatesMinRef)
+		return line, state.Ref
+	}
+	return fmt.Sprintf("%s  (%s)", line, source), state.Ref
 }
 
 // notACheckout is the failure for a path the operator NAMED that turns out not to
@@ -490,7 +583,8 @@ func pointingOptions() string {
 		"  3. run it from inside the checkout — any directory in it will do, the root\n" +
 		"     is found by walking up.\n" +
 		"  4. lerian infra init --clone — clones the templates matching this binary\n" +
-		"     into ~/lerian/lerian-terraform-foundation and uses that from then on."
+		"     into ~/.lerian/lerian-terraform-foundation and uses that from then on.\n" +
+		"     --templates-dir puts the clone somewhere else."
 }
 
 // loadBackend reads backend/<env>.hcl and runs the two offline guards. A run made
@@ -534,10 +628,10 @@ func loadBackend(
 }
 
 func checkReadiness(out io.Writer, action infra.Action, units []infra.Unit, env string) []infra.Readiness {
-	if action == infra.ActionOutput || action == infra.ActionHelmValues {
-		// Read-only actions never pass -var-file, so the variables file is irrelevant
-		// to them, and demanding it would block reading the outputs of a stack
-		// somebody else applied.
+	if action == infra.ActionOutput {
+		// A read-only action never passes -var-file, so the variables file is
+		// irrelevant to it, and demanding it would block reading the outputs of a
+		// stack somebody else applied.
 		fmt.Fprintf(out, "  tfvars      not required for --action %s\n", action)
 		return nil
 	}
@@ -560,20 +654,12 @@ func failOnUnready(readiness []infra.Readiness) error {
 		len(problems), strings.Join(problems, "\n"))
 }
 
-func requireProductTarget(target string) error {
-	switch {
-	case target == "bootstrap", target == "all",
-		target == "infra-base", strings.HasPrefix(target, "infra-base/"):
-		return fmt.Errorf("--action helm-values needs a product target\n"+
-			"%q has no helm_values output; the Helm handoff lives in products/<product>/<service>.\n"+
-			"  lerian infra --env dev --target midaz --action helm-values", target)
-	}
-	return nil
-}
-
 func execute(
 	ctx context.Context,
 	runner *infra.Runner,
+	// terraform is the same CLI the runner uses, needed here for the one command
+	// that is not part of a run: releasing a lock a failed run reported.
+	terraform *infra.CLI,
 	stages []infra.Stage,
 	action infra.Action,
 	opts options,
@@ -615,9 +701,9 @@ func execute(
 		theme := newStyle(out)
 		fmt.Fprintf(out, "  %s %s\n", theme.bold(verb), theme.bold(stage.Name))
 		fmt.Fprintf(out, "    %s\n", changeSummary(create, update, destroy))
-		fmt.Fprintf(out, "    %s · account %s\n\n", config.Environment, config.AccountID)
+		fmt.Fprintf(out, "    %s\n\n", destinationLine(config))
 
-		return confirmOnStdin(out, "  type yes to continue: ")
+		return confirmOnStdin(ctx, out, "  type yes to continue · ctrl-c cancels: ")
 	}
 	if action == infra.ActionPlan {
 		confirm = nil
@@ -637,6 +723,7 @@ func execute(
 
 	if err != nil {
 		printFailureLogs(out, results, logs)
+		offerUnlock(ctx, newPrompter(out), terraform, out, results)
 		fmt.Fprintf(out, "\n  logs %s\n", runDir)
 
 		// The detail was just printed, in full, next to the stack it belongs to.
@@ -651,7 +738,12 @@ func execute(
 		return reported{summary: summarize(err)}
 	}
 
-	printClusterHandoff(ctx, out, runner, results, action, config)
+	// Only where nobody can be offered the alternative. With a terminal the menu
+	// that follows offers to run this, and printing the command as well would be
+	// telling somebody to type what the next screen is about to do for them.
+	if !newPrompter(out).interactive {
+		printClusterHandoff(ctx, out, runner, results, action, config)
+	}
 
 	fmt.Fprintf(out, "\n%s\n", newStyle(out).bold(totalsLine(results, action, time.Since(started))))
 	fmt.Fprintf(out, "  logs %s\n\n", runDir)
@@ -675,31 +767,6 @@ func execute(
 	return nil
 }
 
-func writeHelmValues(
-	ctx context.Context,
-	runner *infra.Runner,
-	units []infra.Unit,
-	format string,
-	stdout io.Writer,
-) error {
-	document, err := runner.HelmValues(ctx, units)
-	if err != nil {
-		return err
-	}
-
-	var rendered []byte
-	if format == "yaml" {
-		rendered, err = document.YAML()
-	} else {
-		rendered, err = document.JSON()
-	}
-	if err != nil {
-		return err
-	}
-	_, err = stdout.Write(rendered)
-	return err
-}
-
 func writeOutputs(ctx context.Context, runner *infra.Runner, units []infra.Unit, stdout io.Writer) error {
 	outputs, err := runner.Outputs(ctx, units)
 	if err != nil {
@@ -721,7 +788,7 @@ func writeOutputs(ctx context.Context, runner *infra.Runner, units []infra.Unit,
 }
 
 // confirmOnStdin asks once, and only accepts the whole word.
-func confirmOnStdin(out io.Writer, prompt string) error {
+func confirmOnStdin(ctx context.Context, out io.Writer, prompt string) error {
 	// A real isatty, not a character-device check: /dev/null is a character device
 	// too, and a CI run redirecting stdin from it would be mistaken for a human.
 	if !isTerminal(os.Stdin) {
@@ -735,14 +802,21 @@ func confirmOnStdin(out io.Writer, prompt string) error {
 	// Only what is typed after the question counts as the answer. Stages here take
 	// minutes, and anything pressed while waiting is still queued when the prompt
 	// finally appears.
-	if err := drainStdin(); err != nil {
+	reader, err := drain()
+	if err != nil {
 		return fmt.Errorf("cannot make sure the confirmation is answered deliberately: %w\n"+
 			"Re-run with --auto-approve if you mean to skip it.", err)
 	}
+	if reader == nil {
+		reader = bufio.NewReader(os.Stdin)
+	}
 
 	fmt.Fprint(out, prompt)
-	reader := bufio.NewReader(os.Stdin)
-	answer, err := reader.ReadString('\n')
+	answer, err := readLineOrCancel(ctx, reader)
+	if errors.Is(err, infra.ErrAborted) {
+		fmt.Fprintln(out)
+		return infra.ErrAborted
+	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("cannot read the confirmation: %w", err)
 	}
@@ -761,9 +835,108 @@ func printFailureLogs(out io.Writer, results []infra.StageResult, logs *infra.Fi
 				}
 				fmt.Fprintf(out, "\n---- %s failed ----\n%s\n  full log: %s\n",
 					unit.Unit.Name, indent(unit.Err.Error(), "  "), logs.Path(unit.Unit))
+				printFailureAdvice(out, unit)
 			}
 		}
 	}
+}
+
+// printFailureAdvice turns the failures worth recognizing into what to do about
+// them.
+//
+// Terraform's own message is kept above this, always: it is accurate, and this
+// adds to it rather than replacing it. What it adds is the part that is specific
+// to this machine and this run — the directory to pass to -chdir, the id already
+// filled in — which is exactly what somebody retypes by hand from a web page
+// while the run they were in the middle of sits there failed.
+// offerUnlock asks whether to release a held lock, and does it.
+//
+// The alternative is what this just put on the screen: a command to copy into
+// another terminal, in a directory nobody memorizes, with a uuid in it. That is
+// a round trip for something this process can do — and the decision it needs was
+// already made by reading the lines above.
+//
+// Asked, never assumed, and never under --auto-approve: that flag approves
+// infrastructure changes, and this is not one. It is a judgement about whether a
+// process somewhere else is still alive, which no flag can stand in for.
+// unlocker is the half of the terraform CLI this needs. An interface so a test
+// can see whether the command ran, which is the only thing worth asserting about
+// a prompt that guards a destructive operation.
+type unlocker interface {
+	ForceUnlock(ctx context.Context, unit infra.Unit, lockID string) error
+}
+
+func offerUnlock(
+	ctx context.Context,
+	ask *prompter,
+	terraform unlocker,
+	out io.Writer,
+	results []infra.StageResult,
+) {
+	if ask == nil || !ask.interactive || terraform == nil {
+		return
+	}
+
+	for _, result := range results {
+		for _, phase := range [][]infra.UnitResult{result.Plans, result.Applies} {
+			for _, unit := range phase {
+				if unit.Err == nil {
+					continue
+				}
+				lock := infra.ReadStateLock(unit.Err.Error())
+				if lock == nil {
+					continue
+				}
+				unlockOne(ctx, ask, terraform, out, unit.Unit, *lock)
+				// One at a time, and only the first: a second lock in the same run
+				// is almost always the same holder, and the answer to it is the
+				// answer that was just given.
+				return
+			}
+		}
+	}
+}
+
+// unlockOne is the question and the command.
+func unlockOne(
+	ctx context.Context,
+	ask *prompter,
+	terraform unlocker,
+	out io.Writer,
+	unit infra.Unit,
+	lock infra.StateLock,
+) {
+	answer, err := ask.pick("Release the lock on "+unit.Name+"?",
+		lock.Holder(time.Now())+" — only if that run is over.", "",
+		[]option{
+			{value: "no", label: "leave it", note: "nothing changes; the command above still works"},
+			{value: "yes", label: "release it", note: "terraform force-unlock"},
+		}, "")
+	if err != nil || answer != "yes" {
+		return
+	}
+
+	// Typed, because the cost of being wrong lands on somebody else's apply and
+	// not on this run. A menu row is one keypress and this is not a one-keypress
+	// decision.
+	if err := ask.confirm(ctx, out,
+		"Is that run definitely over? Releasing a live lock lets two writes race"); err != nil {
+		return
+	}
+
+	if err := terraform.ForceUnlock(ctx, unit, lock.ID); err != nil {
+		fmt.Fprintf(out, "\n  %v\n", err)
+		return
+	}
+	fmt.Fprintf(out, "\n  Released. Run the same command again.\n")
+}
+
+func printFailureAdvice(out io.Writer, unit infra.UnitResult) {
+	lock := infra.ReadStateLock(unit.Err.Error())
+	if lock == nil {
+		return
+	}
+	fmt.Fprintf(out, "\n%s\n", indent(lock.Advice(unit.Unit.Dir, time.Now()), "  "))
 }
 
 // guardCredentialLifetime says out loud how long the run's credentials have, and
@@ -957,6 +1130,886 @@ func printDryRun(
 	}
 	fmt.Fprintf(out, "  ok  all %d stack(s) ready\n\n", len(readiness))
 	return nil
+}
+
+// guidedRun fills in the run's three choices when none were given.
+//
+// It is reached only where the command would otherwise fail: --env is the one
+// flag with no default, so an invocation that passes it never gets here, and
+// every command that works today behaves exactly as it did. Without a terminal
+// this returns untouched and the caller falls through to the error that names the
+// flag — which is what keeps the command usable from CI.
+//
+// Target and action are asked in the same breath rather than left at their
+// defaults, because an operator who did not know to pass --env did not choose
+// "infra-base" and "plan" either. They are offered preselected, so three Enters
+// reproduce exactly the old default run.
+//
+// The questions go to stderr: the action is one of the things being chosen, and
+// the action is one of the things being chosen.
+// afterAccount is called as soon as the account is chosen, with the profile that
+// was picked. Its error stops the remaining questions.
+//
+// It exists for one check: an expired credential makes every later answer
+// worthless. The profile is what it needs, not the environment — the credential
+// belongs to the profile, and which environment the account is deployed as is
+// still three questions away at that point.
+func guidedRun(
+	ctx context.Context,
+	catalog infra.Catalog,
+	opts *options,
+	ask *prompter,
+	layout infra.Layout,
+	resolved []infra.ResolvedProfile,
+	afterAccount func(profile string, chosen bool) error,
+) error {
+	if !ask.interactive {
+		return nil
+	}
+
+	// A list of steps rather than three calls in a row, so r can walk back through
+	// them. The questions are a sequence and a wrong turn on the first one used to
+	// cost the whole run: the only way to correct it was ctrl-c, which throws away
+	// the answers that were right along with the one that was not.
+	//
+	// Each step reports whether it actually asked anything. A step that decided
+	// without a question must be invisible to r — going back to it would land on a
+	// screen that is not there, return immediately, and move forward again, so the
+	// key would appear to do nothing.
+	steps := []func() (bool, error){
+		func() (bool, error) {
+			return askAccountStep(ctx, ask, catalog, layout, resolved, opts, afterAccount)
+		},
+		func() (bool, error) { return askEnvironmentStep(ctx, ask, catalog, layout, opts) },
+		func() (bool, error) { return askTargetStep(ctx, ask, catalog, layout, opts) },
+		func() (bool, error) { return askActionStep(ask, opts) },
+	}
+	asked := make([]bool, len(steps))
+
+	for at := 0; at < len(steps); {
+		answered, err := steps[at]()
+		asked[at] = answered
+		switch {
+		case errors.Is(err, errBack):
+			back := previousQuestion(asked, at)
+			if back < 0 {
+				// Nothing before the first question, so back out of the run — which is
+				// where the operator came from.
+				return infra.ErrAborted
+			}
+			at = back
+		case err != nil:
+			return err
+		default:
+			at++
+		}
+	}
+	return nil
+}
+
+// previousQuestion is the last step before at that put a question on screen, or
+// -1 when there is none.
+func previousQuestion(asked []bool, at int) int {
+	for back := at - 1; back >= 0; back-- {
+		if asked[back] {
+			return back
+		}
+	}
+	return -1
+}
+
+func askAccountStep(
+	ctx context.Context,
+	ask *prompter,
+	catalog infra.Catalog,
+	layout infra.Layout,
+	resolved []infra.ResolvedProfile,
+	opts *options,
+	afterAccount func(profile string, chosen bool) error,
+) (bool, error) {
+	choice, err := askForAccount(ctx, ask, ask.out, catalog, layout, resolved)
+	if err != nil {
+		return false, err
+	}
+	opts.environment = choice.environment
+	opts.profile = choice.profile
+	opts.account = choice.account
+	opts.profileChosen = choice.chosen
+
+	if afterAccount != nil {
+		return true, afterAccount(choice.profile, choice.chosen)
+	}
+	return true, nil
+}
+
+// askAboutBackend settles what the state backend is, by asking the account
+// rather than inferring it from a file that may simply never have been written
+// in this checkout.
+//
+// Called from inside the targets step rather than standing as a step of its own.
+// It needs the account, and it changes the list that follows — with a backend
+// adopted, every target becomes runnable instead of one. As a separate step it
+// would also swallow r whenever it had nothing to ask: a step that returns
+// without a question cannot tell "going back" from "done", so the cursor would
+// bounce off it and never reach the account question.
+// backendLister is the AWS CLI unless a caller supplied something else.
+func (o *options) backendLister() infra.BackendLister {
+	if o.backends != nil {
+		return o.backends
+	}
+	return infra.CLIBackends{}
+}
+
+func askAboutBackend(ctx context.Context, ask *prompter, layout infra.Layout, opts *options) error {
+	if backendExists(layout, opts.environment) {
+		return nil
+	}
+	// Nobody to answer means nothing to do with the answer. Adopting a backend is
+	// a decision, so without a terminal the scan would spend an AWS call to print
+	// something no one asked for — in CI, on every run.
+	if !ask.interactive {
+		return nil
+	}
+
+	// The account comes from environments.conf rather than from the credentials:
+	// it is the account this environment is ALLOWED to touch, and the bucket name
+	// is built from it. A mismatch between the two is a separate guard's job, and
+	// it runs before anything is applied.
+	config, err := infra.LoadEnvConfig(layout, opts.environment)
+	//nolint:nilerr // There is no account to look a bucket up for, so the question
+	// has no subject and is skipped. The error is not swallowed: every path that
+	// needs this config loads it again and reports it properly. Returning it here
+	// would turn a missing environments.conf into a failure at the one question
+	// that exists only to offer a shortcut.
+	if err != nil {
+		return nil
+	}
+
+	return resolveBackend(ctx, ask, ask.out, opts.backendLister(), layout,
+		opts.environment, opts.profile, config.Region, config.AccountID)
+}
+
+// askEnvironmentStep asks which environment the chosen account is deployed as,
+// and sets it up when that is the first time.
+//
+// A step of its own because an account is not an environment. Deriving one from
+// the other meant an account could only ever be one: a sandbox configured as dev
+// could never also be stg in the same checkout, because the lookup found dev and
+// stopped. It is also where the sizing is decided, and that is not a thing to
+// inherit from whichever section happened to name this account first.
+func askEnvironmentStep(
+	ctx context.Context,
+	ask *prompter,
+	catalog infra.Catalog,
+	layout infra.Layout,
+	opts *options,
+) (bool, error) {
+	// The dry-run path already asked, from the file, because that is all it can
+	// read. Nothing to do here.
+	if opts.environment != "" {
+		return false, nil
+	}
+
+	choices := environmentChoices(layout, opts.account)
+	if firstEnabled(choices) < 0 || !choices[firstEnabled(choices)].selectable() {
+		return false, errCheckoutFull(layout, opts.account)
+	}
+
+	chosen, err := ask.pick(
+		"Which environment is this account?",
+		"It picks the sizing the templates ship, and the state backend to use.",
+		"--env", choices, "")
+	if err != nil {
+		return false, err
+	}
+	opts.environment = chosen
+
+	// Already configured for this account: the files are there and the run can go
+	// straight on to what to operate on.
+	if config, loadErr := infra.LoadEnvConfig(layout, chosen); loadErr == nil && config.AccountID == opts.account {
+		return true, nil
+	}
+
+	if err := setUpEnvironment(ctx, ask.out, layout, opts); err != nil {
+		return true, err
+	}
+	// What init just wrote variables for is the answer to the targets question, so
+	// that question does not get asked.
+	if configured := configuredTargets(catalog, layout, chosen); len(configured) > 0 {
+		opts.target = strings.Join(configured, ",")
+		opts.targetsFromSetup = true
+	}
+	return true, nil
+}
+
+func askTargetStep(
+	ctx context.Context,
+	ask *prompter,
+	catalog infra.Catalog,
+	layout infra.Layout,
+	opts *options,
+) (bool, error) {
+	if err := askAboutBackend(ctx, ask, layout, opts); err != nil {
+		return false, err
+	}
+
+	// Already decided by the setup that just ran. Said rather than asked, because
+	// the answer is on screen two questions up and asking for it again is the
+	// duplicate this removes.
+	if opts.targetsFromSetup {
+		fmt.Fprintf(ask.out, "\n%s\n  %s\n\n", newStyle(ask.out).bold("==> Target"),
+			opts.target+"  "+newStyle(ask.out).dim("— what you just configured"))
+		return false, nil
+	}
+	// Preselected from the disk rather than from memory: whatever this environment
+	// has tfvars for is what somebody just configured, and it stays true on the
+	// runs after this one too.
+	preset := splitList(opts.target)
+	if len(preset) == 0 {
+		preset = configuredTargets(catalog, layout, opts.environment)
+	}
+
+	targets, err := ask.pickMany(
+		"What do you want to operate on?",
+		"Written already — this is what to run now. Several can be combined.",
+		"--target", runTargetOptions(catalog, layout, opts.environment), preset)
+	if err != nil {
+		return false, err
+	}
+	if len(targets) > 0 {
+		opts.target = strings.Join(targets, ",")
+	}
+	return true, nil
+}
+
+func askActionStep(ask *prompter, opts *options) (bool, error) {
+	action, err := ask.pick(
+		"What should it do?",
+		"plan changes nothing. apply and destroy ask for a confirmation before writing.",
+		"--action", actionOptions(), opts.action)
+	if err != nil {
+		return false, err
+	}
+	opts.action = action
+	return true, nil
+}
+
+// askForAccount asks which account to deploy into and returns the environment it
+// maps to.
+//
+// The environment is derived rather than asked for: it names the state backend
+// and the variables file, so the run needs it, but it is our vocabulary and not
+// the operator's. What they are deciding is the account.
+// accountChoice is what the account question produced.
+//
+// chosen is not "profile is non-empty": an empty profile is an answer when the
+// ambient-credentials row was picked, and it is the absence of one when the dry-run
+// path asked from the file instead. Only the code that asked can tell those apart,
+// so it says which.
+type accountChoice struct {
+	// environment is set only on the dry-run path, where the file is the only
+	// thing that can be read and the question is which section to use. Every other
+	// path leaves it empty: which environment an account is deployed as is a
+	// question of its own, asked after this one.
+	environment string
+	profile     string
+	// account is who the chosen profile resolves to. It is what decides which
+	// environments are available, since a checkout holds one account per
+	// environment.
+	account string
+	chosen  bool
+}
+
+func askForAccount(
+	ctx context.Context,
+	ask *prompter,
+	out io.Writer,
+	catalog infra.Catalog,
+	layout infra.Layout,
+	resolved []infra.ResolvedProfile,
+) (accountChoice, error) {
+	// No resolved profiles means nobody asked AWS who anybody is — a dry run, which
+	// makes no AWS call by definition. What it can still know is what the file says,
+	// so the question is built from the sections instead of from identities.
+	if len(resolved) == 0 {
+		// Nothing was resolved, so no profile was chosen either: the file decides.
+		environment, err := askFromConfig(ask, layout)
+		return accountChoice{environment: environment}, err
+	}
+
+	choices := accountOptions(layout, resolved)
+
+	profile, err := ask.pick(
+		"Which AWS account?",
+		"Everything is created there. The state backend and the sizing follow from it.",
+		"", choices, "")
+	if err != nil {
+		return accountChoice{}, err
+	}
+
+	if profile == signOutChoice {
+		return signOutAndBackIn(ctx, ask, out, catalog, layout, resolved)
+	}
+
+	picked := findProfile(resolved, profile)
+	if picked == nil {
+		return accountChoice{}, fmt.Errorf("profile %q is not one of the profiles offered", profile)
+	}
+
+	// A profile with no session yet is chosen precisely to log into it. The login
+	// is for that profile's session, not for whichever one came first in the list.
+	if !picked.Usable() {
+		// Unless there is no session to revive. A profile that lives only in
+		// ~/.aws/credentials is an access key, and `aws sso login --profile x` is a
+		// command that cannot work for it — what it needs is the key replaced, and
+		// what is useful is whatever AWS just said about it.
+		if picked.Profile.SSOSession == "" && picked.Profile.Source == "credentials" {
+			return accountChoice{}, fmt.Errorf("profile %q does not work: %w\n"+
+				"It is an access key in ~/.aws/credentials, with no SSO session to renew.\n"+
+				"Replace it:\n\n  aws configure --profile %s",
+				picked.Profile.Name, picked.Err, picked.Profile.Name)
+		}
+
+		target := infra.SSOTarget{Session: picked.Profile.SSOSession, Profile: picked.Profile.Name}
+		if _, loginErr := offerLogin(ctx, ask, out, []infra.SSOTarget{target}); loginErr != nil {
+			return accountChoice{}, loginErr
+		}
+
+		// Ask again who it is now. The account is what maps to an environment, and
+		// before the login there was none to read.
+		refreshed, identityErr := checkIdentity.CallerIdentity(ctx, picked.Profile.Name, picked.Profile.Region)
+		if identityErr != nil {
+			return accountChoice{}, fmt.Errorf("profile %q still does not resolve: %w\n  aws sso login --profile %s",
+				profile, identityErr, profile)
+		}
+		picked.Caller = refreshed
+	}
+
+	// Which environment this account is deployed as is the next question, not this
+	// one's to answer. Deriving it from the account meant an account could only
+	// ever be one environment: a sandbox configured as dev could never be set up
+	// as stg in the same checkout, because the lookup found dev and stopped.
+	return accountChoice{profile: picked.Profile.Name, account: picked.Caller.Account, chosen: true}, nil
+}
+
+// runInitCommand is a variable so the chaining can be exercised without writing
+// into a checkout.
+var runInitCommand = runInit
+
+// configureAccount sets up the chosen account and returns the slot it went into.
+//
+// The environment name is bookkeeping, not a decision: backend/<env>.hcl and
+// envs/<env>.tfvars are files in the templates repo, one set per name, so an
+// account has to occupy one of them. Which one does not matter to whoever is
+// deploying, so it is not asked — the first free slot is used.
+//
+// There are three names, and that is a real ceiling: a checkout already holding
+// three accounts cannot take a fourth. Better said here than discovered later as
+// a missing file.
+// setUpEnvironment runs init for an account that has no section for this
+// environment yet.
+//
+// Telling somebody to leave and run a second command — and to know which of
+// three names to give it — is asking them to do the part this already knows how
+// to do.
+func setUpEnvironment(
+	ctx context.Context,
+	out io.Writer,
+	layout infra.Layout,
+	opts *options,
+) error {
+	theme := newStyle(out)
+	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Setting up "+opts.environment+" in account "+opts.account))
+	fmt.Fprintf(out, "  %s\n", theme.dim("first time for this pair in this checkout"))
+
+	// No --region. init asks for it, always, and the profile's own region is the
+	// suggestion it offers — passing it here would answer the question on somebody's
+	// behalf, and where every resource is created is not a thing to inherit from a
+	// profile they may have configured for something else.
+	args := []string{
+		"--env", opts.environment,
+		"--profile", opts.profile,
+		"--account", opts.account,
+	}
+	if err := runInitCommand(ctx, args, out, out); err != nil {
+		return err
+	}
+
+	// Read back rather than assumed: init is what decides what was written, and a
+	// run against a section that is not there fails later with a missing file.
+	if _, err := infra.LoadEnvConfig(layout, opts.environment); err != nil {
+		return fmt.Errorf("account %s was not set up as %s: %w", opts.account, opts.environment, err)
+	}
+	return nil
+}
+
+// applyChosenProfile puts the interactively chosen profile into the configuration
+// the run uses.
+//
+// The environment is found by account, and a section may name a different profile
+// reaching the same one — so without this, choosing the profile that works could
+// still run as the profile the file names, which may be the expired one. The
+// account is untouched: it is what the guard checks, and it is why the two
+// profiles were interchangeable in the first place.
+//
+// chosen false means nothing was picked — a scripted run — and the file stands.
+// An empty profile with chosen true is an answer in its own right: the credentials
+// already in this environment, which is what CI has and what somebody with an
+// exported key has, and neither of them has a profile name.
+func applyChosenProfile(config infra.EnvConfig, profile string, chosen bool) infra.EnvConfig {
+	if !chosen {
+		return config
+	}
+	config.Profile = profile
+	return config
+}
+
+// destinationLine is where a write is about to land, for the line read last
+// before typing yes.
+//
+// The region is there because an apply into the right account and the wrong
+// region does not fail — it creates a second copy of everything, somewhere nobody
+// is looking.
+func destinationLine(config infra.EnvConfig) string {
+	line := config.Environment + " · account " + config.AccountID
+	if config.Region != "" {
+		line += " · " + config.Region
+	}
+	return line
+}
+
+// destinationRegion is the region half of where a row lands, ready to append.
+func destinationRegion(layout infra.Layout, environment string) string {
+	config, err := infra.LoadEnvConfig(layout, environment)
+	if err != nil || config.Region == "" {
+		return ""
+	}
+	return "  ·  " + config.Region
+}
+
+// nameTheAmbiguous adds the environment to rows that would otherwise read the
+// same.
+//
+// Two environments in one account and one region is a real configuration — a dev
+// and a staging sharing a sandbox — and there the name is the only thing telling
+// the rows apart, so it earns its place. Everywhere else it is bookkeeping, and
+// bookkeeping in a menu is noise the reader has to learn to ignore.
+func nameTheAmbiguous(options []option) {
+	seen := map[string]int{}
+	for _, opt := range options {
+		if opt.environment != "" {
+			seen[opt.note]++
+		}
+	}
+	for index, opt := range options {
+		if opt.environment != "" && seen[opt.note] > 1 {
+			options[index].note = opt.note + "  ·  " + opt.environment
+		}
+	}
+}
+
+// environmentForProfile finds the environment whose section names this account,
+// preferring one that also names this profile.
+//
+// The account is what decides it, because the account is what the guard checks.
+// The profile breaks a tie: two environments in one account is a real
+// configuration — a dev and a staging sharing a sandbox — and then the profile is
+// what tells them apart.
+func environmentForProfile(layout infra.Layout, profile, account string) (string, bool) {
+	var byAccount string
+
+	for _, name := range infra.Environments {
+		config, err := infra.LoadEnvConfig(layout, name)
+		if err != nil || config.AccountID != account {
+			continue
+		}
+		if config.Profile == profile {
+			return name, true
+		}
+		if byAccount == "" {
+			byAccount = name
+		}
+	}
+	return byAccount, byAccount != ""
+}
+
+// askFromConfig asks which account using only what environments.conf declares.
+//
+// It is the dry-run path: no credentials were resolved, so no row can say whether
+// a profile still works — but the accounts are written down, and choosing between
+// them needs nothing from AWS.
+func askFromConfig(ask *prompter, layout infra.Layout) (string, error) {
+	choices := make([]option, 0, len(infra.Environments))
+	for _, name := range infra.Environments {
+		config, err := infra.LoadEnvConfig(layout, name)
+		if err != nil {
+			continue
+		}
+		// The section key is dev, stg or prd, and that is bookkeeping: the row reads
+		// as the destination it is. The value stays the environment, because that is
+		// what the rest of the run needs.
+		label := config.Profile
+		if label == "" {
+			label = "credentials in this environment"
+		}
+
+		note := "account " + config.AccountID
+		if config.Region != "" {
+			note += "  ·  " + config.Region
+		}
+		choices = append(choices, option{value: name, label: label, note: note, environment: name})
+	}
+	nameTheAmbiguous(choices)
+
+	if len(choices) == 0 {
+		return "", fmt.Errorf("no account is configured in this checkout\n" +
+			"examples/aws/environments.conf declares the account, profile and region to\n" +
+			"deploy into, and it has no section this tool can use.\n\n" +
+			"  lerian infra init")
+	}
+
+	return ask.pick(
+		"Which AWS account?",
+		"Read from environments.conf; a dry run makes no AWS call to check them.",
+		"--env", choices, "")
+}
+
+// signOutChoice is the row that ends the SSO session and starts a new one.
+const signOutChoice = "\x00sign-out"
+
+// ssoLogout is a variable for the same reason ssoLogin is: so the choice can be
+// exercised without ending anybody's real session.
+var ssoLogout = infra.SSOLogout
+
+// signOutAndBackIn ends the session, logs in again, and re-reads who the profiles
+// resolve as.
+//
+// This is the only way to arrive as a different identity: the profiles in ~/.aws
+// are fixed, and which accounts they reach is decided by whoever is signed in. It
+// is a row rather than something the command does on its own, because the token
+// it clears lives in ~/.aws/sso/cache and every AWS client on the machine reads
+// it — another terminal, Terraform, anything on the shared config.
+func signOutAndBackIn(
+	ctx context.Context,
+	ask *prompter,
+	out io.Writer,
+	catalog infra.Catalog,
+	layout infra.Layout,
+	resolved []infra.ResolvedProfile,
+) (accountChoice, error) {
+	if err := ssoLogout(ctx, os.Stdin, out, out); err != nil {
+		return accountChoice{}, err
+	}
+	fmt.Fprintf(out, "\n  %s\n", newStyle(out).dim("signed out"))
+
+	targets := sessionsOf(resolved)
+	if len(targets) == 0 {
+		return accountChoice{}, fmt.Errorf("no SSO session in ~/.aws to sign in to\n  aws configure sso")
+	}
+	if _, err := offerLogin(ctx, ask, out, targets); err != nil {
+		return accountChoice{}, err
+	}
+
+	// Who everything resolves as has just changed, so nothing read before this is
+	// still true.
+	refreshed := infra.ResolveProfiles(ctx, checkIdentity, profilesOf(resolved), "")
+	return askForAccount(ctx, ask, out, catalog, layout, refreshed)
+}
+
+// sessionsOf is every SSO session the known profiles sit behind, first seen
+// first.
+func sessionsOf(resolved []infra.ResolvedProfile) []infra.SSOTarget {
+	seen := map[string]bool{}
+	targets := make([]infra.SSOTarget, 0, len(resolved))
+
+	for _, entry := range resolved {
+		session := entry.Profile.SSOSession
+		if session == "" || seen[session] {
+			continue
+		}
+		seen[session] = true
+		targets = append(targets, infra.SSOTarget{Session: session})
+	}
+	return targets
+}
+
+func profilesOf(resolved []infra.ResolvedProfile) []infra.AWSProfile {
+	profiles := make([]infra.AWSProfile, 0, len(resolved))
+	for _, entry := range resolved {
+		profiles = append(profiles, entry.Profile)
+	}
+	return profiles
+}
+
+func findProfile(resolved []infra.ResolvedProfile, name string) *infra.ResolvedProfile {
+	for index := range resolved {
+		if resolved[index].Profile.Name == name {
+			return &resolved[index]
+		}
+	}
+	return nil
+}
+
+// accountOptions is the question a run actually asks: which AWS account.
+//
+// dev, stg and prd are names of files in the templates repo — backend/<env>.hcl
+// holds the state, envs/<env>.tfvars holds the sizing — so they cannot be removed
+// from the model. They can stop being the question. The account is what is being
+// decided, it is what the guard checks before anything runs, and it is the thing
+// that belongs to the operator rather than to us.
+//
+// Every profile in ~/.aws gets a row:
+//
+//   - one reaching a configured account is choosable, and the environment it maps
+//     to is shown as a consequence rather than asked for;
+//   - one reaching an account with no section cannot be deployed into — there is
+//     no state backend and no variables file for it — so the row says how to
+//     create one instead of offering a choice that fails two questions later;
+//   - one whose session has expired is choosable, because choosing it is how an
+//     operator says "log me into that one".
+func accountOptions(layout infra.Layout, resolved []infra.ResolvedProfile) []option {
+	// Ordered by what can be done with the row, because the cursor starts on the
+	// first one: a list that opens on something unusable makes the most likely
+	// keypress a mistake. Ready first, then the ones a login would revive, then the
+	// ones nothing can be done about from here.
+	const (
+		ready = iota
+		needsLogin
+		unconfigured
+	)
+
+	type row struct {
+		option option
+		rank   int
+	}
+
+	rows := make([]row, 0, len(resolved))
+	for _, entry := range resolved {
+		// Credentials in the environment have no profile name. A row labeled with
+		// an empty string is a row nobody can read, so they are named for what they
+		// are — and CI, or anyone who exported a key, has nothing else to be called.
+		label := entry.Profile.Name
+		if label == "" {
+			label = "credentials in this environment"
+		}
+
+		opt := option{value: entry.Profile.Name, label: label}
+		rank := ready
+
+		switch {
+		case !entry.Usable() && entry.Profile.CanSignIn:
+			rank = needsLogin
+			opt.note = "session expired — choose to log in"
+		case !entry.Usable() && entry.Profile.Source == "credentials":
+			// An access key that does not work. Choosing it reports what AWS said,
+			// which is more use than a login that cannot apply to it.
+			rank = needsLogin
+			opt.note = "the access key does not work — choose it to see why"
+		case !entry.Usable():
+			// Nothing to revive and nothing to fix: ~/.aws commonly holds a [default]
+			// with a region and nothing else. Calling that an expired session sends
+			// somebody to a login that fails with "Unable to locate credentials",
+			// which names neither the problem nor the fix.
+			rank = unconfigured
+			opt.disabled = true
+			opt.note = "no credentials configured — aws configure --profile " + entry.Profile.Name
+		default:
+			if environment, ok := environmentForProfile(layout, entry.Profile.Name, entry.Caller.Account); ok {
+				// The account and the region, which is the whole of what is being
+				// decided: an account is a place and so is a region, and naming one
+				// without the other describes half of where the resources land.
+				//
+				// Not the environment. dev, stg and prd pick backend/<env>.hcl and
+				// envs/<env>.tfvars, which matters to this tool and to nobody choosing
+				// where to deploy. It is added below, and only where two rows would
+				// otherwise read identically.
+				opt.note = "account " + entry.Caller.Account + destinationRegion(layout, environment)
+				opt.environment = environment
+			} else {
+				rank = unconfigured
+				opt.note = "account " + entry.Caller.Account + "  ·  not set up here yet — choosing it sets it up"
+			}
+		}
+		rows = append(rows, row{option: opt, rank: rank})
+	}
+
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].rank < rows[j].rank })
+
+	options := make([]option, 0, len(rows)+1)
+	for _, r := range rows {
+		options = append(options, r.option)
+	}
+	nameTheAmbiguous(options)
+
+	// Last, because it is the answer to a different question — not "which of these"
+	// but "none of these". Offered only where there is a session to end.
+	if len(sessionsOf(resolved)) > 0 {
+		options = append(options, option{
+			value: signOutChoice,
+			label: "sign in as someone else",
+			note:  "ends the session for every AWS tool on this machine, then logs in again",
+		})
+	}
+	return options
+}
+
+// runTargetOptions is the catalog --list prints, plus the two targets that are
+// not products: bootstrap, which creates the state backend, and all.
+func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment string) []option {
+	options := make([]option, 0, 3+len(catalog.Names))
+	options = append(options,
+		option{value: "bootstrap", label: "bootstrap", note: "state bucket and lock table"},
+		option{value: "infra-base", label: "infra-base", note: "the VPC then the cluster"},
+	)
+	for _, name := range catalog.Names {
+		options = append(options, option{
+			value: name,
+			label: name,
+			note:  strings.Join(catalog.Products[name], " "),
+		})
+	}
+	options = append(options, option{value: "all", label: "all", note: "everything, in dependency order"})
+
+	// A target whose tfvars were never written cannot run either, and that is a
+	// different gap with a different answer: init writes them, and it writes them
+	// for the targets it is given. The catalog lists every product; a checkout
+	// usually has variables for one or two.
+	//
+	// Said rather than disabled, because choosing it is how it gets configured —
+	// the same as an account that is not set up yet.
+	configured := map[string]bool{}
+	for index, opt := range options {
+		if opt.value == "bootstrap" || opt.value == "all" {
+			continue
+		}
+		if targetIsConfigured(layout, catalog, opt.value, environment) {
+			configured[opt.value] = true
+			continue
+		}
+		options[index].note = opt.note + "  ·  not configured here yet"
+	}
+
+	// The configured ones first. This question arrives right after `init` wrote
+	// the tfvars for one or two targets, and finding them on row 14 of 30 reads as
+	// the same list being asked again rather than as the short answer it is.
+	//
+	// Stable, so the catalog's order survives inside each group and the list does
+	// not reshuffle between runs.
+	sort.SliceStable(options, func(i, j int) bool {
+		return rankTarget(options[i], configured) < rankTarget(options[j], configured)
+	})
+
+	// Everything except bootstrap needs somewhere to keep its state, and bootstrap
+	// is what creates it — so on an account nobody has bootstrapped yet, it is the
+	// only thing that can run. Offering the rest lets somebody spend two answers on
+	// a stack that fails at terraform init, reporting a bucket that does not exist.
+	//
+	// And when the backend IS there, bootstrap is the one row with nothing to do.
+	// Leaving it selectable invites a run whose entire output is "no changes", and
+	// the question somebody actually has — is my state backend set up? — is
+	// answered by the row saying so.
+	if backendExists(layout, environment) {
+		for index, opt := range options {
+			if opt.value == "bootstrap" {
+				options[index].disabled = true
+				options[index].note = "already there — " + backendName(layout, environment)
+			}
+		}
+		return options
+	}
+	for index, opt := range options {
+		if opt.value == "bootstrap" {
+			// Selectable, not fixed: a fixed row is excluded from the answer, and
+			// with every other row disabled the answer would come back empty. The
+			// note carries what the state is instead.
+			options[index].note = "the state backend — the only thing that can run yet"
+			continue
+		}
+		options[index].disabled = true
+		options[index].note = "needs the state backend — run bootstrap first"
+	}
+	return options
+}
+
+// targetIsConfigured reports whether every root behind a target has its variables
+// for this environment.
+//
+// The same check the run makes before it starts — a missing envs/<env>.tfvars is
+// what "NOT READY" means — asked early enough to put on the row rather than three
+// answers later.
+func targetIsConfigured(layout infra.Layout, catalog infra.Catalog, target, environment string) bool {
+	stages, err := infra.Resolve(layout, catalog, target)
+	if err != nil {
+		// Not resolvable is a different problem, and the run reports it properly.
+		return true
+	}
+	for _, readiness := range infra.CheckReadiness(infra.Units(stages), environment) {
+		if !readiness.Ready() {
+			return false
+		}
+	}
+	return true
+}
+
+// configuredTargets is what this environment already has variables for, which is
+// the answer to "what do you want to operate on" on nearly every run: the targets
+// somebody configured are the targets they came here to deploy.
+func configuredTargets(catalog infra.Catalog, layout infra.Layout, environment string) []string {
+	var ready []string
+	for _, name := range append([]string{"infra-base"}, catalog.Names...) {
+		if targetIsConfigured(layout, catalog, name, environment) {
+			ready = append(ready, name)
+		}
+	}
+	return ready
+}
+
+// rankTarget groups the target list: the fixed rows keep their place, then
+// anything this environment has variables for, then the rest.
+func rankTarget(opt option, configured map[string]bool) int {
+	switch {
+	case opt.value == "bootstrap":
+		return 0
+	case opt.value == "infra-base":
+		return 1
+	case configured[opt.value]:
+		return 2
+	case opt.value == "all":
+		return 4
+	default:
+		return 3
+	}
+}
+
+// backendName is the bucket this environment keeps its state in, for a row that
+// has to say why there is nothing to create.
+func backendName(layout infra.Layout, environment string) string {
+	backend, err := infra.LoadBackend(layout, environment)
+	if err != nil || backend.Bucket == "" {
+		return "the state backend is configured"
+	}
+	return backend.Bucket
+}
+
+// backendExists reports whether this environment has a state backend to write to.
+//
+// The file is written by bootstrap, not by init: bootstrap creates the bucket and
+// the lock table and then records where they are. Its absence is what "nobody has
+// bootstrapped this account yet" looks like from here.
+func backendExists(layout infra.Layout, environment string) bool {
+	_, err := infra.LoadBackend(layout, environment)
+	return err == nil
+}
+
+// actionOptions spells out the consequence of each action, which is the part an
+// operator needs before choosing rather than after.
+func actionOptions() []option {
+	return []option{
+		{value: string(infra.ActionPlan), label: "plan", note: "changes nothing"},
+		{value: string(infra.ActionApply), label: "apply", note: "writes, after one confirmation"},
+		{value: string(infra.ActionDestroy), label: "destroy", note: "removes, after one confirmation"},
+		{value: string(infra.ActionOutput), label: "output", note: "reads terraform output"},
+	}
 }
 
 func printTargets(out io.Writer, layout infra.Layout, catalog infra.Catalog) {
@@ -1250,4 +2303,98 @@ func summarize(err error) string {
 		return line[:index]
 	}
 	return line
+}
+
+// prepareChoices asks for whatever the run needs and was not given, verifying
+// the tools first when it is going to ask.
+//
+// Everything the questions lead to ends in terraform and the AWS CLI, so asking
+// before checking spends three answers and then reports a missing tool where it
+// reads as a problem with the choices rather than with the machine.
+//
+// The check is skipped when there is nobody to ask. Without a terminal nothing
+// is collected, so there are no answers to protect, and the argument and
+// configuration errors that follow are both cheaper to produce and more specific
+// than "terraform is missing": a script with a bad --target should hear about
+// the target.
+//
+// The CLI it builds is returned rather than rebuilt later, because the probe
+// shells out to the terraform binary.
+func prepareChoices(
+	ctx context.Context,
+	ask *prompter,
+	catalog infra.Catalog,
+	opts *options,
+	layout infra.Layout,
+	source checkoutSource,
+	stderr io.Writer,
+) (*infra.CLI, error) {
+	if opts.environment != "" {
+		return nil, nil
+	}
+
+	var (
+		terraform *infra.CLI
+		profiles  []infra.ResolvedProfile
+	)
+	if ask.interactive {
+		var err error
+		terraform, profiles, err = preflight(ctx, newPrompter(stderr), stderr, layout, source, opts.dryRun)
+		if err != nil {
+			return nil, err
+		}
+	}
+	checkCredential := credentialCheck(ctx, layout, opts.dryRun)
+	if err := guidedRun(ctx, catalog, opts, ask, layout, profiles, checkCredential); err != nil {
+		return nil, err
+	}
+	return terraform, nil
+}
+
+// credentialCheck resolves the profile the chosen environment maps to and asks
+// whether it still answers. A nil result means there is nothing to check — a dry
+// run makes no AWS call by definition.
+func credentialCheck(
+	ctx context.Context,
+	layout infra.Layout,
+	dryRun bool,
+) func(profile string, chosen bool) error {
+	if dryRun {
+		return nil
+	}
+	return func(profile string, chosen bool) error {
+		resolve := credentialProfile(layout, "", profile, chosen)
+		if resolve == "" {
+			return nil
+		}
+		_, err := infra.ResolveCredentials(ctx, resolve)
+		return err
+	}
+}
+
+// credentialProfile is the profile the early check resolves: the one that was
+// chosen, or the section's own when nothing was.
+//
+// Split out because the decision is the part worth testing — resolving it runs
+// the AWS CLI.
+//
+// Empty means there is nothing for this check to resolve, which happens two ways
+// and neither is its failure to report: the configuration could not be read, and
+// that error has its own message further down written for the case where it is
+// the only problem; or the credentials are ambient, and whether they work is
+// answered by the account guard a moment later.
+func credentialProfile(layout infra.Layout, environment, profile string, chosen bool) string {
+	// A chosen profile is the one the run will use whatever any section says, and
+	// at the point this runs there may be no environment yet: which one an account
+	// is deployed as is a later question. Reading the config here would return
+	// nothing and skip the check entirely — the check whose whole purpose is to
+	// fail before three more questions are answered.
+	if chosen {
+		return profile
+	}
+	config, err := infra.LoadEnvConfig(layout, environment)
+	if err != nil {
+		return ""
+	}
+	return applyChosenProfile(config, profile, chosen).Profile
 }

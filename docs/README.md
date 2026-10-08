@@ -2,7 +2,7 @@
 
 Welcome to the Lerian CLI documentation! This directory contains comprehensive guides, references, and examples for using the Lerian command-line interface.
 
-Lerian CLI is a unified command-line tool for managing Lerian platform products. Currently supports **Midaz** (ledger system), with more products coming soon.
+Lerian CLI is the command-line tool for signing in to the Lerian platform and deploying AWS infrastructure from the Lerian Terraform templates.
 
 ## Documentation Structure
 
@@ -14,9 +14,6 @@ Lerian CLI is a unified command-line tool for managing Lerian platform products.
 
 ### Command Reference
 - [Authentication Commands](commands/auth.md) *(coming soon)*
-- [Midaz Commands](commands/midaz.md) *(coming soon)*
-  - [Ledger Management](commands/midaz/ledger.md) *(coming soon)*
-  - [Operations](commands/midaz/operations.md) *(coming soon)*
 - [Global Flags](commands/global-flags.md) *(coming soon)*
 
 ### User Guides
@@ -25,11 +22,6 @@ Lerian CLI is a unified command-line tool for managing Lerian platform products.
 - [Managing Profiles](guides/managing-profiles.md) *(coming soon)*
 - [Debugging and Troubleshooting](guides/debugging.md) *(coming soon)*
 - [CI/CD Integration](guides/cicd-integration.md) *(coming soon)*
-
-**Midaz-Specific:**
-- [Creating Midaz Ledgers](guides/midaz/creating-ledgers.md) *(coming soon)*
-- [Multi-Region Deployments](guides/midaz/multi-region.md) *(coming soon)*
-- [Private Deployments](guides/midaz/private-deployments.md) *(coming soon)*
 
 ### Architecture
 - [Overview](architecture/overview.md) *(coming soon)*
@@ -66,10 +58,9 @@ Lerian CLI is a unified command-line tool for managing Lerian platform products.
 
 ### External Resources
 - [Lerian Platform Documentation](https://docs.lerian.studio) *(coming soon)*
-- [Midaz Documentation](https://docs.midaz.io) *(coming soon)*
-- [GitHub Repository](https://github.com/lerian-studio/lerian-cli)
-- [Issue Tracker](https://github.com/lerian-studio/lerian-cli/issues)
-- [Discussions](https://github.com/lerian-studio/lerian-cli/discussions)
+- [GitHub Repository](https://github.com/LerianStudio/lerian-cli)
+- [Issue Tracker](https://github.com/LerianStudio/lerian-cli/issues)
+- [Discussions](https://github.com/LerianStudio/lerian-cli/discussions)
 
 ## Quick Start
 
@@ -77,7 +68,7 @@ For those who want to get started immediately:
 
 ```bash
 # Install
-go install github.com/lerian-studio/lerian-cli/cmd/lerian@latest
+go install github.com/LerianStudio/lerian-cli/cmd/lerian@latest
 
 # Authenticate
 lerian auth login \
@@ -85,14 +76,8 @@ lerian auth login \
   --api-key YOUR_API_KEY \
   --tenant-id YOUR_TENANT_ID
 
-# Create a ledger
-lerian midaz ledger create \
-  --name my-first-ledger \
-  --region us-east-1 \
-  --env dev
-
-# List ledgers
-lerian midaz ledger list
+# Check this machine
+lerian infra check
 ```
 
 See [Quick Start Guide](getting-started/quickstart.md) *(coming soon)* for detailed instructions.
@@ -106,78 +91,11 @@ See [Quick Start Guide](getting-started/quickstart.md) *(coming soon)* for detai
 | `lerian auth login` | Authenticate with API key and tenant ID |
 | `lerian auth logout` | Clear authentication credentials |
 
-### Midaz Product
+### Infrastructure
 
-All Midaz commands use the `lerian midaz` prefix.
-
-**Ledger Management:**
-
-| Command | Description |
-|---------|-------------|
-| `lerian midaz ledger create` | Create a new Midaz ledger deployment |
-| `lerian midaz ledger list` | List all Midaz ledgers |
-| `lerian midaz ledger describe <id>` | Get Midaz ledger details |
-| `lerian midaz ledger delete <id>` | Delete a Midaz ledger |
-| `lerian midaz ledger versions` | List available Midaz versions |
-
-**Ledger Operations:**
-
-| Command | Description |
-|---------|-------------|
-| `lerian midaz ledger logs <id>` | View Midaz ledger logs |
-| `lerian midaz ledger port-forward <id>` | Forward port to Midaz ledger |
-| `lerian midaz ledger exec <id> <sql>` | Execute SQL query on Midaz ledger |
-| `lerian midaz ledger backup <id>` | Create Midaz database backup |
-| `lerian midaz ledger events <id>` | View Kubernetes events for Midaz ledger |
-
-See [Command Reference](commands/) for complete documentation.
+See [`infra.md`](infra.md).
 
 ## Concepts
-
-### Midaz Product
-
-Midaz is a ledger system for managing assets, operations, and multi-tenancy environments. It's the first product supported by Lerian CLI.
-
-### Midaz Deployment Modes
-
-**SaaS Mode** (default)
-- Multi-tenant deployments on Lerian-managed infrastructure
-- Quick provisioning in available regions
-- Managed by Lerian team
-- Ideal for: Development, staging, small-scale production
-
-**Private Mode**
-- Single-tenant deployments on your infrastructure
-- Full control over resources and data location
-- Requires Lerian Agent installation
-- Ideal for: Enterprise, compliance-sensitive, large-scale production
-
-**Sandbox Mode**
-- Temporary ledgers for testing and evaluation
-- Auto-expires after 7 days
-- Limited to test size and dev environment
-- Ideal for: Trials, demos, quick experiments
-
-### Regions
-
-**SaaS Regions:**
-- `us-east-1` - US East (N. Virginia)
-- `us-west-2` - US West (Oregon)
-- `eu-west-1` - Europe (Ireland)
-- `ap-southeast-1` - Asia Pacific (Singapore)
-- `sa-east-1` - South America (São Paulo)
-
-**Private Regions:**
-- Custom regions connected via Lerian Agent
-- Use `private-*` prefix (e.g., `private-us-west-2`)
-
-### Midaz Ledger Sizes
-
-| Size | TPS | Resources | Use Case |
-|------|-----|-----------|----------|
-| `test` | 10 | Minimal | Development and testing |
-| `staging` | 100 | Medium | Pre-production environments |
-| `production` | 1000 | Full | Production workloads |
 
 ### Profiles
 
@@ -201,61 +119,18 @@ profiles:
 
 Use profiles with `--profile` flag:
 ```bash
-lerian --profile production ledger list
+lerian --profile production config
 ```
 
 ## Examples
 
-### Midaz Examples
-
-**Creating a Development Ledger:**
-
 ```bash
-lerian midaz ledger create \
-  --name dev-ledger \
-  --region us-east-1 \
-  --env dev \
-  --size test
-```
+# Sign in with a named profile
+lerian auth login --profile production --api-url https://api.lerian.studio --api-key $KEY --tenant-id $TENANT
 
-**Creating a Production Ledger with Multi-AZ:**
-
-```bash
-lerian midaz ledger create \
-  --name prod-ledger \
-  --region us-east-1 \
-  --env prod \
-  --size production \
-  --tps 5000 \
-  --multi-az
-```
-
-**Creating a Private Ledger:**
-
-```bash
-lerian midaz ledger create \
-  --name enterprise-ledger \
-  --mode private \
-  --region private-us-west-2 \
-  --env prod \
-  --size production \
-  --agent-id <agent-uuid>
-```
-
-**Viewing Logs in Real-Time:**
-
-```bash
-lerian midaz ledger logs <ledger-id> --follow --tail 100
-```
-
-**Port Forwarding for Development:**
-
-```bash
-# Forward local port 8080 to ledger port 8080
-lerian midaz ledger port-forward <ledger-id> 8080:8080
-
-# Access ledger locally
-curl http://localhost:8080/health
+# Verify the machine, then preview an environment without touching AWS
+lerian infra check
+lerian infra --env dev --target infra-base --dry-run
 ```
 
 See [User Guides](guides/) for more examples.
@@ -269,14 +144,12 @@ See [User Guides](guides/) for more examples.
 - Ensure API endpoint is correct
 - Check for expired credentials
 
-**Deployment Timeouts**
-- Check Control Plane status
-- Verify network connectivity
-- Review Kubernetes events: `lerian midaz ledger events <id>`
+**`lerian infra` fails before it starts**
+- Run `lerian infra check`: it reports every missing dependency in one pass and makes no AWS call
 
 **Command Not Found**
 - Ensure CLI is in PATH: `which lerian`
-- Reinstall: `go install github.com/lerian-studio/lerian-cli/cmd/lerian@latest`
+- Reinstall: `go install github.com/LerianStudio/lerian-cli/cmd/lerian@latest`
 
 See [Debugging Guide](guides/debugging.md) *(coming soon)* for detailed troubleshooting.
 
@@ -284,8 +157,8 @@ See [Debugging Guide](guides/debugging.md) *(coming soon)* for detailed troubles
 
 ### Getting Help
 
-- **Questions?** Open a [Discussion](https://github.com/lerian-studio/lerian-cli/discussions)
-- **Bug?** Open an [Issue](https://github.com/lerian-studio/lerian-cli/issues)
+- **Questions?** Open a [Discussion](https://github.com/LerianStudio/lerian-cli/discussions)
+- **Bug?** Open an [Issue](https://github.com/LerianStudio/lerian-cli/issues)
 - **Email:** support@lerian.studio
 - **Documentation:** https://docs.lerian.studio *(coming soon)*
 

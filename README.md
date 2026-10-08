@@ -1,83 +1,233 @@
-# Lerian CLI
+<table border="0" cellspacing="0" cellpadding="0">
+  <tr>
+    <td><img src="https://github.com/LerianStudio.png" width="72" alt="Lerian" /></td>
+    <td><h1>lerian-cli</h1></td>
+  </tr>
+</table>
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](https://go.dev/)
-[![GitHub Release](https://img.shields.io/badge/release-v1.0.0--beta-green.svg)](https://github.com/lerian-studio/lerian-cli/releases)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Cobra](https://img.shields.io/badge/CLI-Cobra-6558F5)](https://github.com/spf13/cobra)
+[![Terraform](https://img.shields.io/badge/Terraform-infra-844FBA?logo=terraform&logoColor=white)](https://www.terraform.io/)
+[![Status](https://img.shields.io/badge/status-beta-orange)](#)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](./LICENSE)
 
-Official command-line interface for the Lerian platform. Manage your infrastructure products and deployments.
+Official command-line interface for the Lerian platform. One binary, `lerian`, to sign in to the Lerian platform and to deploy AWS infrastructure from the Lerian Terraform templates, with an interactive session for people and plain flags for pipelines.
 
-## Supported Products
+> **Status: beta.** Releases are published from `develop` as `-beta` and from `release-candidate` as `-rc`. Command names and flags can still change. See [`CHANGELOG.md`](./CHANGELOG.md) for what moved.
 
-### Midaz (Available Now)
+## 🎯 Purpose
 
-Midaz is a ledger system for managing assets, operations, and multi-tenancy environments.
+Give every Lerian operator one tool for the repeatable parts of running the platform. It replaces the separate `lerian-infra` binary and the `deploy.sh` script behind it. It prompts when run in a terminal and never prompts in CI, so the same command works for a person and for a pipeline.
 
-**Features:**
-- **Ledger Management** - Create, list, describe, and delete ledger deployments
-- **Multi-Region Support** - Deploy to SaaS regions or private infrastructure
-- **Multiple Deployment Modes** - SaaS, private, and sandbox environments
-- **Operations Tools** - Logs, port-forwarding, SQL execution, backups, and events
-- **Kubernetes Integration** - Direct access to deployed resources
+## 🧩 What it does (today)
 
-### Infrastructure (Available Now)
+| Command group | What it does | Reference |
+|---|---|---|
+| `lerian` (no arguments) | Opens an interactive session: pick a command, run it, pick the next one | [`docs/interactive-session.md`](./docs/interactive-session.md) |
+| `lerian auth` | Signs in to the Lerian platform (not AWS) with a named profile | [Authentication](#authentication) |
+| `lerian infra` | Drives the Terraform roots of [lerian-terraform-foundation](https://github.com/LerianStudio/lerian-terraform-foundation) on AWS, from bootstrap to per-product services | [`docs/infra.md`](./docs/infra.md) |
+| `lerian config` | Shows or resets what the CLI remembers on this machine; points kubectl at a cluster, signs in to GitHub | [`docs/infra.md`](./docs/infra.md#what-the-cli-remembers-and-how-to-forget-it) |
+| `lerian config repo` | Copies what you configured into a repository of your own, with a Makefile and a README | [`docs/infra.md`](./docs/infra.md#taking-the-estate-with-you) |
+| `lerian version` | Prints build information | — |
 
-Drive the Terraform roots of
-[lerian-terraform-foundation](https://github.com/LerianStudio/lerian-terraform-foundation)
-on AWS, from bootstrap to the per-product services.
+Safety properties worth knowing before you run `infra`:
 
-**Features:**
-- **Environment Bootstrap** - State bucket and lock table, then the VPC and the EKS cluster
-- **Target Resolution** - Products and services discovered from the checkout; combine with commas
-- **Account Guard** - Three checks before anything runs, with no flag to bypass them
-- **Dry Run** - Resolve and print the whole execution plan without a single AWS call
-- **Helm Values** - Read `helm_values` back out of the applied state
+- **Account guard.** Three checks run before anything touches AWS, with no flag to bypass them.
+- **Dry run.** `--dry-run` resolves and prints the whole execution plan without a single AWS call.
+- **CI-safe.** Outside a terminal nothing is ever asked; a missing flag is named in the error.
+- **Yours to leave.** `lerian config repo` writes everything you configured into a repository of your own — a copy, not a link, that the CLI never comes back to.
 
-Ported from `lerian-infra-cli`, which this CLI replaces.
+## 👀 How it works
 
-### Future Products
+Output captured from a build of `develop`, trimmed and with paths shortened. Account ids and addresses are placeholders. The account picker is copied from [`docs/infra.md`](./docs/infra.md), not captured.
 
-- **Flowker** - Coming soon
-- **Reporter** - Coming soon
-- **Tracer** - Coming soon
-- **Fees** - Coming soon
+### The interactive session
 
-## Core Features
+`lerian` with nothing after it, in a terminal, opens a session: it offers the commands, runs the one you pick, and asks again when it is done. `q` closes it. Piped, redirected or in CI it prints its help instead, so scripts never wait on a prompt. More in [`docs/interactive-session.md`](./docs/interactive-session.md).
 
-- **Authentication** - Profile-based authentication with API key support
-- **Multiple Output Formats** - Table, JSON, and YAML output options
-- **Multi-Product Support** - Unified CLI for all Lerian products
+```
+  ██╗     ███████╗██████╗ ██╗ █████╗ ███╗   ██╗        ██████╗██╗     ██╗
+  ██║     ██╔════╝██╔══██╗██║██╔══██╗████╗  ██║       ██╔════╝██║     ██║
+  ██║     █████╗  ██████╔╝██║███████║██╔██╗ ██║ █████╗██║     ██║     ██║
+  ██║     ██╔══╝  ██╔══██╗██║██╔══██║██║╚██╗██║ ╚════╝██║     ██║     ██║
+  ███████╗███████╗██║  ██║██║██║  ██║██║ ╚████║       ╚██████╗███████╗██║
+  ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝        ╚═════╝╚══════╝╚═╝
 
-## Installation
+  ────────────────────────────────────────────────────  development build
 
-### Quick Install (Recommended)
+  What do you want to do?
+  ↑↓ move · enter choose · r back · q cancel
+  ❯ auth     Sign in to the Lerian platform (not AWS)
+    config   Show or reset what this tool remembers
+    infra    Deploy the AWS stacks of lerian-terraform-foundation
+    version  Print version information
+```
 
-The easiest way to install the Lerian CLI is using the install script:
+### Know where you stand
+
+`lerian config` reads files only and makes no AWS call, so it works offline. It groups what it finds by who owns it: this tool, the templates checkout, AWS, and the tools it shells out to.
+
+```
+$ lerian auth login --api-url https://api.lerian.studio --api-key $KEY --tenant-id $TENANT
+Successfully logged in to profile 'default'
+
+$ lerian config
+
+==> This tool
+  config     ~/.lerian/config.yaml
+  profile    default   (Lerian platform, not AWS)
+  logins     default
+
+==> Templates
+  checkout   none found — lerian infra init --clone
+
+==> AWS
+  config     ~/.aws/config
+  profiles   none — aws configure sso, or credentials in the environment
+  whether they work is an AWS call: lerian infra check makes it
+
+==> Tools
+  terraform  /usr/local/bin/terraform
+  aws        /usr/bin/aws
+  git        /usr/bin/git
+```
+
+### Check the machine first
+
+`lerian infra check` reports every missing dependency in one pass, without touching AWS, so it doubles as a CI gate.
+
+```
+$ lerian infra check --repo ~/lerian-terraform-foundation
+
+==> Environment check
+  ok       aws        /usr/bin/aws
+  ok       terraform  /usr/local/bin/terraform
+  ok       git        /usr/bin/git
+  ok       templates  ~/lerian-terraform-foundation @ untagged  (--repo)
+
+  4 checks, all ok. No AWS call was made.
+```
+
+### Configure an environment
+
+`lerian infra init` writes the files a fresh checkout needs. In a terminal it asks for what it cannot discover; in CI every answer is a flag. `--dry-run` shows what would be written and writes nothing.
+
+```
+$ lerian infra init --repo ~/lerian-terraform-foundation --env dev --profile '' --region us-east-2 --account 123456789012 \
+    --targets infra-base --api-cidr 203.0.113.7 --dry-run
+
+==> Configuration
+  environment dev
+  account     123456789012
+  profile     <ambient credentials>
+  region      us-east-2
+  api access  203.0.113.7/32
+  datastores  dedicated
+
+==> Files
+
+  FILE                                         ACTION   WHAT IT IS
+  examples/aws/environments.conf               created  which AWS account this environment may touch
+  examples/aws/infra-base/vpc/envs/dev.tfvars  created  foundation
+  examples/aws/infra-base/eks/envs/dev.tfvars  created  foundation
+  examples/aws/bootstrap/envs/dev.tfvars       created  state backend
+
+  dry run — nothing was written
+```
+
+### See the plan before anything runs
+
+`--dry-run` resolves the order, the state keys and the account, and makes no AWS call at all.
+
+```
+$ lerian infra --repo ~/lerian-terraform-foundation --env dev --target bootstrap,infra-base --dry-run
+
+==> Preflight
+  templates   ~/lerian-terraform-foundation @ untagged  (--repo)
+  environment dev
+  account     123456789012  (declared in examples/aws/environments.conf)
+  region      us-east-2
+  backend     MISSING — run --target bootstrap --action apply
+  target      bootstrap,infra-base
+  action      plan
+
+==> Execution plan (dry run — no AWS call was made)
+
+  stage 1: bootstrap
+      bootstrap                                    local state, workspace=dev
+
+  stage 2: infra-base/vpc
+      infra-base/vpc                               aws/infra-base/vpc/terraform.tfstate
+
+  stage 3: infra-base/eks
+      infra-base/eks                               aws/infra-base/eks/terraform.tfstate
+
+  ok  all 3 stack(s) ready
+```
+
+### Pick the account, every run
+
+Run `lerian infra` in a terminal without `--env` and it asks. The account is the question that matters, so the region is named beside it and the environment is not asked at all.
+
+```
+  Which AWS account?
+  Everything is created there. The state backend and the sizing follow from it.
+  ❯ lerian-sandbox           account 524121347244  ·  us-east-2
+    default                  session expired — choose to log in
+    other-profile            account 239025757440  ·  not set up here yet — choosing it sets it up
+    sign in as someone else  ends the session for every AWS tool on this machine
+```
+
+## 📁 Directory layout
+
+```
+.
+├── README.md                         # this file
+├── cmd/
+│   ├── lerian/                       # main entrypoint
+│   ├── auth/                         # lerian auth login / logout
+│   ├── infra/                        # lerian infra
+├── internal/
+│   ├── config/                       # ~/.lerian/config.yaml, profiles, reset
+│   ├── infra/                        # Terraform orchestration, account guard, tfvars
+│   ├── infracli/                     # terminal face of infra: wizard, prompts, check, init
+│   ├── output/                       # table / json / yaml printer
+│   └── version/                      # build identity
+├── docs/                             # command references, CI/CD, testing strategy
+├── scripts/install.sh                # release installer
+├── Makefile
+├── .goreleaser.yml / .releaserc.yml  # release pipeline
+└── .github/workflows/                # pr-validation, release, routine
+```
+
+## 🚀 Install
+
+The installer downloads the latest release through the GitHub CLI, so it needs [`gh`](https://cli.github.com/) installed and authenticated with access to this repository.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | sh
 ```
 
-**Prerequisites:** [GitHub CLI (gh)](https://cli.github.com/) installed and authenticated with access to the repository.
-
-#### Install Options
+Options:
 
 ```bash
-# Install latest version
-curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | sh
-
-# Install specific version
+# Specific version
 curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | sh -s -- --version v1.0.0
 
-# Custom install directory
-INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | sh
+# Custom install directory (default: ~/.local/bin)
+curl -fsSL https://raw.githubusercontent.com/LerianStudio/lerian-cli/main/scripts/install.sh | INSTALL_DIR=/usr/local/bin sh
 ```
 
-### Other Installation Methods
+Verify:
+
+```bash
+lerian version
+```
 
 <details>
-<summary><strong>Manual Download</strong></summary>
+<summary><strong>Other installation methods</strong></summary>
 
-Download the latest release for your platform from the [releases page](https://github.com/LerianStudio/lerian-cli/releases).
+**Manual download**
 
 ```bash
 # Example for Linux amd64
@@ -86,34 +236,7 @@ tar -xzf lerian_*_Linux_x86_64.tar.gz
 sudo mv lerian /usr/local/bin/
 ```
 
-</details>
-
-<details>
-<summary><strong>From Source</strong></summary>
-
-```bash
-git clone https://github.com/LerianStudio/lerian-cli.git
-cd lerian-cli
-make install
-```
-
-</details>
-
-<details>
-<summary><strong>Using Go Install</strong></summary>
-
-```bash
-go install github.com/LerianStudio/lerian-cli/cmd/lerian@latest
-```
-
-> Note: Requires Go 1.25+ and access to the private repository via GOPRIVATE.
-
-</details>
-
-<details>
-<summary><strong>Linux Packages (.deb/.rpm)</strong></summary>
-
-Download the appropriate package from the [releases page](https://github.com/LerianStudio/lerian-cli/releases):
+**Linux packages**
 
 ```bash
 # Debian/Ubuntu
@@ -125,28 +248,25 @@ gh release download --repo LerianStudio/lerian-cli --pattern "*.rpm"
 sudo rpm -i lerian_*.rpm
 ```
 
-</details>
-
-### Verify Installation
+**Go install** — requires Go 1.26+ and access to the private repository via `GOPRIVATE`.
 
 ```bash
-lerian --version
+go install github.com/LerianStudio/lerian-cli/cmd/lerian@latest
 ```
 
-### Shell Completions
+**From source** — see Development below.
 
-Enable auto-completion for your shell:
+</details>
+
+<details>
+<summary><strong>Shell completions</strong></summary>
 
 ```bash
 # Bash
 lerian completion bash > /etc/bash_completion.d/lerian
-# Or for current user only:
-lerian completion bash >> ~/.bashrc
 
 # Zsh
 lerian completion zsh > "${fpath[1]}/_lerian"
-# Or add to ~/.zshrc:
-echo 'source <(lerian completion zsh)' >> ~/.zshrc
 
 # Fish
 lerian completion fish > ~/.config/fish/completions/lerian.fish
@@ -155,539 +275,157 @@ lerian completion fish > ~/.config/fish/completions/lerian.fish
 lerian completion powershell > lerian.ps1
 ```
 
-## Quick Start
+</details>
 
-### First Steps
+## ▶️ Usage
 
-1. **Login to Lerian Platform**
-   ```bash
-   lerian auth login \
-     --api-url https://api.lerian.studio \
-     --api-key YOUR_API_KEY \
-     --tenant-id YOUR_TENANT_ID
-   ```
+### Global flags
 
-2. **Create Your First Midaz Ledger**
-   ```bash
-   lerian midaz ledger create \
-     --name my-first-ledger \
-     --region us-east-1 \
-     --env dev
-   ```
-
-3. **List Your Midaz Ledgers**
-   ```bash
-   lerian midaz ledger list
-   ```
-
-4. **Get Midaz Ledger Details**
-   ```bash
-   lerian midaz ledger describe <ledger-id>
-   ```
-
-## Usage
-
-### Global Flags
-
-- `--config` - Config file path (default: `$HOME/.lerian/config.yaml`)
-- `--profile, -p` - Profile to use (default: `default`)
-- `--output, -o` - Output format: `table`, `json`, `yaml` (default: `table`)
-- `--help, -h` - Show help for any command
-- `--version, -v` - Show version information
+- `--config` — config file path (default: `$HOME/.lerian/config.yaml`)
+- `--profile, -p` — Lerian platform profile to use (default: `default`). Not an AWS profile; `lerian infra` has its own.
+- `--output, -o` — output format: `table`, `json`, `yaml` (default: `table`)
+- `--help, -h` — help for any command
+- `--version, -v` — version information
 
 ### Authentication
 
 ```bash
-# Login to platform
 lerian auth login \
   --api-url https://api.lerian.studio \
-  --api-key your-api-key \
-  --tenant-id your-tenant-id
+  --api-key YOUR_API_KEY \
+  --tenant-id YOUR_TENANT_ID
 
-# Login with custom profile
-lerian auth login \
-  --profile production \
-  --api-url https://api.lerian.studio \
-  --api-key prod-key \
-  --tenant-id prod-tenant
+# Named profile
+lerian auth login --profile production --api-url ... --api-key ... --tenant-id ...
 
-# Logout from current profile
 lerian auth logout
 ```
 
-### Infrastructure Commands
-
-All infrastructure commands start with `lerian infra`. Unlike the rest of the CLI,
-this group takes flags rather than subcommands — it kept the command line of the
-`lerian-infra` binary it replaces, so anything written against that binary keeps
-working with `lerian infra` in front of it.
+### Infrastructure
 
 ```bash
-# Verify this machine: dependencies, checkout, and what it would use
+# Verify this machine: dependencies, checkout, what it would use (no AWS call)
 lerian infra check
 
 # Write the configuration a fresh checkout needs
 lerian infra init --env dev
 
-# List the discoverable targets (no AWS call, no configuration read)
-lerian infra --list
-
 # Resolve and print the execution plan, touching nothing
 lerian infra --env dev --target all --dry-run
 
 # Stand up an environment, in order
-lerian infra --env dev --target bootstrap        --action apply
-lerian infra --env dev --target infra-base       --action apply
-lerian infra --env dev --target shared-resources --action apply
+lerian infra --env dev --target bootstrap  --action apply
+lerian infra --env dev --target infra-base --action apply
 
-# Read the helm values of a product back out
-lerian infra --env dev --target midaz --action helm-values --format yaml
+# Copy what you configured into a repository of your own
+lerian config repo ~/infrastructure
 ```
 
-Run `lerian infra --help` for the full reference: every flag, the account guard,
-the ordering rules, and the environment variables it reads.
+Run with no `--env` in a terminal and it asks instead. `lerian infra --help` has every flag, the ordering rules and the environment variables it reads. Full walkthrough: [`docs/infra.md`](./docs/infra.md).
 
-### Midaz Product Commands
+### Configuration
 
-All Midaz commands start with `lerian midaz`.
-
-#### Ledger Management
-
-##### Create Ledger
-
-**SaaS Deployment (Default):**
-```bash
-lerian midaz ledger create \
-  --name my-ledger \
-  --region us-east-1 \
-  --env dev
-```
-
-**Private Deployment:**
-```bash
-lerian midaz ledger create \
-  --name prod-ledger \
-  --mode private \
-  --region private-us-west-2 \
-  --env prod \
-  --size production \
-  --agent-id <agent-uuid>
-```
-
-**Sandbox (7-day trial):**
-```bash
-lerian midaz ledger create \
-  --name trial-ledger \
-  --sandbox \
-  --region us-east-1
-```
-
-**Available Options:**
-- `--name` - Ledger name (required, 3-100 characters)
-- `--region` - Deployment region (required)
-- `--env` - Environment: `dev`, `staging`, `prod` (required unless `--sandbox`)
-- `--mode` - Deployment mode: `saas`, `private` (default: `saas`)
-- `--size` - Ledger size: `test`, `staging`, `production` (default: `test`)
-- `--tps` - Transactions per second (10-10000)
-- `--multi-az` - Enable multi-AZ deployment
-- `--sandbox` - Create sandbox ledger with auto-expiration
-- `--app-version` - Specific app version to deploy
-- `--chart-version` - Specific Helm chart version
-- `--agent-id` - Agent ID (required for private mode)
-
-##### List Ledgers
+Everything the CLI remembers lives in one file, `~/.lerian/config.yaml`: where the templates checkout is, and the profiles `lerian auth login` creates.
 
 ```bash
-# Table format (default)
-lerian midaz ledger list
-
-# JSON format
-lerian midaz ledger list -o json
-
-# YAML format
-lerian midaz ledger list -o yaml
-
-# Use specific profile
-lerian midaz ledger list --profile production
+lerian config          # what it has written down, and where
+lerian config reset    # forget it, as if the CLI had never run here
 ```
-
-##### Describe Ledger
-
-```bash
-lerian midaz ledger describe <ledger-id>
-```
-
-##### Delete Ledger
-
-```bash
-lerian midaz ledger delete <ledger-id>
-```
-
-#### Operations
-
-##### View Logs
-
-```bash
-# Show logs
-lerian midaz ledger logs <ledger-id>
-
-# Follow logs in real-time
-lerian midaz ledger logs <ledger-id> --follow
-
-# Show last 100 lines
-lerian midaz ledger logs <ledger-id> --tail 100
-```
-
-##### Port Forwarding
-
-```bash
-# Forward local port 8080 to ledger service port 8080
-lerian midaz ledger port-forward <ledger-id> 8080:8080
-```
-
-##### Execute SQL
-
-```bash
-# Run SQL query
-lerian midaz ledger exec <ledger-id> "SELECT COUNT(*) FROM accounts;"
-```
-
-##### Backup Database
-
-```bash
-# Create backup
-lerian midaz ledger backup <ledger-id> --output ./backup.sql
-```
-
-##### View Kubernetes Events
-
-```bash
-# View events for troubleshooting
-lerian midaz ledger events <ledger-id>
-```
-
-##### Check Available Versions
-
-```bash
-# List available app and chart versions
-lerian midaz ledger versions
-```
-
-## Configuration
-
-### Configuration File
-
-Configuration is stored at `~/.lerian/config.yaml`:
 
 ```yaml
 current-profile: default
 profiles:
   default:
     api-url: https://api.lerian.studio
-    api-key: your-api-key-here
+    api-key: ***
     tenant-id: your-tenant-uuid-here
   production:
     api-url: https://api.lerian.studio
-    api-key: prod-api-key
+    api-key: ***
     tenant-id: prod-tenant-uuid
 ```
 
-### Using Profiles
+`reset` removes that file and nothing else. `~/.aws` and the templates checkout are never touched unless you ask for the checkout to be deleted.
+
+### Environment variables
+
+- `LERIAN_TF_REPO` — path to the lerian-terraform-foundation checkout, for this shell.
+- `LERIAN_NO_BANNER=1` — turns the session banner off.
+- `NO_COLOR`, `TERM=dumb` — honored throughout; no color, no animation.
+
+## 🔧 Troubleshooting
+
+**Cannot connect to the Lerian API**
 
 ```bash
-# Use production profile
-lerian --profile production ledger list
-
-# Set profile during login
-lerian auth login --profile production --api-url ... --api-key ... --tenant-id ...
-```
-
-### Custom Config File
-
-```bash
-lerian --config /path/to/config.yaml ledger list
-```
-
-## Midaz Deployment Modes
-
-Midaz ledgers support three deployment modes:
-
-### SaaS Mode (Default)
-Multi-tenant deployment on Lerian-managed infrastructure.
-- Shared Kubernetes clusters
-- Multiple availability zones
-- Managed by Lerian team
-- Quick provisioning
-
-### Private Mode
-Single-tenant deployment on your own infrastructure.
-- Your Kubernetes cluster
-- Full control over resources
-- Data stays in your network
-- Requires Lerian Agent
-
-### Sandbox Mode
-Temporary ledger for testing and trials.
-- Auto-expires after 7 days
-- Limited to test size
-- Dev environment only
-- Quick setup for evaluation
-
-## Regions
-
-### SaaS Regions
-- `us-east-1` - US East (N. Virginia)
-- `us-west-2` - US West (Oregon)
-- `eu-west-1` - Europe (Ireland)
-- `ap-southeast-1` - Asia Pacific (Singapore)
-- `sa-east-1` - South America (São Paulo)
-
-### Private Regions
-- Use `private-*` prefix for agent-connected regions
-- View available private regions: `lerian agent list` (future)
-- Requires Lerian Agent deployment
-
-## Midaz Ledger Sizes
-
-| Size | TPS | Resources | Use Case |
-|------|-----|-----------|----------|
-| `test` | 10 | Minimal | Development and testing |
-| `staging` | 100 | Medium | Pre-production environments |
-| `production` | 1000 | Full | Production workloads |
-
-## Troubleshooting
-
-### Connection Issues
-
-**Problem:** Cannot connect to Control Plane API
-
-**Solution:**
-```bash
-# Verify API endpoint
 curl https://api.lerian.studio/health
-
-# Check configuration
-cat ~/.lerian/config.yaml
-
-# Re-authenticate
+lerian config                 # which profile and file are in use
 lerian auth login
 ```
 
-### Authentication Errors
+**401 Unauthorized** — the API key or tenant ID in the active profile is wrong. Run `lerian config` to see which profile is active, then `lerian auth login` again with the right values.
 
-**Problem:** API returns 401 Unauthorized
+**`lerian infra` fails before it starts** — run `lerian infra check`. It reports every missing dependency in one pass and makes no AWS call.
 
-**Solution:**
-```bash
-# Verify API key and tenant ID
-cat ~/.lerian/config.yaml
+## 🧪 Testing & operations
 
-# Login with correct credentials
-lerian auth login --api-url ... --api-key ... --tenant-id ...
-```
-
-### Deployment Timeout
-
-**Problem:** Ledger creation times out
-
-**Solution:**
-```bash
-# Check deployment status
-lerian midaz ledger describe <ledger-id>
-
-# View events for more details
-lerian midaz ledger events <ledger-id>
-```
-
-## Testing
-
-### Test Coverage
-
-Current test coverage: **~86%** (83.7% for config package, 90.9% for version package)
-
-Target coverage: **80%+** for all packages
-
-### Running Tests
+- [`docs/testing-strategy.md`](./docs/testing-strategy.md) — test approach and layout.
+- [`docs/ci-cd/README.md`](./docs/ci-cd/README.md) — the three workflows, the `tier-1` channel and the change gates.
 
 ```bash
-# Run all tests with coverage
-make test
-
-# Run unit tests only (fast)
-make test-unit
-
-# Run tests with coverage report
-make test-coverage
-
-# Run tests with race detector
-make test-race
-
-# Run tests in verbose mode
-make test-verbose
-
-# Run benchmarks
-make test-bench
+make test          # all tests with -race and coverage
+make test-unit     # fast tests only
+make test-race     # race detector
+make lint          # golangci-lint
 ```
 
-### Test Organization
+Pull requests to `develop`, `release-candidate` and `main` run PR validation (lint, tests, coverage gate, title scope check). Pushes to those branches cut the release.
 
-Tests follow Go best practices:
-- **Unit tests**: Fast, isolated tests for individual functions
-- **Table-driven tests**: Parameterized test cases for comprehensive coverage
-- **Integration tests**: Tests with real file I/O and system interactions
-- **Benchmark tests**: Performance testing
+## 🛠️ Development
 
-### Coverage by Package
-
-| Package | Coverage | Target | Status |
-|---------|----------|--------|--------|
-| `internal/version` | 90.9% | 90%+ | Complete |
-| `internal/config` | 83.7% | 80%+ | Complete |
-| `internal/output` | 0% | 80%+ | In Progress |
-| `internal/kubectl` | 0% | 70%+ | Planned |
-| `internal/client` | 0% | 70%+ | Planned |
-| `cmd/auth` | 0% | 60%+ | Planned |
-| `cmd/midaz/ledger` | 0% | 60%+ | Planned |
-
-### Test Examples
-
-**Unit Test Example** (`internal/config/config_test.go`):
-```go
-func TestLoad_ValidConfigFile(t *testing.T) {
-    // Setup: Create temporary config
-    tmpDir := t.TempDir()
-    configPath := filepath.Join(tmpDir, ".lerian", "config.yaml")
-
-    // Test: Load and verify
-    config, err := Load()
-
-    if err != nil {
-        t.Fatalf("Load() error = %v", err)
-    }
-}
-```
-
-**Table-Driven Test Example**:
-```go
-func TestGetProfile(t *testing.T) {
-    tests := []struct {
-        name        string
-        config      *Config
-        profileName string
-        wantErr     bool
-    }{
-        {"valid profile", validConfig, "test", false},
-        {"profile not found", emptyConfig, "missing", true},
-    }
-
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            profile, err := tt.config.GetProfile(tt.profileName)
-            // assertions...
-        })
-    }
-}
-```
-
-### Continuous Integration
-
-Tests run automatically on:
-- Pull requests to `develop`, `release-candidate`, and `main`
-- Push to `develop`, `release-candidate`, and `main`
-- Scheduled weekly security scans
-
-See `.github/workflows/` for CI/CD configuration.
-
-## Development
-
-### Prerequisites
-
-- Go 1.23 or higher
-- kubectl (for Kubernetes operations)
-- Make
-
-### Building from Source
+Requirements: Go 1.26+, Make.
 
 ```bash
-# Clone repository
-git clone https://github.com/lerian-studio/lerian-cli.git
+git clone https://github.com/LerianStudio/lerian-cli.git
 cd lerian-cli
-
-# Install dependencies
-make deps
-
-# Build binary
-make build
-
-# Run tests
+make build          # → build/bin/lerian
 make test
-
-# Install to $GOPATH/bin
-make install
 ```
 
-### Project Structure
+### Trying a change without touching the release
 
-```
-lerian-cli/
-├── cmd/
-│   ├── lerian/          # Main entry point
-│   ├── auth/            # Authentication commands
-│   └── midaz/           # Midaz commands
-│       └── ledger/      # Ledger management
-├── internal/
-│   ├── client/          # HTTP API client
-│   ├── config/          # Configuration management
-│   ├── kubectl/         # Kubernetes operations
-│   └── output/          # Output formatting
-├── docs/                # Documentation
-├── examples/            # Example files
-└── scripts/             # Build and automation scripts
+`make dev` builds the working tree as `lerian-dev`, next to the installed release instead of over it:
+
+```bash
+make dev
+
+lerian version        # whatever was installed from the releases page
+lerian-dev version    # whatever is checked out right now
+
+make dev-uninstall    # when you are done
 ```
 
-## Documentation
+Both live in `~/.local/bin`. The dev version string carries the branch and a `-dirty` suffix when the tree has uncommitted work. `make install` also exists, but it uses `go install` and creates a second binary called `lerian` in `$GOPATH/bin`; prefer `make dev`.
 
-- [Installation Guide](docs/getting-started/installation.md) *(coming soon)*
-- [Command Reference](docs/commands/) *(coming soon)*
-- [Architecture Overview](docs/architecture/overview.md) *(coming soon)*
-- [Contributing Guide](CONTRIBUTING.md)
-- [Security Policy](SECURITY.md)
+### Commits and pull requests
 
-## Contributing
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/), and the type decides the release version. PR titles are checked against an allowed scope list (`auth`, `cli`, `cmd`, `config`, `deps`, `docs`, `infra`, `output`, `tests`, and others in [`pr-validation.yml`](./.github/workflows/pr-validation.yml)). See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:
-- Code of conduct
-- Development setup
-- Coding standards
-- Pull request process
-- Commit conventions
+## 📚 References
 
-## Support
-
-- **Documentation:** https://docs.lerian.studio *(coming soon)*
-- **Issues:** [GitHub Issues](https://github.com/lerian-studio/lerian-cli/issues)
-- **Community:** https://community.lerian.studio *(coming soon)*
-- **Email:** support@lerian.studio
+- Command references: [`docs/infra.md`](./docs/infra.md), [`docs/interactive-session.md`](./docs/interactive-session.md)
+- CI/CD: [`docs/ci-cd/README.md`](./docs/ci-cd/README.md)
+- Terraform templates: [lerian-terraform-foundation](https://github.com/LerianStudio/lerian-terraform-foundation)
+- Release history: [`CHANGELOG.md`](./CHANGELOG.md)
+- Contributing: [`CONTRIBUTING.md`](./CONTRIBUTING.md) · Security: [`SECURITY.md`](./SECURITY.md) (security@lerian.studio) · [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)
+- Issues: [GitHub Issues](https://github.com/LerianStudio/lerian-cli/issues)
 
 ## License
 
-Copyright © 2025 Lerian Studio. All rights reserved.
-
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
-
-## Acknowledgments
-
-Built with:
-- [Cobra](https://github.com/spf13/cobra) - CLI framework
-- [YAML v3](https://github.com/go-yaml/yaml) - YAML support
-- [UUID](https://github.com/google/uuid) - UUID generation
-
-## Version History
-
-See [CHANGELOG.md](CHANGELOG.md) for release history and changes.
+Apache License 2.0 — Lerian Studio. See [LICENSE](./LICENSE).
 
 ---
 
-**Current Version:** v0.1.0
-
-For the latest updates and releases, visit the [releases page](https://github.com/lerian-studio/lerian-cli/releases).
+<div align="center">
+  <sub>Built and maintained by <a href="https://github.com/LerianStudio">Lerian Studio</a></sub>
+</div>

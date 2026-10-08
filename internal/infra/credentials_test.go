@@ -31,11 +31,15 @@ func TestRequireAWSCLIExplainsBothWaysToConfigureAProfile(t *testing.T) {
 	// SSO is common here and not universal. A profile holding an access key and
 	// secret is just as valid, and telling that operator to run `aws configure sso`
 	// points them at something that is not broken.
+	//
+	// It used to require "one per environment", which asserted that dev, stg and
+	// prd are separate AWS accounts. That is our arrangement, not a fact about
+	// whoever is reading the message — plenty of organizations run two, or one.
 	for _, want := range []string{
 		"aws configure sso",
 		"aws configure --profile",
 		"access key and secret",
-		"one per environment",
+		"one profile per AWS account",
 		"--profile '' with --account",
 	} {
 		if !strings.Contains(message, want) {
@@ -152,7 +156,7 @@ func TestResolveCredentialsIgnoresWhatIsOnStderr(t *testing.T) {
 		stderr:  `{"AccessKeyId":"AKIAFROMSTDERR"}`,
 	}))
 
-	credentials, err := ResolveCredentials(context.Background(), "lerian-dev")
+	credentials, err := ResolveCredentials(context.Background(), "acme-dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +179,7 @@ func TestResolveCredentialsReadsTheExpiration(t *testing.T) {
 			`"Expiration":"` + expires.Format(time.RFC3339) + `"}`,
 	}))
 
-	credentials, err := ResolveCredentials(context.Background(), "lerian-dev")
+	credentials, err := ResolveCredentials(context.Background(), "acme-dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +201,7 @@ func TestResolveCredentialsAcceptsASessionThatDoesNotExpire(t *testing.T) {
 	} {
 		t.Setenv("PATH", fakeAWSCLIWith(t, awsScript{version: "aws-cli/2.31.22", stdout: stdout}))
 
-		credentials, err := ResolveCredentials(context.Background(), "lerian-dev")
+		credentials, err := ResolveCredentials(context.Background(), "acme-dev")
 		if err != nil {
 			t.Fatalf("%s: %v", stdout, err)
 		}
@@ -217,7 +221,7 @@ func TestResolveCredentialsNeverPutsTheSecretInTheError(t *testing.T) {
 		exit:    255,
 	}))
 
-	_, err := ResolveCredentials(context.Background(), "lerian-dev")
+	_, err := ResolveCredentials(context.Background(), "acme-dev")
 	if err == nil {
 		t.Fatal("a non-zero exit is a failure even when something was printed")
 	}
@@ -231,5 +235,69 @@ func TestResolveCredentialsNeverPutsTheSecretInTheError(t *testing.T) {
 	// The stderr the AWS CLI wrote is what diagnoses it, so that has to be there.
 	if !strings.Contains(err.Error(), "SSO session has expired") {
 		t.Errorf("the error must carry what the AWS CLI said:\n%v", err)
+	}
+}
+
+// A link to the installation page is a page to read; the command for the machine
+// in front of somebody is a thing to run. The CLI does not install it — that
+// needs a package manager and usually a password — but it can say exactly what to
+// type.
+func TestTheMissingAWSCLIErrorNamesTheCommandForThisMachine(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	err := RequireAWSCLI(context.Background())
+	if err == nil {
+		t.Fatal("with an empty PATH the AWS CLI cannot be found")
+	}
+
+	message := err.Error()
+	switch runtime.GOOS {
+	case "darwin":
+		if !strings.Contains(message, "brew install awscli") {
+			t.Errorf("no command for macOS:\n%s", message)
+		}
+	case "linux":
+		if !strings.Contains(message, "awscli-exe-linux") {
+			t.Errorf("no command for Linux:\n%s", message)
+		}
+	}
+	// And the page stays, for the machine this does not have a line for.
+	if !strings.Contains(message, "docs.aws.amazon.com") {
+		t.Errorf("the documentation link is gone:\n%s", message)
+	}
+}
+
+// AWS publishes one archive per architecture and no generic one. A Graviton
+// instance, an ARM CI runner or an ARM workstation handed the x86_64 zip gets a
+// binary that cannot run, reported as "cannot execute binary file" — which reads
+// as a broken download rather than the wrong one.
+//
+// The mapping is tested rather than the command, so every architecture is
+// covered instead of only the one this test runs on.
+func TestTheLinuxInstallerMatchesTheArchitecture(t *testing.T) {
+	for goarch, want := range map[string]string{
+		"amd64": "x86_64",
+		"arm64": "aarch64",
+		// Neither published nor guessable: the caller falls back to the page.
+		"riscv64": "",
+		"386":     "",
+	} {
+		if got := linuxArchive(goarch); got != want {
+			t.Errorf("linuxArchive(%q) = %q, want %q", goarch, got, want)
+		}
+	}
+}
+
+// And the command built from it names that archive.
+func TestTheInstallCommandCarriesTheArchive(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skipf("installAWSCLI returns the %s command here", runtime.GOOS)
+	}
+	archive := linuxArchive(runtime.GOARCH)
+	if archive == "" {
+		return
+	}
+	if !strings.Contains(installAWSCLI(), "awscli-exe-linux-"+archive+".zip") {
+		t.Errorf("the %s installer is not offered:\n%s", archive, installAWSCLI())
 	}
 }

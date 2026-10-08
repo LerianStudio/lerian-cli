@@ -54,18 +54,15 @@ const (
 	ActionDestroy Action = "destroy"
 	// ActionOutput reads terraform output from every root.
 	ActionOutput Action = "output"
-	// ActionHelmValues merges the helm_values output of every root of a product into
-	// one document.
-	ActionHelmValues Action = "helm-values"
 )
 
 // ParseAction validates an operator-supplied action.
 func ParseAction(value string) (Action, error) {
 	switch Action(value) {
-	case ActionPlan, ActionApply, ActionDestroy, ActionOutput, ActionHelmValues:
+	case ActionPlan, ActionApply, ActionDestroy, ActionOutput:
 		return Action(value), nil
 	default:
-		return "", fmt.Errorf("infra: invalid action %q, want one of: plan, apply, destroy, output, helm-values", value)
+		return "", fmt.Errorf("infra: invalid action %q, want one of: plan, apply, destroy, output", value)
 	}
 }
 
