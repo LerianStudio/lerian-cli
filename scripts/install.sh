@@ -53,6 +53,7 @@ while [ $# -gt 0 ]; do
             echo ""
             echo "Environment variables:"
             echo "  INSTALL_DIR              Installation directory (default: ~/.local/bin)"
+            echo "  INCLUDE_PRERELEASE       Set to install the newest -beta instead of the newest release"
             exit 0
             ;;
         *)
@@ -93,9 +94,17 @@ check_gh() {
     fi
 }
 
-# Get latest version from GitHub releases (includes pre-releases)
+# Latest release. Pre-releases are excluded: `gh release list` returns whatever
+# was cut most recently, so a beta published after a release would be installed
+# by somebody who asked for nothing in particular. A beta is something to name
+# with --version, not something to land on by accident.
 get_latest_version() {
-    gh release list --repo "$REPO" --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || \
+    if [ -n "$INCLUDE_PRERELEASE" ]; then
+        gh release list --repo "$REPO" --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || \
+            error "Failed to get latest release. Make sure you have access to $REPO"
+        return
+    fi
+    gh release list --repo "$REPO" --exclude-pre-releases --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || \
         error "Failed to get latest release. Make sure you have access to $REPO"
 }
 
