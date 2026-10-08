@@ -338,7 +338,14 @@ func TestResolveLayoutFallsBackToTheManagedCheckout(t *testing.T) {
 	// `lerian config templates` this asserted about their configuration rather
 	// than about the fallback — passing or failing on a file the test never
 	// wrote.
-	t.Setenv("HOME", t.TempDir())
+	// Both, because os.UserHomeDir reads USERPROFILE on Windows and HOME
+	// everywhere else — and setting one of them isolates the test on one platform
+	// while leaving it reading the developer's own config on the other. Only one
+	// of the two does anything on any given run, so neither can be verified by a
+	// test that runs on one platform; they are set together for that reason.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	managed := checkoutTree(t)
 

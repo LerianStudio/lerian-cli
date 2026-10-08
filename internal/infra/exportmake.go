@@ -70,6 +70,12 @@ func writeMakeDiscovery(out *strings.Builder, plan ExportPlan) {
 	fmt.Fprintf(out, "# A root's state key is its path. KEY_PREFIX is what has to come off that\n")
 	fmt.Fprintf(out, "# path first — empty when the roots sit at the top level, as they normally do.\n")
 	fmt.Fprintf(out, "KEY_PREFIX := %s\n", prefix)
+	// Where the backend files landed. Normally the top level; when something sat
+	// outside the templates' directory and the prefix stayed, they are under it —
+	// and a hardcoded backend/ stops every non-bootstrap target with "no
+	// backend/dev.hcl".
+	fmt.Fprintf(out, "BACKEND_DIR := %s\n", filepath.ToSlash(filepath.Dir(
+		configPath(plan, filepath.Join("backend", "x.hcl")))))
 	fmt.Fprintf(out, "STATE_PREFIX := aws\n\n")
 
 	fmt.Fprintf(out, "# Short names: the last directory, which is what people say out loud. A name\n")
@@ -155,7 +161,11 @@ func writeMakeTargets(out *strings.Builder) {
 	// describes it as a broken root instead of as the parent of two working ones.
 	// `all` is spelled out rather than left as the "." the dir of a top-level
 	// root reduces to: `make plan . dev` is not something anybody would try.
-	fmt.Fprintf(out, "HOLDS = $(if $(filter all,$(ROOT)),$(ROOTS),$(filter $(ROOT)/%%,$(ROOTS)))\n")
+	// A directory that is itself a root — an envs/ of its own, with more roots
+	// under it — is a root, not a group: `make plan infra-base dev` has to mean
+	// the one it names. Only a directory that is not in ROOTS fans out.
+	fmt.Fprintf(out, "HOLDS = $(if $(filter all,$(ROOT)),$(ROOTS),"+
+		"$(if $(filter $(RESOLVED),$(ROOTS)),,$(filter $(ROOT)/%%,$(ROOTS))))\n")
 	fmt.Fprintf(out, "# Every directory holding roots, so `make roots` can name what the group\n")
 	fmt.Fprintf(out, "# form accepts. A root is not a group, even when it sits under one.\n")
 	fmt.Fprintf(out, "GROUPS := all $(sort $(filter-out . $(ROOTS),$(patsubst %%/,%%,$(dir $(ROOTS)))))\n\n")
@@ -199,9 +209,10 @@ func writeMakeTargets(out *strings.Builder) {
 	fmt.Fprintf(out, "\t\t{ $(TERRAFORM) -chdir=$(RESOLVED) workspace select $(ENV) 2>/dev/null || \\\n")
 	fmt.Fprintf(out, "\t\t  $(TERRAFORM) -chdir=$(RESOLVED) workspace new $(ENV) >/dev/null; }; \\\n")
 	fmt.Fprintf(out, "\telse \\\n")
-	fmt.Fprintf(out, "\t\ttest -f backend/$(ENV).hcl || { echo \"  no backend/$(ENV).hcl\"; exit 1; }; \\\n")
+	fmt.Fprintf(out, "\t\ttest -f $(BACKEND_DIR)/$(ENV).hcl || "+
+		"{ echo \"  no $(BACKEND_DIR)/$(ENV).hcl\"; exit 1; }; \\\n")
 	fmt.Fprintf(out, "\t\t$(TERRAFORM) -chdir=$(RESOLVED) init -input=false -reconfigure \\\n")
-	fmt.Fprintf(out, "\t\t\t-backend-config=$(CURDIR)/backend/$(ENV).hcl \\\n")
+	fmt.Fprintf(out, "\t\t\t-backend-config=$(CURDIR)/$(BACKEND_DIR)/$(ENV).hcl \\\n")
 	fmt.Fprintf(out, "\t\t\t-backend-config=\"key=$(KEY)\" >/dev/null; \\\n")
 	fmt.Fprintf(out, "\tfi\n\n")
 
@@ -230,7 +241,7 @@ func writeMakeTargets(out *strings.Builder) {
 
 		fmt.Fprintf(out, "group-%s:\n", verb)
 		if verb == "apply" || verb == "destroy" {
-			fmt.Fprintf(out, "\t@test -n \"$(CONFIRMED)\" || { \\\n")
+			fmt.Fprintf(out, "\t@test -n \"$(GROUP_CONFIRMED)\" || { \\\n")
 			fmt.Fprintf(out, "\t\tprintf '  %s these in %%s, in order:\\n' '$(ENV)'; \\\n", verb)
 			fmt.Fprintf(out, "\t\tfor root in %s; do echo \"    $$root\"; done; \\\n", order)
 			fmt.Fprintf(out, "\t\tprintf '  Type yes to continue: '; \\\n")
@@ -238,7 +249,7 @@ func writeMakeTargets(out *strings.Builder) {
 		}
 		fmt.Fprintf(out, "\t@for root in %s; do \\\n", order)
 		fmt.Fprintf(out, "\t\tprintf '\\n==> %%s\\n' \"$$root\"; \\\n")
-		fmt.Fprintf(out, "\t\t$(MAKE) --no-print-directory one-%s ROOT=$$root ENV=$(ENV) CONFIRMED=1 "+
+		fmt.Fprintf(out, "\t\t$(MAKE) --no-print-directory one-%s ROOT=$$root ENV=$(ENV) GROUP_CONFIRMED=1 "+
 			"|| exit 1; \\\n", verb)
 		fmt.Fprintf(out, "\tdone\n\n")
 	}
@@ -248,7 +259,11 @@ func writeMakeTargets(out *strings.Builder) {
 		if verb != "plan" {
 			// The same bar the CLI sets: these write, and a Makefile that applies
 			// on one word is a Makefile somebody applies to the wrong environment.
-			fmt.Fprintf(out, "\t@test -n \"$(CONFIRMED)\" || { \\\n")
+			// GROUP_CONFIRMED, not CONFIRMED: the group sets it when its own prompt
+			// has been answered, and it is a make variable rather than an
+			// environment one, so a CONFIRMED=1 left in somebody's shell cannot
+			// silence this.
+			fmt.Fprintf(out, "\t@test -n \"$(GROUP_CONFIRMED)\" || { \\\n")
 			fmt.Fprintf(out, "\t\tprintf '  %s %%s in %%s. Type yes to continue: ' '$(RESOLVED)' '$(ENV)'; \\\n", verb)
 			fmt.Fprintf(out, "\t\tread -r answer; [ \"$$answer\" = yes ] || { echo '  stopped.'; exit 1; }; }\n")
 		}
@@ -256,7 +271,12 @@ func writeMakeTargets(out *strings.Builder) {
 	}
 
 	fmt.Fprintf(out, "one-output: init\n\t$(TERRAFORM) -chdir=$(RESOLVED) output\n\n")
-	fmt.Fprintf(out, "one-test: require-root\n\t$(TERRAFORM) -chdir=$(RESOLVED) test\n\n")
+	// -backend=false: the tests run against what the configuration declares, not
+	// against the deployed state, and asking for the backend would make a test
+	// run need credentials it has no use for.
+	fmt.Fprintf(out, "one-test: require-root\n")
+	fmt.Fprintf(out, "\t@$(TERRAFORM) -chdir=$(RESOLVED) init -backend=false -input=false >/dev/null\n")
+	fmt.Fprintf(out, "\t$(TERRAFORM) -chdir=$(RESOLVED) test\n\n")
 
 	// Both halves run, and the exit status comes at the end. Stopping at the
 	// first meant a stray space in a .tfvars hid every validate behind it — and

@@ -788,3 +788,48 @@ func TestTheQuickStartChecksTheAccountFirst(t *testing.T) {
 		t.Errorf("it plans before checking which account it is in:\n%s", section)
 	}
 }
+
+// The backend path in the README is relative to the root it is printed under,
+// and the roots are not all at the same depth. A fixed "../../" is right for
+// infra-base/vpc and resolves to products/backend for products/midaz/postgres —
+// a directory that does not exist, so terraform init fails.
+func TestTheReadmeGetsBackToTheBackendFromEveryDepth(t *testing.T) {
+	plan := ExportPlan{Base: "examples/aws", Roots: []ExportedRoot{
+		{Path: "examples/aws/infra-base/vpc", StateKey: "aws/infra-base/vpc/terraform.tfstate"},
+		{Path: "examples/aws/products/midaz/postgres",
+			StateKey: "aws/products/midaz/postgres/terraform.tfstate"},
+	}}
+
+	readme := exportReadme("v1.11.0", plan)
+
+	for _, want := range []string{
+		"-backend-config=../../backend/dev.hcl",    // depth two
+		"-backend-config=../../../backend/dev.hcl", // depth three
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("the README never says %q:\n%s", want, readme)
+		}
+	}
+}
+
+// And when the templates' prefix was kept, the backend is under it — two levels
+// further from every root than the stripped layout.
+func TestTheReadmeGetsBackToTheBackendInTheKeptLayout(t *testing.T) {
+	plan := ExportPlan{
+		Roots: []ExportedRoot{
+			{Path: "examples/aws/infra-base/vpc", StateKey: "aws/infra-base/vpc/terraform.tfstate"},
+		},
+		Config: []string{"examples/aws/environments.conf", "examples/aws/backend/dev.hcl"},
+	}
+
+	readme := exportReadme("v1.11.0", plan)
+
+	if !strings.Contains(readme, "-backend-config=../../backend/dev.hcl") {
+		t.Errorf("the path from the root to the backend is wrong:\n%s", readme)
+	}
+	// The repository-relative path is what the troubleshooting command uses,
+	// because that one is run from the top.
+	if !strings.Contains(readme, "grep bucket examples/aws/backend/dev.hcl") {
+		t.Errorf("the troubleshooting command does not name the real path:\n%s", readme)
+	}
+}

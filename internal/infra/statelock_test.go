@@ -218,13 +218,16 @@ exit 0
 	if err != nil {
 		t.Fatalf("terraform was never run: %v", err)
 	}
+	// Named, never printed. A failure here would otherwise dump the whole
+	// environment terraform inherited — which on a CI runner holds every secret
+	// that job was given, and none of them are this test's to publish.
 	for _, want := range []string{
 		"AWS_ACCESS_KEY_ID=AKIAEXAMPLE",
 		"AWS_SECRET_ACCESS_KEY=secret",
 		"AWS_SESSION_TOKEN=token",
 	} {
 		if !strings.Contains(string(environment), want) {
-			t.Errorf("the unlock did not get %s:\n%s", want, environment)
+			t.Errorf("the unlock did not get %s", strings.SplitN(want, "=", 2)[0])
 		}
 	}
 }

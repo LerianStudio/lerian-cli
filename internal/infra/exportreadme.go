@@ -238,7 +238,7 @@ func writeReadmeByHand(readme *strings.Builder, plan ExportPlan) {
 			fmt.Fprintf(readme, "terraform workspace select dev || terraform workspace new dev\n")
 		} else {
 			fmt.Fprintf(readme, "terraform init -reconfigure \\\n")
-			fmt.Fprintf(readme, "  -backend-config=../../backend/dev.hcl \\\n")
+			fmt.Fprintf(readme, "  -backend-config=%s \\\n", backendFrom(plan, path, "dev.hcl"))
 			fmt.Fprintf(readme, "  -backend-config=\"key=%s\"\n", root.StateKey)
 		}
 		fmt.Fprintf(readme, "terraform plan -var-file=envs/dev.tfvars\n```\n\n")
@@ -273,6 +273,8 @@ func writeReadmeTroubleshooting(readme *strings.Builder, plan ExportPlan) {
 		"missing\". Either the environment really was torn down, or the plan is pointed "+
 		"somewhere it should not be — the wrong account, or a `key=` that does not match the "+
 		"one the state is stored at.\n\n")
+	// From the top of the repository, where somebody reading this is standing —
+	// not from inside a root, where the relative path would differ per root.
 	fmt.Fprintf(readme, "```bash\naws sts get-caller-identity\n"+
 		"aws s3 ls s3://$(grep bucket %s | cut -d'\"' -f2)/ --recursive\n```\n\n",
 		configPath(plan, filepath.Join("backend", "dev.hcl")))
@@ -361,4 +363,24 @@ func configPath(plan ExportPlan, name string) string {
 		return filepath.ToSlash(filepath.Join("examples", "aws", name))
 	}
 	return filepath.ToSlash(name)
+}
+
+// backendFrom is the path from one root back to a backend file.
+//
+// Not a fixed "../../": that is right for a root at depth two, such as
+// infra-base/vpc, and wrong for products/midaz/postgres, where it resolves to
+// products/backend — a directory that does not exist. It is wrong again by two
+// more levels when the templates' prefix was kept. The depth is known here, so
+// it is measured.
+func backendFrom(plan ExportPlan, rootPath, file string) string {
+	backend := configPath(plan, filepath.Join("backend", file))
+
+	relative, err := filepath.Rel(rootPath, backend)
+	if err != nil {
+		// Cannot happen for two paths this package built. Falling back to the
+		// repository-relative path is wrong from inside a root, and visibly so,
+		// which is better than a path that silently resolves somewhere else.
+		return backend
+	}
+	return filepath.ToSlash(relative)
 }

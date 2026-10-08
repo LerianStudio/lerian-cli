@@ -341,9 +341,12 @@ func TestAGroupRunsEveryRootUnderItInOrder(t *testing.T) {
 
 	ran := func(args ...string) []string {
 		t.Helper()
-		command := exec.Command("make", args...)
+		// On the command line, not in the environment: a make variable set there
+		// wins over anything the host exports, which is what keeps this test from
+		// depending on the shell it runs in — and from reaching a real terraform
+		// if somebody happens to have the same variable set.
+		command := exec.Command("make", append(args, "TERRAFORM="+stub, "GROUP_CONFIRMED=1")...)
 		command.Dir = dir
-		command.Env = append(os.Environ(), "TERRAFORM="+stub, "CONFIRMED=1")
 		output, err := command.CombinedOutput()
 		if err != nil {
 			t.Fatalf("make %v failed: %v\n%s", args, err, output)
@@ -413,7 +416,10 @@ func TestAGroupConfirmsOnceAndListsWhatItWouldDo(t *testing.T) {
 	}
 	dir := makefileTree(t)
 
-	command := exec.Command("make", "destroy", "infra-base", "dev")
+	// GROUP_CONFIRMED is cleared explicitly, so a value in the environment cannot
+	// turn this test — which answers "no" — into one that runs terraform destroy
+	// for real.
+	command := exec.Command("make", "destroy", "infra-base", "dev", "GROUP_CONFIRMED=", "TERRAFORM=false")
 	command.Dir = dir
 	command.Stdin = strings.NewReader("no\n")
 	output, err := command.CombinedOutput()
@@ -475,4 +481,84 @@ func dryRunReal(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("make %v failed: %v\n%s", args, err, output)
 	}
 	return string(output)
+}
+
+// When something sat outside the templates' directory the prefix stays, and
+// everything built on "the roots are at the top level" is wrong: the backend
+// files are under it too. Every non-bootstrap target stopped with "no
+// backend/dev.hcl", and no test saw it because they all used Base: "examples/aws".
+func TestTheKeptLayoutStillFindsItsBackend(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("no make here")
+	}
+
+	plan := ExportPlan{
+		Roots: []ExportedRoot{
+			{Path: "examples/aws/infra-base/vpc", StateKey: "aws/infra-base/vpc/terraform.tfstate"},
+		},
+		Config: []string{"examples/aws/environments.conf", "examples/aws/backend/dev.hcl"},
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte(WriteMakefile(plan)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	addRoot(t, dir, "examples/aws/infra-base/vpc")
+	if err := os.MkdirAll(filepath.Join(dir, "examples/aws/backend"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "examples/aws/backend/dev.hcl"),
+		[]byte("bucket = \"b\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := dryRun(t, dir, "plan", "vpc", "dev")
+
+	if !strings.Contains(out, "examples/aws/backend/dev.hcl") {
+		t.Errorf("it looks for the backend at the top level, where it is not:\n%s", out)
+	}
+	// And the state key still comes off the templates' prefix.
+	if !strings.Contains(out, "key=aws/infra-base/vpc/terraform.tfstate") {
+		t.Errorf("the state key is wrong for the kept layout:\n%s", out)
+	}
+}
+
+// A directory that is itself a root — an envs/ of its own, with more roots under
+// it — is a root, not a group. `make plan infra-base dev` has to mean the one it
+// names rather than being refused.
+func TestARootThatAlsoHoldsRootsIsStillARoot(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("no make here")
+	}
+	dir := makefileTree(t)
+	addRoot(t, dir, "infra-base") // now both infra-base and infra-base/vpc are roots
+
+	out := dryRun(t, dir, "plan", "infra-base", "dev")
+
+	if !strings.Contains(out, "-chdir=infra-base ") && !strings.Contains(out, "-chdir=infra-base\n") {
+		t.Errorf("it did not run the root it was given:\n%s", out)
+	}
+	if strings.Contains(out, "-chdir=infra-base/vpc") {
+		t.Errorf("it fanned out over a directory that is itself a root:\n%s", out)
+	}
+}
+
+// terraform test needs the providers and modules installed; on a fresh export
+// they are not. -backend=false because the tests run against the configuration,
+// not against the deployed state.
+func TestTestInitializesTheRootFirst(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("no make here")
+	}
+	dir := makefileTree(t)
+
+	out := dryRun(t, dir, "test", "eks")
+
+	init := strings.Index(out, "init -backend=false")
+	test := strings.Index(out, "-chdir=infra-base/eks test")
+	if init < 0 {
+		t.Errorf("it runs the tests without installing what they need:\n%s", out)
+	}
+	if test < 0 || init > test {
+		t.Errorf("the init does not come first:\n%s", out)
+	}
 }

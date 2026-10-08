@@ -183,8 +183,9 @@ with one commit.
 It is a copy, not a link. The templates are another repository on another
 release cycle; this one is yours to edit, and nothing reaches back.
 
-It stops before the remote: 'git remote add origin <url>' and 'git push' are
-yours, because where your infrastructure gets published is not this tool's
+Writing it is local. In a terminal it then offers to create the repository on
+GitHub and push, which is a separate answer; outside one it stops with the
+commands, because where your infrastructure gets published is not this tool's
 guess to make.`,
 	// Not ExactArgs(1): this is on the menu, where there is no command line to
 	// put a path on, and cobra's "accepts 1 arg(s), received 0" is an answer

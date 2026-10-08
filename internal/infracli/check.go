@@ -139,10 +139,11 @@ func checkGit() checkResult {
 // the row reports a checkout that is not the one about to be used.
 // checkGH reports the GitHub CLI, and whether it is logged in.
 //
-// Optional, and it has to stay that way. Nothing in a deploy touches GitHub —
-// this is reached only by somebody who asked for the exported repository to be
-// created for them — and a row that failed a run over a tool it never calls is
-// the same mistake as gating a run on git.
+// Optional, and it has to stay that way. Nothing in the deploy itself touches
+// GitHub: the one thing that does is the export, which is offered after a run
+// has finished and asks for gh at the moment it needs it. A row that failed a
+// run over a tool the run never calls is the same mistake as gating a run on
+// git.
 //
 // Logged in or not is part of the row rather than a second one. "installed" is
 // not the useful fact; "can create a repository right now" is, and those differ
@@ -548,12 +549,12 @@ func preflight(
 	// checkout never calls it — gating on it would demand a tool this command does
 	// not need. `lerian infra check` reports it, because that command answers the
 	// wider question of whether the machine can do everything.
-	// No gh either, for the same reason git is left out: a run never touches
-	// GitHub. It was reported here for a while on the theory that a row saying
-	// "absent" explains why the export's offer does not appear — but a preflight
-	// is the list of what this run needs, and padding it with tools it will not
-	// call is how the list stops being read. The export asks for gh at the moment
-	// it needs it, and says how to install it there.
+	// No gh either, for the same reason git is left out: deploying touches
+	// neither. The export offered after a run can use gh — that is the one path
+	// that reaches GitHub — and it asks for it there, where the answer is about
+	// something the operator just chose to do. A preflight is the list of what
+	// this run needs, and padding it with tools the run will not call is how the
+	// list stops being read.
 	results = append(results, templatesResult(ctx, layout, source))
 
 	// Only worth asking when there is an AWS CLI to ask with: without one the

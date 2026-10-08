@@ -48,7 +48,7 @@ func askWhereAndExport(ctx context.Context, ask *prompter, out io.Writer) error 
 
 	for {
 		where, err := ask.ask("Where should the repository go?",
-			"A directory that does not exist yet. Nothing is pushed; the remote stays yours.",
+			"A directory that does not exist yet. It is written here; publishing it is a later question.",
 			filepath.Join(home, "infrastructure"), "lerian config repo <path>")
 		if err != nil {
 			return err
