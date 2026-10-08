@@ -456,7 +456,7 @@ make test-race     # race detector
 make lint          # golangci-lint
 ```
 
-Pull requests to `develop` and `main` run PR validation (lint, tests, coverage gate, title scope check). Pushes to those branches cut the release.
+Pull requests to `develop` and `main` run PR validation (lint, tests, coverage gate, title scope check). Pushes to those branches cut the release. The release workflow also lists `release-candidate`, which is configured but does not exist yet.
 
 ## 🛠️ Development
 

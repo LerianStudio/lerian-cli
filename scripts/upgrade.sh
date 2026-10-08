@@ -88,22 +88,35 @@ check_gh() {
 # picks whichever comes first, which is rarely the new one.
 find_current() {
     CURRENT_PATH=$(command -v "$BINARY_NAME" 2>/dev/null || true)
-    if [ -n "$CURRENT_PATH" ]; then
-        # Resolve a symlink, so an upgrade through one replaces the real file
-        # rather than the link.
-        if [ -L "$CURRENT_PATH" ]; then
-            LINK_TARGET=$(readlink "$CURRENT_PATH")
-            case "$LINK_TARGET" in
-                /*) CURRENT_PATH="$LINK_TARGET" ;;
-                *)  CURRENT_PATH="$(dirname "$CURRENT_PATH")/$LINK_TARGET" ;;
-            esac
-        fi
-        CURRENT_DIR=$(dirname "$CURRENT_PATH")
-        CURRENT_VERSION=$("$CURRENT_PATH" version 2>/dev/null | head -1 | awk '{print $NF}' || echo "unknown")
-    else
+    if [ -z "$CURRENT_PATH" ]; then
         CURRENT_DIR=""
         CURRENT_VERSION=""
+        return
     fi
+
+    # Follow the whole chain, not one link: a package manager that puts a link
+    # in /usr/local/bin pointing at a link in /opt would otherwise have the
+    # middle one replaced and the real binary left alone. Bounded, because a
+    # loop of symlinks is a thing that exists.
+    hops=0
+    while [ -L "$CURRENT_PATH" ] && [ "$hops" -lt 20 ]; do
+        LINK_TARGET=$(readlink "$CURRENT_PATH")
+        case "$LINK_TARGET" in
+            /*) CURRENT_PATH="$LINK_TARGET" ;;
+            *)  CURRENT_PATH="$(dirname "$CURRENT_PATH")/$LINK_TARGET" ;;
+        esac
+        hops=$((hops + 1))
+    done
+    [ -L "$CURRENT_PATH" ] && error "Too many symlinks from $(command -v "$BINARY_NAME")"
+
+    CURRENT_DIR=$(dirname "$CURRENT_PATH")
+
+    # The line WITH the version on it, not the first line: `lerian version`
+    # prints a blank line before its table, so head -1 read an empty string —
+    # and awk succeeds on one, so the `|| echo unknown` fallback never fired and
+    # the version came out empty.
+    CURRENT_VERSION=$("$CURRENT_PATH" version 2>/dev/null | grep -i version | head -1 | awk '{print $NF}')
+    [ -n "$CURRENT_VERSION" ] || CURRENT_VERSION="unknown"
 }
 
 latest_version() {
@@ -133,6 +146,12 @@ upgrade() {
     if [ -z "$VERSION" ]; then
         VERSION=$(latest_version)
     fi
+    # gh prints "null" for an empty list, and an empty string when the query
+    # fails in a way that still exits zero. Either one would be compared against
+    # the installed version, found different, and reported as an upgrade.
+    if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+        error "No release found for $REPO.\n\nCheck your access: gh release list --repo $REPO"
+    fi
     info "Available: $VERSION"
 
     # Compared as written, not ordered: the tags carry pre-release suffixes and
@@ -153,7 +172,11 @@ upgrade() {
     # Writable before anything is downloaded: finding out afterwards means a
     # download thrown away and a confusing error at the last step.
     if [ ! -w "$INSTALL_DIR" ]; then
-        error "$INSTALL_DIR is not writable.\n\nRe-run with sudo, or choose another directory:\n  INSTALL_DIR=\$HOME/.local/bin sh -s -- upgrade"
+        # No alternate INSTALL_DIR here: writing the new binary somewhere else
+        # leaves the old one exactly where the shell will keep finding it, which
+        # is the failure this script exists to avoid. The answer is to be able to
+        # write where it already is.
+        error "$INSTALL_DIR is not writable.\n\nRe-run it under sudo — note that gh has to be authenticated for\nthe user running it, so \`sudo -E\` or a root gh login:\n\n  curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/upgrade.sh | sudo -E sh"
     fi
 
     VERSION_NO_V="${VERSION#v}"
@@ -191,17 +214,22 @@ upgrade() {
 
     tar -xzf "$ARCHIVE_NAME"
 
-    # Into place with mv, which is atomic within a filesystem: a half-written
-    # binary on PATH is worse than an upgrade that failed. The old one is kept
-    # until the new one is in, so a failure here leaves a working CLI.
-    BACKUP="$INSTALL_DIR/.$BINARY_NAME.previous"
-    cp "$INSTALL_DIR/$BINARY_NAME" "$BACKUP" 2>/dev/null || true
-    if ! mv "$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"; then
-        [ -f "$BACKUP" ] && mv "$BACKUP" "$INSTALL_DIR/$BINARY_NAME"
-        error "Could not write $INSTALL_DIR/$BINARY_NAME"
+    # Staged INSIDE the install directory first, then renamed over the target.
+    # mv from the temporary directory would be a copy whenever the two are on
+    # different filesystems — /tmp usually is — and a copy interrupted halfway
+    # leaves a truncated binary at the path the shell resolves. A rename within
+    # one filesystem cannot do that.
+    STAGED="$INSTALL_DIR/.$BINARY_NAME.new.$$"
+    if ! cp "$BINARY_NAME" "$STAGED"; then
+        rm -f "$STAGED"
+        error "Could not write to $INSTALL_DIR"
     fi
-    chmod +x "$INSTALL_DIR/$BINARY_NAME"
-    rm -f "$BACKUP"
+    chmod +x "$STAGED"
+
+    if ! mv "$STAGED" "$INSTALL_DIR/$BINARY_NAME"; then
+        rm -f "$STAGED"
+        error "Could not replace $INSTALL_DIR/$BINARY_NAME"
+    fi
 
     success "Upgraded $CURRENT_VERSION → $VERSION"
     echo ""
