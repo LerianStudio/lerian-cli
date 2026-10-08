@@ -167,7 +167,20 @@ upgrade() {
         exit 0
     fi
 
-    INSTALL_DIR="${INSTALL_DIR:-$CURRENT_DIR}"
+    # The file itself, name and all — not $INSTALL_DIR/lerian. A symlink can
+    # point at a binary with a different name (`lerian -> lerian-v1.2.1` is how
+    # some packagers keep versions side by side), and writing "lerian" beside it
+    # creates a second file the symlink does not use: the upgrade reports success
+    # and the old binary is still what runs.
+    #
+    # An INSTALL_DIR given explicitly still wins. That is somebody saying where
+    # to put it, which is a different request from "upgrade what I have".
+    if [ -n "$INSTALL_DIR" ]; then
+        TARGET="$INSTALL_DIR/$BINARY_NAME"
+    else
+        TARGET="$CURRENT_PATH"
+        INSTALL_DIR=$(dirname "$TARGET")
+    fi
 
     # Writable before anything is downloaded: finding out afterwards means a
     # download thrown away and a confusing error at the last step.
@@ -226,12 +239,12 @@ upgrade() {
     fi
     chmod +x "$STAGED"
 
-    if ! mv "$STAGED" "$INSTALL_DIR/$BINARY_NAME"; then
+    if ! mv "$STAGED" "$TARGET"; then
         rm -f "$STAGED"
-        error "Could not replace $INSTALL_DIR/$BINARY_NAME"
+        error "Could not replace $TARGET"
     fi
 
-    success "Upgraded $CURRENT_VERSION → $VERSION"
+    success "Upgraded $CURRENT_VERSION → $VERSION  ($TARGET)"
     echo ""
     info "Verify:"
     echo "  $BINARY_NAME version"
