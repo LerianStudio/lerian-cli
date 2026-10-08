@@ -1,5 +1,42 @@
 # Lerian-cli Changelog
 
+## [1.3.0](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.3.0)
+
+Features:
+- Developed a new feature branch and merged it into the main branch. (@bedatty)
+- Added a new destination after a run and introduced a second movement for the banner. (@bedatty)
+- Implemented a wizard beside the wordmark, providing a destination after a run. (@bedatty)
+- Introduced a session with a new interface. (@bedatty)
+- Offered commands when `lerian` is run without arguments. (@bedatty)
+- Named the binary in the wordmark, illuminated it, and shortened the menu. (@bedatty)
+- Allowed navigation with arrow keys where answers are predefined. (@bedatty)
+
+Fixes:
+- Bumped `golang.org/x/text` to address CVE-2026-56851. (@bedatty)
+- Resolved issues with AWS credentials file requirements. (@bedatty)
+- Fixed the menu to ensure reset is reachable and not the first option. (@bedatty)
+- Corrected alignment of `needsChild` with offered options. (@bedatty)
+- Removed a dead branch and aligned `needsChild` with available options. (@bedatty)
+- Required a screen for the menu, not just a keyboard. (@bedatty)
+- Ensured the menu is reachable from the menu and not the first item. (@bedatty)
+- Made reset accessible from the menu. (@bedatty)
+- Fixed three defects found during review, including a test issue. (@bedatty)
+- Required a screen for the editor, maintained it, and ensured correct completion. (@bedatty)
+- Corrected the application of a rule already stated in a marker comment. (@bedatty)
+
+Improvements:
+- Standardized the README on the `ungoliant-controller` structure and scoped it to `lerian-cli` with real usage previews. (@bedatty, @gandalf-at-lerian)
+- Enhanced the README to align with the `ungoliant-controller` structure. (@gandalf-at-lerian)
+- Improved the user interface by making the typed answer editable with Tab for path completion. (@bedatty)
+- Enhanced the interface to offer commands when `lerian` is run without arguments. (@bedatty)
+- Preallocated slices in loops for efficiency. (@bedatty)
+- Standardized spelling to align with linter preferences. (@bedatty)
+- Annotated the directory mode for reporting tools. (@bedatty)
+
+[Compare changes](https://github.com/LerianStudio/lerian-cli/compare/v1.2.1...v1.3.0)
+
+---
+
 ## [1.2.1](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.2.1)
 
 Fixes:
