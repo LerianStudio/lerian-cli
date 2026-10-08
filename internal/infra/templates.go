@@ -3,11 +3,10 @@ package infra
 // The managed templates checkout.
 //
 // The binary and the Terraform templates ship from ONE tag, and that is not an
-// administrative convenience: the chart mapping compiled into this binary
-// (chartmap.go) and the helm_values expressions in the HCL are two halves of one
-// contract, and the test that keeps them agreeing runs against a single tree.
-// Pairing a binary with templates from another commit is how the same product
-// comes out one shape in shared mode and another in dedicated.
+// administrative convenience: this binary knows the layout, the variable names
+// and the placeholder tokens the HCL uses, and a checkout from another commit
+// can have renamed any of them. The failures that produces are not obvious —
+// a variable the root does not declare, a token nothing fills in.
 //
 // So a checkout this tool creates is pinned to the tag matching the binary, and
 // never to a branch. An operator who wants a moving target points --repo at their
@@ -43,7 +42,7 @@ const defaultTemplatesRepoURL = "https://github.com/LerianStudio/lerian-terrafor
 // So the tag is the operator's: `init --clone` and `--sync` take it as
 // --templates-ref and there is no default. What stays here is the one thing the
 // operator cannot know — the oldest HCL the chart mapping compiled into this binary
-// (chartmap.go) was written against. CI proves it by cloning this tag and running
+// was written against. CI proves it by cloning this tag and running
 // the compatibility test against it. Below this the shapes genuinely differ and the
 // CLI says so; at or above it, the contract is forward-compatible by convention and
 // a break is a bug in whichever side broke it.

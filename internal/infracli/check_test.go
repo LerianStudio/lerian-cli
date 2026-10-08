@@ -905,3 +905,105 @@ func TestAnSSOProfileIsStillOfferedTheLogin(t *testing.T) {
 		t.Errorf("an expired SSO profile is not offered the login:\n%s", detail)
 	}
 }
+
+// An optional row reports and never gates. gh is the only one: nothing in a
+// deploy touches GitHub, and failing a run over a tool it never calls is the
+// mistake the ordering in this package exists to avoid — the same reason git is
+// left out of the preflight entirely.
+func TestAnOptionalCheckReportsWithoutFailingTheRun(t *testing.T) {
+	var out bytes.Buffer
+
+	err := reportChecks(&out, []checkResult{
+		{name: "terraform", summary: "/usr/local/bin/terraform", ok: true},
+		{name: "gh", summary: "not installed", ok: false, optional: true,
+			detail: "install it from https://cli.github.com"},
+	}, "")
+	if err != nil {
+		t.Fatalf("an absent optional tool failed the check: %v", err)
+	}
+
+	report := out.String()
+	if !strings.Contains(report, "gh") || !strings.Contains(report, "absent") {
+		t.Errorf("the row was not reported, or not as absent:\n%s", report)
+	}
+	if strings.Contains(report, "missing") {
+		t.Errorf("an optional tool was reported as missing:\n%s", report)
+	}
+	// No remediation block either. The summary says what it is for; a paragraph
+	// of install instructions under every machine without gh is how a clean
+	// report learns to look like a failing one.
+	if strings.Contains(report, "cli.github.com") {
+		t.Errorf("an optional row printed a remediation:\n%s", report)
+	}
+	if !strings.Contains(report, "all ok") {
+		t.Errorf("the verdict was not clean:\n%s", report)
+	}
+}
+
+// And a blocking row still blocks, with the optional one beside it.
+func TestABlockingCheckStillFailsBesideAnOptionalOne(t *testing.T) {
+	var out bytes.Buffer
+
+	err := reportChecks(&out, []checkResult{
+		{name: "terraform", summary: "not usable", ok: false, detail: "install terraform"},
+		{name: "gh", summary: "not installed", ok: false, optional: true},
+	}, "")
+	if err == nil {
+		t.Fatal("a missing terraform did not fail the check")
+	}
+	if strings.Contains(err.Error(), "gh") {
+		t.Errorf("the optional tool was named as a failure: %v", err)
+	}
+	if !strings.Contains(out.String(), "1 of 2 checks failed") {
+		t.Errorf("the optional row was counted:\n%s", out.String())
+	}
+}
+
+// The gh row exists to say whether a repository can be created from here, and a
+// logged-out gh cannot. It read "ok  (not logged in)", which is two statements
+// that contradict each other.
+func TestALoggedOutGHIsNotOK(t *testing.T) {
+	gh := fakeGHBinary(t, `echo "You are not logged into any GitHub hosts." >&2; exit 1`)
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result := checkGH(context.Background())
+
+	if result.ok {
+		t.Errorf("a logged-out gh reported ok: %+v", result)
+	}
+	// Still optional, so it reads "absent" and fails nothing.
+	if !result.optional {
+		t.Error("it would block a run over a tool no run calls")
+	}
+	if result.blocking() {
+		t.Error("it is counted as a failure")
+	}
+	if !strings.Contains(result.summary, "not logged in") {
+		t.Errorf("it does not say why: %q", result.summary)
+	}
+}
+
+// And a logged-in one is ok, with the account named.
+func TestALoggedInGHIsOK(t *testing.T) {
+	gh := fakeGHBinary(t, `echo "✓ Logged in to github.com account octocat (keyring)" >&2; exit 0`)
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result := checkGH(context.Background())
+
+	if !result.ok {
+		t.Errorf("a logged-in gh reported not ok: %+v", result)
+	}
+	if !strings.Contains(result.summary, "octocat") {
+		t.Errorf("it does not name the account: %q", result.summary)
+	}
+}
+
+// fakeGHBinary writes a gh on a PATH of its own.
+func fakeGHBinary(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "gh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}

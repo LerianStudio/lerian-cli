@@ -148,9 +148,107 @@ func clearTemplates(out io.Writer) error {
 	return nil
 }
 
+var configKubeconfigCmd = &cobra.Command{
+	Use:   "kubeconfig",
+	Short: "Point kubectl at a cluster that already exists",
+	Long: `Asks which account and which cluster, then runs aws eks update-kubeconfig.
+
+The post-run menu offers this after an apply, where the CLI knows the cluster
+because it just made it. This is for the rest of the time: a cluster somebody
+else created, or one from a run long finished, in an account this checkout may
+know nothing about.
+
+It asks before overwriting an entry that points somewhere else — usually the
+same cluster destroyed and recreated, which is the case worth fixing, but also
+possibly a different cluster of the same name in another account.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		err := infracli.PointKubectlAtACluster(cmd.Context(), cmd.OutOrStdout(), infra.CLIClusters{})
+		// Leaving is not a failure: the session redraws the menu that was left.
+		if errors.Is(err, infracli.ErrBack) || errors.Is(err, infra.ErrAborted) {
+			return nil
+		}
+		return err
+	},
+	SilenceUsage: true,
+}
+
+var configRepoCmd = &cobra.Command{
+	Use:   "repo <path>",
+	Short: "Copy what you configured into a repository of its own",
+	Long: `Writes the roots you configured, the modules they use and the configuration
+that makes them runnable into a new directory, and makes it a git repository
+with one commit.
+
+It is a copy, not a link. The templates are another repository on another
+release cycle; this one is yours to edit, and nothing reaches back.
+
+Writing it is local. In a terminal it then offers to create the repository on
+GitHub and push, which is a separate answer; outside one it stops with the
+commands, because where your infrastructure gets published is not this tool's
+guess to make.`,
+	// Not ExactArgs(1): this is on the menu, where there is no command line to
+	// put a path on, and cobra's "accepts 1 arg(s), received 0" is an answer
+	// about the arity of a command nobody typed.
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		err := runExportRepo(cmd, args)
+		// Leaving an occupied directory alone is a decision, not a failure. The
+		// path came in as an argument, so there is no second one to offer here —
+		// but a red line under "nothing was removed" would be alarming about a
+		// directory that is exactly as it was.
+		if errors.Is(err, infracli.ErrBack) || errors.Is(err, infra.ErrAborted) {
+			return nil
+		}
+		return err
+	},
+	SilenceUsage: true,
+}
+
+var configGitHubCmd = &cobra.Command{
+	Use:   "github",
+	Short: "Sign in to GitHub and set how repositories are created",
+	Long: `Who gh is signed in as on this machine, and how to change it.
+
+'lerian config repo' offers to create the exported repository on GitHub, and
+will sign you in on the way past. This is for the questions that come up
+afterwards: signed in as the wrong account, needing a second one for an
+organization, or taking the credential off a machine being handed on.
+
+It changes gh, not this tool. The credential lives in the system keyring and
+every gh on the machine reads it — signing out here signs out the one in your
+other terminal too.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		err := infracli.ConfigureGitHub(cmd.Context(), cmd.OutOrStdout())
+		// Leaving is not a failure: the session redraws the menu that was left.
+		if errors.Is(err, infracli.ErrBack) || errors.Is(err, infra.ErrAborted) {
+			return nil
+		}
+		return err
+	},
+	SilenceUsage: true,
+}
+
+// runExportRepo exports to the path given, or asks for one.
+func runExportRepo(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
+	if len(args) == 1 {
+		return infracli.ExportRepository(cmd.Context(), out, args[0])
+	}
+	if infracli.CanAsk(out) {
+		return infracli.AskWhereAndExport(cmd.Context(), out)
+	}
+	return fmt.Errorf("give the directory the repository should go in\n" +
+		"  lerian config repo ~/infrastructure")
+}
+
 var configShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Print the configuration and where it lives",
+	// First in the submenu: it is the one that only reads, and the cursor starts
+	// on the first row.
+	Annotations: map[string]string{menuAnnotation: menuFirst},
 	// Nothing here takes an argument, and without this cobra accepts and ignores
 	// them — so `lerian config reset production`, which reads like "reset the
 	// production profile", would quietly remove everything instead.
@@ -336,6 +434,7 @@ func init() {
 	configResetCmd.Flags().BoolVar(&configResetTemplates, "delete-templates", false,
 		"also delete the templates checkouts, without asking")
 	configTemplatesCmd.Flags().BoolVar(&configTemplatesClear, "clear", false, "forget the recorded path")
-	configCmd.AddCommand(configShowCmd, configTemplatesCmd, configResetCmd)
+	configCmd.AddCommand(configShowCmd, configTemplatesCmd, configKubeconfigCmd,
+		configGitHubCmd, configRepoCmd, configResetCmd)
 	rootCmd.AddCommand(configCmd)
 }

@@ -178,9 +178,20 @@ func (p *prompter) runSelector(
 	preset []string,
 	multiple bool,
 ) ([]string, error) {
+	// A preset only ticks rows that can be chosen. A ticked row that cannot be
+	// unticked and does not run lies twice: it says "this is in the answer" and
+	// then leaves it out, and the space bar does nothing about either.
+	selectable := map[string]bool{}
+	for _, opt := range options {
+		if opt.selectable() {
+			selectable[opt.value] = true
+		}
+	}
 	chosen := map[string]bool{}
 	for _, value := range preset {
-		chosen[value] = true
+		if selectable[value] {
+			chosen[value] = true
+		}
 	}
 
 	cursor := 0

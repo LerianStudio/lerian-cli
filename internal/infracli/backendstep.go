@@ -9,11 +9,6 @@ import (
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
-// Sentinel rows, kept apart from any bucket name.
-const (
-	backendCreate = "\x00create"
-)
-
 // resolveBackend settles what the state backend is before anything is chosen to
 // run against it.
 //
@@ -60,78 +55,46 @@ func resolveBackend(
 		return nil
 	}
 
-	picked, err := ask.pick("A state backend already exists in this account. Use it?",
-		"Adopting writes "+layout.RepoRel(layout.BackendFile(environment))+" from what is in the account.",
-		"", backendOptions(found, environment, account), "")
-	if err != nil {
+	// Only this environment's own bucket is a candidate. The environment was
+	// chosen two questions ago, and lerian-tfstate-stg-<account> is stg's state —
+	// adopting it as prd's would point two environments at one state file, which
+	// is the one mistake this screen must not make possible.
+	var own *infra.StateBackend
+	for index := range found {
+		if found[index].Matches(environment, account) {
+			own = &found[index]
+			break
+		}
+	}
+
+	if own == nil {
+		fmt.Fprintf(out, "  %d state bucket(s) here, none of them %s's. bootstrap creates it.\n\n",
+			len(found), environment)
+		return nil
+	}
+
+	fmt.Fprintf(out, "  found     %s%s\n", own.Bucket, describeBackend(*own))
+	fmt.Fprintf(out, "  %s\n", theme.dim(
+		"this is "+environment+"'s own backend; adopting writes "+
+			layout.RepoRel(layout.BackendFile(environment))))
+
+	// No "create a new one" beside it: the bucket exists, so bootstrap would stop
+	// at "bucket already exists". Adopting is the only thing that can work, and a
+	// second row would be offering a failure.
+	if err := ask.confirm(ctx, out, "Use it as "+environment+"'s state backend?"); err != nil {
 		return err
 	}
-	if picked == backendCreate {
-		fmt.Fprintf(out, "  leaving it. bootstrap makes a new one.\n\n")
-		return nil
-	}
 
-	for _, backend := range found {
-		if backend.Bucket != picked {
-			continue
-		}
-		path, adoptErr := infra.AdoptBackend(layout, environment, backend)
-		if adoptErr != nil {
-			return adoptErr
-		}
-		fmt.Fprintf(out, "\n  wrote %s\n", layout.RepoRel(path))
-		if backend.LockTable == "" {
-			fmt.Fprintf(out, "  %s\n", theme.dim(
-				"no lock table beside it: concurrent runs are not protected"))
-		}
-		fmt.Fprintln(out)
-		return nil
+	path, adoptErr := infra.AdoptBackend(layout, environment, *own)
+	if adoptErr != nil {
+		return adoptErr
 	}
+	fmt.Fprintf(out, "\n  wrote %s\n", layout.RepoRel(path))
+	if own.LockTable == "" {
+		fmt.Fprintf(out, "  %s\n", theme.dim("no lock table beside it: concurrent runs are not protected"))
+	}
+	fmt.Fprintln(out)
 	return nil
-}
-
-// backendChoices lists what the account holds, with the one bootstrap would have
-// made for this environment first.
-//
-// Every state bucket the account holds is offered, not only the matching one:
-// the ones made for other environments, and the ones whose suffix is not an
-// environment this tool knows — those are somebody's deliberate naming, and
-// hiding them leaves that person where the old advice did, writing the file by
-// hand.
-//
-// Bounded, though. ListStateBackends only returns buckets carrying the prefix
-// the templates give them and this account's id, so "named by hand" means a
-// hand-chosen SUFFIX, not any bucket in the account. Offering every bucket an
-// account holds would bury three answers in fifty.
-func backendOptions(found []infra.StateBackend, environment, account string) []option {
-	choices := make([]option, 0, len(found)+1)
-
-	add := func(backend infra.StateBackend, note string) {
-		choices = append(choices, option{value: backend.Bucket, label: backend.Bucket, note: note})
-	}
-
-	for _, backend := range found {
-		if backend.Matches(environment, account) {
-			add(backend, "this environment's own backend · "+describeBackend(backend))
-		}
-	}
-	for _, backend := range found {
-		if backend.Matches(environment, account) {
-			continue
-		}
-		where := "made for " + backend.Env
-		if backend.Env == "" {
-			where = "named by hand"
-		}
-		add(backend, where+" · "+describeBackend(backend))
-	}
-
-	choices = append(choices, option{
-		value: backendCreate,
-		label: "create a new one",
-		note:  "bootstrap makes " + infra.StateBucketPrefix + environment + "-" + account,
-	})
-	return choices
 }
 
 // describeBackend is the part that decides whether adopting is safe: where it is,
@@ -144,5 +107,5 @@ func describeBackend(backend infra.StateBackend) string {
 	if backend.LockTable == "" {
 		parts = append(parts, "no lock table")
 	}
-	return strings.Join(parts, ", ")
+	return "  (" + strings.Join(parts, ", ") + ")"
 }

@@ -46,7 +46,16 @@ type checkResult struct {
 	summary string
 	detail  string
 	ok      bool
+	// optional marks a row that is reported but never gates. Nothing in a run
+	// needs it; it is here so somebody reading the table knows what this machine
+	// can and cannot be asked to do, which is a different question from whether
+	// the run will work.
+	optional bool
 }
+
+// blocking is a row that stops a run. An optional row that failed is a fact
+// about the machine, not a failure of the check.
+func (r checkResult) blocking() bool { return !r.ok && !r.optional }
 
 func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	var opts struct {
@@ -72,6 +81,7 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		checkAWSCLI(ctx),
 		checkTerraform(ctx),
 		checkGit(),
+		checkGH(ctx),
 		checkTemplates(ctx, opts.repo, os.Getenv("LERIAN_TF_REPO"), opts.templatesDir),
 	}
 
@@ -127,6 +137,42 @@ func checkGit() checkResult {
 // working directory and its parents, the managed path — so naming the winner is
 // worth a row of its own. It has to resolve from the same inputs a run does, or
 // the row reports a checkout that is not the one about to be used.
+// checkGH reports the GitHub CLI, and whether it is logged in.
+//
+// Optional, and it has to stay that way. Nothing in the deploy itself touches
+// GitHub: the one thing that does is the export, which is offered after a run
+// has finished and asks for gh at the moment it needs it. A row that failed a
+// run over a tool the run never calls is the same mistake as gating a run on
+// git.
+//
+// Logged in or not is part of the row rather than a second one. "installed" is
+// not the useful fact; "can create a repository right now" is, and those differ
+// by a login.
+func checkGH(ctx context.Context) checkResult {
+	result := checkResult{name: "gh", summary: binaryPath("gh"), ok: true, optional: true}
+
+	gh, err := infra.NewGHCLI()
+	if err != nil {
+		result.ok = false
+		result.summary = "not installed — only for creating the exported repository on GitHub"
+		return result
+	}
+
+	account, loggedIn := gh.GHStatus(ctx)
+	if !loggedIn {
+		// Not ok: the row exists to say whether a repository can be created from
+		// here, and a logged-out gh cannot. optional keeps it out of the verdict,
+		// so this reads "absent" in grey rather than failing anything.
+		result.ok = false
+		result.summary = binaryPath("gh") + "  (not logged in — gh auth login, or the CLI offers it)"
+		return result
+	}
+	if name := account.String(); name != "not logged in" {
+		result.summary += "  (" + name + ")"
+	}
+	return result
+}
+
 func checkTemplates(ctx context.Context, repo, envRepo, templatesDir string) checkResult {
 	result := checkResult{name: "templates", ok: true}
 
@@ -399,7 +445,7 @@ func reportChecks(out io.Writer, results []checkResult, note string) error {
 	// scannable when several things are wrong — which is the case this command
 	// exists for.
 	for _, r := range results {
-		if r.ok || r.detail == "" {
+		if !r.blocking() || r.detail == "" {
 			continue
 		}
 		// indent() leaves the first line alone, because its other callers place it
@@ -430,7 +476,13 @@ func writeRows(out io.Writer, theme style, results []checkResult, width int) int
 		// sequences counts the escapes as characters, and the colored column lands
 		// one word to the right of the plain ones.
 		mark := theme.pass(fmt.Sprintf("%-*s", verdictWidth, "ok"))
-		if !r.ok {
+		switch {
+		// Dim rather than red, and "absent" rather than "missing": the row is
+		// reporting what this machine cannot be asked to do, and a red line for a
+		// tool no run calls teaches people to read past red lines.
+		case !r.ok && r.optional:
+			mark = theme.dim(fmt.Sprintf("%-*s", verdictWidth, "absent"))
+		case !r.ok:
 			mark = theme.alert(fmt.Sprintf("%-*s", verdictWidth, "missing"))
 			failed++
 		}
@@ -442,7 +494,7 @@ func writeRows(out io.Writer, theme style, results []checkResult, width int) int
 func failedNames(results []checkResult) []string {
 	var names []string
 	for _, r := range results {
-		if !r.ok {
+		if r.blocking() {
 			names = append(names, r.name)
 		}
 	}
@@ -501,6 +553,12 @@ func preflight(
 	// checkout never calls it — gating on it would demand a tool this command does
 	// not need. `lerian infra check` reports it, because that command answers the
 	// wider question of whether the machine can do everything.
+	// No gh either, for the same reason git is left out: deploying touches
+	// neither. The export offered after a run can use gh — that is the one path
+	// that reaches GitHub — and it asks for it there, where the answer is about
+	// something the operator just chose to do. A preflight is the list of what
+	// this run needs, and padding it with tools the run will not call is how the
+	// list stops being read.
 	results = append(results, templatesResult(ctx, layout, source))
 
 	// Only worth asking when there is an AWS CLI to ask with: without one the
@@ -535,9 +593,9 @@ func preflight(
 	//
 	// A scripted invocation — one that named its --env and asked nothing — keeps
 	// the output it always had: a pipeline does not want a table on every call.
-	watching := ask != nil && ask.interactive
+	watching := watchingPreflight(ask)
 	for _, r := range results {
-		if !r.ok {
+		if r.blocking() {
 			return nil, nil, reportChecks(out, results, "")
 		}
 	}
@@ -594,3 +652,8 @@ func templatesVerdict(root, ref, summary string) checkResult {
 
 	return result
 }
+
+// watchingPreflight is whether there is somebody reading the preflight table. A
+// scripted invocation gets the output it always had: a pipeline does not want a
+// table on every call, and does not want rows about tools it will not use.
+func watchingPreflight(ask *prompter) bool { return ask != nil && ask.interactive }

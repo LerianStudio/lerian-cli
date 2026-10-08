@@ -1086,3 +1086,21 @@ func TestTheLoginHintOnlyNamesProfilesThatCanSignIn(t *testing.T) {
 		t.Errorf("the per-profile SSO config is missing:\n%s", hint)
 	}
 }
+
+// templatesCheckout is a real checkout of lerian-terraform-foundation, or a
+// skip. It lived in the compatibility file that went with the chart mapping;
+// the placeholder test above still reads the real repository.
+func templatesCheckout(t *testing.T) string {
+	t.Helper()
+	path := os.Getenv(templatesCheckoutEnv)
+	if path == "" {
+		t.Skipf("%s not set; this test reads a real checkout of lerian-terraform-foundation", templatesCheckoutEnv)
+	}
+	if !IsCheckout(path) {
+		t.Fatalf("%s=%s is not a checkout: examples/aws/_modules or examples/aws/backend missing",
+			templatesCheckoutEnv, path)
+	}
+	return path
+}
+
+const templatesCheckoutEnv = "LERIAN_TEMPLATES_CHECKOUT"

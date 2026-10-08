@@ -51,7 +51,6 @@ type options struct {
 	environment  string
 	target       string
 	action       string
-	format       string
 	// profile is the AWS profile chosen interactively, and profileChosen records
 	// that a choice was made at all.
 	//
@@ -61,6 +60,15 @@ type options struct {
 	// scripted run leaves both zero and the file decides, exactly as before.
 	profile       string
 	profileChosen bool
+
+	// account is who the chosen profile resolves to, carried from the account
+	// question to the environment one: which environments are available depends on
+	// it, since a checkout holds one account per environment.
+	account string
+
+	// targetsFromSetup records that init just chose the targets, so the question
+	// that would ask for them again is skipped.
+	targetsFromSetup bool
 
 	// backends lists the state backends an account holds. It is here so a test can
 	// answer the question without credentials; a run leaves it nil and gets the
@@ -101,8 +109,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			"(default: $LERIAN_TF_REPO, else discovered by walking up from the working directory)")
 	flags.StringVar(&opts.environment, "env", "", "dev, stg or prd")
 	flags.StringVar(&opts.target, "target", "infra-base", "what to operate on")
-	flags.StringVar(&opts.action, "action", "plan", "plan, apply, destroy, output or helm-values")
-	flags.StringVar(&opts.format, "format", "json", "json or yaml, for --action helm-values")
+	flags.StringVar(&opts.action, "action", "plan", "plan, apply, destroy or output")
 	flags.IntVar(&opts.jobs, "jobs", 4, "how many services of one product run at once")
 	flags.BoolVar(&opts.autoApprove, "auto-approve", false, "skip the confirmation before apply/destroy")
 	flags.DurationVar(&opts.minCredentialLifetime, "min-credential-lifetime", 0,
@@ -205,25 +212,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if opts.format != "json" && opts.format != "yaml" {
-		return fmt.Errorf("invalid --format %q\nValid values: json, yaml.", opts.format)
-	}
 	if opts.jobs < 1 {
 		return fmt.Errorf("invalid --jobs %d\nMust be at least 1. Default 4; use 1 to run sequentially.",
 			opts.jobs)
 	}
-	if action == infra.ActionHelmValues {
-		if err := requireProductTarget(opts.target); err != nil {
-			return err
-		}
-	}
 
-	// helm-values writes a document to stdout, so `> values.yaml` captures the
-	// document and nothing else. Everything else goes to stderr in that mode.
 	progressOut := stdout
-	if action == infra.ActionHelmValues {
-		progressOut = stderr
-	}
 
 	// Target resolution is pure filesystem work and reports the most common typo,
 	// so it runs before the config is even opened: "unknown product 'ledger'" is a
@@ -337,6 +331,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return printDryRun(progressOut, stages, opts, backend, readiness)
 	}
 
+	// Offered before refusing: the refusal names the file and the exact lines, so
+	// it already knows everything needed to fix them, and somebody is sitting in
+	// front of it.
+	readiness = fillPendingVarFiles(ctx, newPrompter(progressOut), infra.CLIZones{},
+		readiness, opts.environment, config.Profile)
+
 	if err := failOnUnready(readiness); err != nil {
 		return err
 	}
@@ -369,14 +369,40 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	switch action {
-	case infra.ActionHelmValues:
-		return writeHelmValues(ctx, runner, allUnits, opts.format, stdout)
-	case infra.ActionOutput:
-		return writeOutputs(ctx, runner, allUnits, stdout)
-	default:
-		return execute(ctx, runner, stages, action, opts, config, runDir, logs, terraform.Credentials, progressOut)
+	// One function for every action, so the menu that follows a run can ask for
+	// another one without rebuilding the runner, the logs or the plans.
+	perform := func(action infra.Action) error {
+		switch action {
+		case infra.ActionOutput:
+			return writeOutputs(ctx, runner, allUnits, stdout)
+		default:
+			return execute(ctx, runner, terraform, stages, action, opts, config, runDir,
+				logs, terraform.Credentials, progressOut)
+		}
 	}
+
+	if err := perform(action); err != nil {
+		return err
+	}
+
+	// Asked again before every draw of the menu, not once before the first. An
+	// apply chosen FROM that menu is what creates the cluster, so a decision taken
+	// beforehand is a decision taken when there was nothing to point at — which is
+	// exactly when somebody needs the offer most.
+	ask := newPrompter(progressOut)
+	kubectl := func() (func() error, string) {
+		facts, found, why := readClusterFacts(ctx, terraform, allUnits)
+		if !found {
+			return nil, why
+		}
+		return func() error {
+			return pointKubectl(ctx, ask, progressOut, facts, config.Region, config.Profile)
+		}, ""
+	}
+
+	// Inside the run, not after it: the saved plans are removed when this function
+	// returns, and they are what the detail is read from.
+	return afterRun(ctx, ask, runner, terraform, stages, action, progressOut, perform, kubectl)
 }
 
 // checkoutSource says which of the four ways of finding a checkout was the one
@@ -602,10 +628,10 @@ func loadBackend(
 }
 
 func checkReadiness(out io.Writer, action infra.Action, units []infra.Unit, env string) []infra.Readiness {
-	if action == infra.ActionOutput || action == infra.ActionHelmValues {
-		// Read-only actions never pass -var-file, so the variables file is irrelevant
-		// to them, and demanding it would block reading the outputs of a stack
-		// somebody else applied.
+	if action == infra.ActionOutput {
+		// A read-only action never passes -var-file, so the variables file is
+		// irrelevant to it, and demanding it would block reading the outputs of a
+		// stack somebody else applied.
 		fmt.Fprintf(out, "  tfvars      not required for --action %s\n", action)
 		return nil
 	}
@@ -628,20 +654,12 @@ func failOnUnready(readiness []infra.Readiness) error {
 		len(problems), strings.Join(problems, "\n"))
 }
 
-func requireProductTarget(target string) error {
-	switch {
-	case target == "bootstrap", target == "all",
-		target == "infra-base", strings.HasPrefix(target, "infra-base/"):
-		return fmt.Errorf("--action helm-values needs a product target\n"+
-			"%q has no helm_values output; the Helm handoff lives in products/<product>/<service>.\n"+
-			"  lerian infra --env dev --target midaz --action helm-values", target)
-	}
-	return nil
-}
-
 func execute(
 	ctx context.Context,
 	runner *infra.Runner,
+	// terraform is the same CLI the runner uses, needed here for the one command
+	// that is not part of a run: releasing a lock a failed run reported.
+	terraform *infra.CLI,
 	stages []infra.Stage,
 	action infra.Action,
 	opts options,
@@ -705,6 +723,7 @@ func execute(
 
 	if err != nil {
 		printFailureLogs(out, results, logs)
+		offerUnlock(ctx, newPrompter(out), terraform, out, results)
 		fmt.Fprintf(out, "\n  logs %s\n", runDir)
 
 		// The detail was just printed, in full, next to the stack it belongs to.
@@ -719,7 +738,12 @@ func execute(
 		return reported{summary: summarize(err)}
 	}
 
-	printClusterHandoff(ctx, out, runner, results, action, config)
+	// Only where nobody can be offered the alternative. With a terminal the menu
+	// that follows offers to run this, and printing the command as well would be
+	// telling somebody to type what the next screen is about to do for them.
+	if !newPrompter(out).interactive {
+		printClusterHandoff(ctx, out, runner, results, action, config)
+	}
 
 	fmt.Fprintf(out, "\n%s\n", newStyle(out).bold(totalsLine(results, action, time.Since(started))))
 	fmt.Fprintf(out, "  logs %s\n\n", runDir)
@@ -741,31 +765,6 @@ func execute(
 		fmt.Fprint(out, "  Nothing was changed. Re-run with --action apply to execute this plan.\n\n")
 	}
 	return nil
-}
-
-func writeHelmValues(
-	ctx context.Context,
-	runner *infra.Runner,
-	units []infra.Unit,
-	format string,
-	stdout io.Writer,
-) error {
-	document, err := runner.HelmValues(ctx, units)
-	if err != nil {
-		return err
-	}
-
-	var rendered []byte
-	if format == "yaml" {
-		rendered, err = document.YAML()
-	} else {
-		rendered, err = document.JSON()
-	}
-	if err != nil {
-		return err
-	}
-	_, err = stdout.Write(rendered)
-	return err
 }
 
 func writeOutputs(ctx context.Context, runner *infra.Runner, units []infra.Unit, stdout io.Writer) error {
@@ -836,9 +835,108 @@ func printFailureLogs(out io.Writer, results []infra.StageResult, logs *infra.Fi
 				}
 				fmt.Fprintf(out, "\n---- %s failed ----\n%s\n  full log: %s\n",
 					unit.Unit.Name, indent(unit.Err.Error(), "  "), logs.Path(unit.Unit))
+				printFailureAdvice(out, unit)
 			}
 		}
 	}
+}
+
+// printFailureAdvice turns the failures worth recognizing into what to do about
+// them.
+//
+// Terraform's own message is kept above this, always: it is accurate, and this
+// adds to it rather than replacing it. What it adds is the part that is specific
+// to this machine and this run — the directory to pass to -chdir, the id already
+// filled in — which is exactly what somebody retypes by hand from a web page
+// while the run they were in the middle of sits there failed.
+// offerUnlock asks whether to release a held lock, and does it.
+//
+// The alternative is what this just put on the screen: a command to copy into
+// another terminal, in a directory nobody memorizes, with a uuid in it. That is
+// a round trip for something this process can do — and the decision it needs was
+// already made by reading the lines above.
+//
+// Asked, never assumed, and never under --auto-approve: that flag approves
+// infrastructure changes, and this is not one. It is a judgement about whether a
+// process somewhere else is still alive, which no flag can stand in for.
+// unlocker is the half of the terraform CLI this needs. An interface so a test
+// can see whether the command ran, which is the only thing worth asserting about
+// a prompt that guards a destructive operation.
+type unlocker interface {
+	ForceUnlock(ctx context.Context, unit infra.Unit, lockID string) error
+}
+
+func offerUnlock(
+	ctx context.Context,
+	ask *prompter,
+	terraform unlocker,
+	out io.Writer,
+	results []infra.StageResult,
+) {
+	if ask == nil || !ask.interactive || terraform == nil {
+		return
+	}
+
+	for _, result := range results {
+		for _, phase := range [][]infra.UnitResult{result.Plans, result.Applies} {
+			for _, unit := range phase {
+				if unit.Err == nil {
+					continue
+				}
+				lock := infra.ReadStateLock(unit.Err.Error())
+				if lock == nil {
+					continue
+				}
+				unlockOne(ctx, ask, terraform, out, unit.Unit, *lock)
+				// One at a time, and only the first: a second lock in the same run
+				// is almost always the same holder, and the answer to it is the
+				// answer that was just given.
+				return
+			}
+		}
+	}
+}
+
+// unlockOne is the question and the command.
+func unlockOne(
+	ctx context.Context,
+	ask *prompter,
+	terraform unlocker,
+	out io.Writer,
+	unit infra.Unit,
+	lock infra.StateLock,
+) {
+	answer, err := ask.pick("Release the lock on "+unit.Name+"?",
+		lock.Holder(time.Now())+" — only if that run is over.", "",
+		[]option{
+			{value: "no", label: "leave it", note: "nothing changes; the command above still works"},
+			{value: "yes", label: "release it", note: "terraform force-unlock"},
+		}, "")
+	if err != nil || answer != "yes" {
+		return
+	}
+
+	// Typed, because the cost of being wrong lands on somebody else's apply and
+	// not on this run. A menu row is one keypress and this is not a one-keypress
+	// decision.
+	if err := ask.confirm(ctx, out,
+		"Is that run definitely over? Releasing a live lock lets two writes race"); err != nil {
+		return
+	}
+
+	if err := terraform.ForceUnlock(ctx, unit, lock.ID); err != nil {
+		fmt.Fprintf(out, "\n  %v\n", err)
+		return
+	}
+	fmt.Fprintf(out, "\n  Released. Run the same command again.\n")
+}
+
+func printFailureAdvice(out io.Writer, unit infra.UnitResult) {
+	lock := infra.ReadStateLock(unit.Err.Error())
+	if lock == nil {
+		return
+	}
+	fmt.Fprintf(out, "\n%s\n", indent(lock.Advice(unit.Unit.Dir, time.Now()), "  "))
 }
 
 // guardCredentialLifetime says out loud how long the run's credentials have, and
@@ -1048,15 +1146,14 @@ func printDryRun(
 // reproduce exactly the old default run.
 //
 // The questions go to stderr: the action is one of the things being chosen, and
-// helm-values needs stdout to carry nothing but the document.
-// afterEnvironment is called as soon as the account is chosen, with the
-// environment it maps to and the profile that was picked. Its error stops the
-// remaining questions.
+// the action is one of the things being chosen.
+// afterAccount is called as soon as the account is chosen, with the profile that
+// was picked. Its error stops the remaining questions.
 //
 // It exists for one check: an expired credential makes every later answer
-// worthless. The profile is passed because the check has to use the one that was
-// chosen — the section may name a different profile reaching the same account,
-// and checking that one would fail on credentials nobody selected.
+// worthless. The profile is what it needs, not the environment — the credential
+// belongs to the profile, and which environment the account is deployed as is
+// still three questions away at that point.
 func guidedRun(
 	ctx context.Context,
 	catalog infra.Catalog,
@@ -1064,7 +1161,7 @@ func guidedRun(
 	ask *prompter,
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
-	afterEnvironment func(environment, profile string, chosen bool) error,
+	afterAccount func(profile string, chosen bool) error,
 ) error {
 	if !ask.interactive {
 		return nil
@@ -1074,22 +1171,33 @@ func guidedRun(
 	// them. The questions are a sequence and a wrong turn on the first one used to
 	// cost the whole run: the only way to correct it was ctrl-c, which throws away
 	// the answers that were right along with the one that was not.
-	steps := []func() error{
-		func() error { return askAccountStep(ctx, ask, layout, resolved, opts, afterEnvironment) },
-		func() error { return askTargetStep(ctx, ask, catalog, layout, opts) },
-		func() error { return askActionStep(ask, opts) },
+	//
+	// Each step reports whether it actually asked anything. A step that decided
+	// without a question must be invisible to r — going back to it would land on a
+	// screen that is not there, return immediately, and move forward again, so the
+	// key would appear to do nothing.
+	steps := []func() (bool, error){
+		func() (bool, error) {
+			return askAccountStep(ctx, ask, catalog, layout, resolved, opts, afterAccount)
+		},
+		func() (bool, error) { return askEnvironmentStep(ctx, ask, catalog, layout, opts) },
+		func() (bool, error) { return askTargetStep(ctx, ask, catalog, layout, opts) },
+		func() (bool, error) { return askActionStep(ask, opts) },
 	}
+	asked := make([]bool, len(steps))
 
 	for at := 0; at < len(steps); {
-		err := steps[at]()
+		answered, err := steps[at]()
+		asked[at] = answered
 		switch {
 		case errors.Is(err, errBack):
-			if at == 0 {
+			back := previousQuestion(asked, at)
+			if back < 0 {
 				// Nothing before the first question, so back out of the run — which is
 				// where the operator came from.
 				return infra.ErrAborted
 			}
-			at--
+			at = back
 		case err != nil:
 			return err
 		default:
@@ -1099,29 +1207,39 @@ func guidedRun(
 	return nil
 }
 
+// previousQuestion is the last step before at that put a question on screen, or
+// -1 when there is none.
+func previousQuestion(asked []bool, at int) int {
+	for back := at - 1; back >= 0; back-- {
+		if asked[back] {
+			return back
+		}
+	}
+	return -1
+}
+
 func askAccountStep(
 	ctx context.Context,
 	ask *prompter,
+	catalog infra.Catalog,
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
 	opts *options,
-	afterEnvironment func(environment, profile string, chosen bool) error,
-) error {
-	choice, err := askForAccount(ctx, ask, ask.out, layout, resolved)
+	afterAccount func(profile string, chosen bool) error,
+) (bool, error) {
+	choice, err := askForAccount(ctx, ask, ask.out, catalog, layout, resolved)
 	if err != nil {
-		return err
+		return false, err
 	}
 	opts.environment = choice.environment
 	opts.profile = choice.profile
+	opts.account = choice.account
 	opts.profileChosen = choice.chosen
 
-	// Before the next question rather than after the last one: this is the point
-	// at which the profile is known, and asking two more questions to then report
-	// a login failure throws both answers away.
-	if afterEnvironment != nil {
-		return afterEnvironment(choice.environment, choice.profile, choice.chosen)
+	if afterAccount != nil {
+		return true, afterAccount(choice.profile, choice.chosen)
 	}
-	return nil
+	return true, nil
 }
 
 // askAboutBackend settles what the state backend is, by asking the account
@@ -1171,39 +1289,109 @@ func askAboutBackend(ctx context.Context, ask *prompter, layout infra.Layout, op
 		opts.environment, opts.profile, config.Region, config.AccountID)
 }
 
+// askEnvironmentStep asks which environment the chosen account is deployed as,
+// and sets it up when that is the first time.
+//
+// A step of its own because an account is not an environment. Deriving one from
+// the other meant an account could only ever be one: a sandbox configured as dev
+// could never also be stg in the same checkout, because the lookup found dev and
+// stopped. It is also where the sizing is decided, and that is not a thing to
+// inherit from whichever section happened to name this account first.
+func askEnvironmentStep(
+	ctx context.Context,
+	ask *prompter,
+	catalog infra.Catalog,
+	layout infra.Layout,
+	opts *options,
+) (bool, error) {
+	// The dry-run path already asked, from the file, because that is all it can
+	// read. Nothing to do here.
+	if opts.environment != "" {
+		return false, nil
+	}
+
+	choices := environmentChoices(layout, opts.account)
+	if firstEnabled(choices) < 0 || !choices[firstEnabled(choices)].selectable() {
+		return false, errCheckoutFull(layout, opts.account)
+	}
+
+	chosen, err := ask.pick(
+		"Which environment is this account?",
+		"It picks the sizing the templates ship, and the state backend to use.",
+		"--env", choices, "")
+	if err != nil {
+		return false, err
+	}
+	opts.environment = chosen
+
+	// Already configured for this account: the files are there and the run can go
+	// straight on to what to operate on.
+	if config, loadErr := infra.LoadEnvConfig(layout, chosen); loadErr == nil && config.AccountID == opts.account {
+		return true, nil
+	}
+
+	if err := setUpEnvironment(ctx, ask.out, layout, opts); err != nil {
+		return true, err
+	}
+	// What init just wrote variables for is the answer to the targets question, so
+	// that question does not get asked.
+	if configured := configuredTargets(catalog, layout, chosen); len(configured) > 0 {
+		opts.target = strings.Join(configured, ",")
+		opts.targetsFromSetup = true
+	}
+	return true, nil
+}
+
 func askTargetStep(
 	ctx context.Context,
 	ask *prompter,
 	catalog infra.Catalog,
 	layout infra.Layout,
 	opts *options,
-) error {
+) (bool, error) {
 	if err := askAboutBackend(ctx, ask, layout, opts); err != nil {
-		return err
+		return false, err
 	}
+
+	// Already decided by the setup that just ran. Said rather than asked, because
+	// the answer is on screen two questions up and asking for it again is the
+	// duplicate this removes.
+	if opts.targetsFromSetup {
+		fmt.Fprintf(ask.out, "\n%s\n  %s\n\n", newStyle(ask.out).bold("==> Target"),
+			opts.target+"  "+newStyle(ask.out).dim("— what you just configured"))
+		return false, nil
+	}
+	// Preselected from the disk rather than from memory: whatever this environment
+	// has tfvars for is what somebody just configured, and it stays true on the
+	// runs after this one too.
+	preset := splitList(opts.target)
+	if len(preset) == 0 {
+		preset = configuredTargets(catalog, layout, opts.environment)
+	}
+
 	targets, err := ask.pickMany(
 		"What do you want to operate on?",
-		"Several can be combined; they are reordered into dependency order either way.",
-		"--target", runTargetOptions(catalog, layout, opts.environment), splitList(opts.target))
+		"Written already — this is what to run now. Several can be combined.",
+		"--target", runTargetOptions(catalog, layout, opts.environment), preset)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(targets) > 0 {
 		opts.target = strings.Join(targets, ",")
 	}
-	return nil
+	return true, nil
 }
 
-func askActionStep(ask *prompter, opts *options) error {
+func askActionStep(ask *prompter, opts *options) (bool, error) {
 	action, err := ask.pick(
 		"What should it do?",
 		"plan changes nothing. apply and destroy ask for a confirmation before writing.",
 		"--action", actionOptions(), opts.action)
 	if err != nil {
-		return err
+		return false, err
 	}
 	opts.action = action
-	return nil
+	return true, nil
 }
 
 // askForAccount asks which account to deploy into and returns the environment it
@@ -1219,15 +1407,24 @@ func askActionStep(ask *prompter, opts *options) error {
 // path asked from the file instead. Only the code that asked can tell those apart,
 // so it says which.
 type accountChoice struct {
+	// environment is set only on the dry-run path, where the file is the only
+	// thing that can be read and the question is which section to use. Every other
+	// path leaves it empty: which environment an account is deployed as is a
+	// question of its own, asked after this one.
 	environment string
 	profile     string
-	chosen      bool
+	// account is who the chosen profile resolves to. It is what decides which
+	// environments are available, since a checkout holds one account per
+	// environment.
+	account string
+	chosen  bool
 }
 
 func askForAccount(
 	ctx context.Context,
 	ask *prompter,
 	out io.Writer,
+	catalog infra.Catalog,
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
 ) (accountChoice, error) {
@@ -1251,7 +1448,7 @@ func askForAccount(
 	}
 
 	if profile == signOutChoice {
-		return signOutAndBackIn(ctx, ask, out, layout, resolved)
+		return signOutAndBackIn(ctx, ask, out, catalog, layout, resolved)
 	}
 
 	picked := findProfile(resolved, profile)
@@ -1288,16 +1485,11 @@ func askForAccount(
 		picked.Caller = refreshed
 	}
 
-	environment, ok := environmentForProfile(layout, picked.Profile.Name, picked.Caller.Account)
-	if ok {
-		return accountChoice{environment: environment, profile: picked.Profile.Name, chosen: true}, nil
-	}
-
-	// Chosen but not set up. Telling somebody to leave and run a second command —
-	// and to know which of three names to give it — is asking them to do the part
-	// this already knows how to do.
-	environment, err = configureAccount(ctx, out, layout, *picked)
-	return accountChoice{environment: environment, profile: picked.Profile.Name, chosen: true}, err
+	// Which environment this account is deployed as is the next question, not this
+	// one's to answer. Deriving it from the account meant an account could only
+	// ever be one environment: a sandbox configured as dev could never be set up
+	// as stg in the same checkout, because the lookup found dev and stopped.
+	return accountChoice{profile: picked.Profile.Name, account: picked.Caller.Account, chosen: true}, nil
 }
 
 // runInitCommand is a variable so the chaining can be exercised without writing
@@ -1314,55 +1506,41 @@ var runInitCommand = runInit
 // There are three names, and that is a real ceiling: a checkout already holding
 // three accounts cannot take a fourth. Better said here than discovered later as
 // a missing file.
-func configureAccount(
+// setUpEnvironment runs init for an account that has no section for this
+// environment yet.
+//
+// Telling somebody to leave and run a second command — and to know which of
+// three names to give it — is asking them to do the part this already knows how
+// to do.
+func setUpEnvironment(
 	ctx context.Context,
 	out io.Writer,
 	layout infra.Layout,
-	chosen infra.ResolvedProfile,
-) (string, error) {
-	slot, ok := freeEnvironment(layout)
-	if !ok {
-		return "", fmt.Errorf("this checkout already holds three accounts, which is all it can hold\n"+
-			"Each account occupies one of backend/<env>.hcl and envs/<env>.tfvars, and the\n"+
-			"templates provide three sets: %s.\n\n"+
-			"Use a separate checkout for account %s, or free one of the three in\n"+
-			"examples/aws/environments.conf.",
-			strings.Join(infra.Environments, ", "), chosen.Caller.Account)
-	}
-
+	opts *options,
+) error {
 	theme := newStyle(out)
-	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Setting up account "+chosen.Caller.Account))
-	fmt.Fprintf(out, "  %s\n", theme.dim("first time for this account in this checkout"))
+	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Setting up "+opts.environment+" in account "+opts.account))
+	fmt.Fprintf(out, "  %s\n", theme.dim("first time for this pair in this checkout"))
 
 	// No --region. init asks for it, always, and the profile's own region is the
 	// suggestion it offers — passing it here would answer the question on somebody's
 	// behalf, and where every resource is created is not a thing to inherit from a
 	// profile they may have configured for something else.
 	args := []string{
-		"--env", slot,
-		"--profile", chosen.Profile.Name,
-		"--account", chosen.Caller.Account,
+		"--env", opts.environment,
+		"--profile", opts.profile,
+		"--account", opts.account,
 	}
 	if err := runInitCommand(ctx, args, out, out); err != nil {
-		return "", err
+		return err
 	}
 
 	// Read back rather than assumed: init is what decides what was written, and a
 	// run against a section that is not there fails later with a missing file.
-	if _, err := infra.LoadEnvConfig(layout, slot); err != nil {
-		return "", fmt.Errorf("account %s was not set up: %w", chosen.Caller.Account, err)
+	if _, err := infra.LoadEnvConfig(layout, opts.environment); err != nil {
+		return fmt.Errorf("account %s was not set up as %s: %w", opts.account, opts.environment, err)
 	}
-	return slot, nil
-}
-
-// freeEnvironment is the first slot no account has taken.
-func freeEnvironment(layout infra.Layout) (string, bool) {
-	for _, name := range infra.Environments {
-		if _, err := infra.LoadEnvConfig(layout, name); err != nil {
-			return name, true
-		}
-	}
-	return "", false
+	return nil
 }
 
 // applyChosenProfile puts the interactively chosen profile into the configuration
@@ -1515,6 +1693,7 @@ func signOutAndBackIn(
 	ctx context.Context,
 	ask *prompter,
 	out io.Writer,
+	catalog infra.Catalog,
 	layout infra.Layout,
 	resolved []infra.ResolvedProfile,
 ) (accountChoice, error) {
@@ -1534,7 +1713,7 @@ func signOutAndBackIn(
 	// Who everything resolves as has just changed, so nothing read before this is
 	// still true.
 	refreshed := infra.ResolveProfiles(ctx, checkIdentity, profilesOf(resolved), "")
-	return askForAccount(ctx, ask, out, layout, refreshed)
+	return askForAccount(ctx, ask, out, catalog, layout, refreshed)
 }
 
 // sessionsOf is every SSO session the known profiles sit behind, first seen
@@ -1698,24 +1877,52 @@ func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment st
 	//
 	// Said rather than disabled, because choosing it is how it gets configured —
 	// the same as an account that is not set up yet.
+	configured := map[string]bool{}
 	for index, opt := range options {
 		if opt.value == "bootstrap" || opt.value == "all" {
 			continue
 		}
-		if !targetIsConfigured(layout, catalog, opt.value, environment) {
-			options[index].note = opt.note + "  ·  not configured here yet"
+		if targetIsConfigured(layout, catalog, opt.value, environment) {
+			configured[opt.value] = true
+			continue
 		}
+		options[index].note = opt.note + "  ·  not configured here yet"
 	}
+
+	// The configured ones first. This question arrives right after `init` wrote
+	// the tfvars for one or two targets, and finding them on row 14 of 30 reads as
+	// the same list being asked again rather than as the short answer it is.
+	//
+	// Stable, so the catalog's order survives inside each group and the list does
+	// not reshuffle between runs.
+	sort.SliceStable(options, func(i, j int) bool {
+		return rankTarget(options[i], configured) < rankTarget(options[j], configured)
+	})
 
 	// Everything except bootstrap needs somewhere to keep its state, and bootstrap
 	// is what creates it — so on an account nobody has bootstrapped yet, it is the
 	// only thing that can run. Offering the rest lets somebody spend two answers on
 	// a stack that fails at terraform init, reporting a bucket that does not exist.
+	//
+	// And when the backend IS there, bootstrap is the one row with nothing to do.
+	// Leaving it selectable invites a run whose entire output is "no changes", and
+	// the question somebody actually has — is my state backend set up? — is
+	// answered by the row saying so.
 	if backendExists(layout, environment) {
+		for index, opt := range options {
+			if opt.value == "bootstrap" {
+				options[index].disabled = true
+				options[index].note = "already there — " + backendName(layout, environment)
+			}
+		}
 		return options
 	}
 	for index, opt := range options {
 		if opt.value == "bootstrap" {
+			// Selectable, not fixed: a fixed row is excluded from the answer, and
+			// with every other row disabled the answer would come back empty. The
+			// note carries what the state is instead.
+			options[index].note = "the state backend — the only thing that can run yet"
 			continue
 		}
 		options[index].disabled = true
@@ -1744,6 +1951,46 @@ func targetIsConfigured(layout infra.Layout, catalog infra.Catalog, target, envi
 	return true
 }
 
+// configuredTargets is what this environment already has variables for, which is
+// the answer to "what do you want to operate on" on nearly every run: the targets
+// somebody configured are the targets they came here to deploy.
+func configuredTargets(catalog infra.Catalog, layout infra.Layout, environment string) []string {
+	var ready []string
+	for _, name := range append([]string{"infra-base"}, catalog.Names...) {
+		if targetIsConfigured(layout, catalog, name, environment) {
+			ready = append(ready, name)
+		}
+	}
+	return ready
+}
+
+// rankTarget groups the target list: the fixed rows keep their place, then
+// anything this environment has variables for, then the rest.
+func rankTarget(opt option, configured map[string]bool) int {
+	switch {
+	case opt.value == "bootstrap":
+		return 0
+	case opt.value == "infra-base":
+		return 1
+	case configured[opt.value]:
+		return 2
+	case opt.value == "all":
+		return 4
+	default:
+		return 3
+	}
+}
+
+// backendName is the bucket this environment keeps its state in, for a row that
+// has to say why there is nothing to create.
+func backendName(layout infra.Layout, environment string) string {
+	backend, err := infra.LoadBackend(layout, environment)
+	if err != nil || backend.Bucket == "" {
+		return "the state backend is configured"
+	}
+	return backend.Bucket
+}
+
 // backendExists reports whether this environment has a state backend to write to.
 //
 // The file is written by bootstrap, not by init: bootstrap creates the bucket and
@@ -1762,7 +2009,6 @@ func actionOptions() []option {
 		{value: string(infra.ActionApply), label: "apply", note: "writes, after one confirmation"},
 		{value: string(infra.ActionDestroy), label: "destroy", note: "removes, after one confirmation"},
 		{value: string(infra.ActionOutput), label: "output", note: "reads terraform output"},
-		{value: string(infra.ActionHelmValues), label: "helm-values", note: "merges helm_values onto stdout"},
 	}
 }
 
@@ -2112,12 +2358,12 @@ func credentialCheck(
 	ctx context.Context,
 	layout infra.Layout,
 	dryRun bool,
-) func(environment, profile string, chosen bool) error {
+) func(profile string, chosen bool) error {
 	if dryRun {
 		return nil
 	}
-	return func(environment, profile string, chosen bool) error {
-		resolve := credentialProfile(layout, environment, profile, chosen)
+	return func(profile string, chosen bool) error {
+		resolve := credentialProfile(layout, "", profile, chosen)
 		if resolve == "" {
 			return nil
 		}
@@ -2138,6 +2384,14 @@ func credentialCheck(
 // the only problem; or the credentials are ambient, and whether they work is
 // answered by the account guard a moment later.
 func credentialProfile(layout infra.Layout, environment, profile string, chosen bool) string {
+	// A chosen profile is the one the run will use whatever any section says, and
+	// at the point this runs there may be no environment yet: which one an account
+	// is deployed as is a later question. Reading the config here would return
+	// nothing and skip the check entirely — the check whose whole purpose is to
+	// fail before three more questions are answered.
+	if chosen {
+		return profile
+	}
 	config, err := infra.LoadEnvConfig(layout, environment)
 	if err != nil {
 		return ""

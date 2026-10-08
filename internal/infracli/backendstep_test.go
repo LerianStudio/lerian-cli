@@ -1,8 +1,10 @@
 package infracli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,8 +44,13 @@ func TestAnExistingBackendIsFoundAndAdopted(t *testing.T) {
 		LockTable: "lerian-tfstate-lock-dev",
 	}}}
 
-	ask, painted := selectorFor(t, keyEnterSeq)
-	if err := resolveBackend(context.Background(), ask, ask.out, lister, layout,
+	// Adopting is a confirmation now, not a menu: the bucket either is this
+	// environment's own or is not a candidate at all.
+	noDrain(t)
+	var painted bytes.Buffer
+	ask := &prompter{interactive: true, in: bufio.NewReader(strings.NewReader("yes\n")), out: &painted}
+
+	if err := resolveBackend(context.Background(), ask, &painted, lister, layout,
 		"dev", "someprofile", "us-east-2", "123456789012"); err != nil {
 		t.Fatalf("resolveBackend = %v\n%s", err, painted.String())
 	}
@@ -137,45 +144,54 @@ func TestAFailedLookupDoesNotBlockTheRun(t *testing.T) {
 	}
 }
 
-// Every bucket is offered, not only the one whose name matches. A backend named
-// by hand is still a backend somebody made deliberately, and hiding it leaves
-// them where the old advice did: writing the file themselves.
-func TestEveryBackendInTheAccountIsOffered(t *testing.T) {
-	found := []infra.StateBackend{
-		{Bucket: "lerian-tfstate-stg-123456789012", Env: "stg", Region: "us-east-1"},
-		{Bucket: "lerian-tfstate-dev-123456789012", Env: "dev", Region: "us-east-2",
-			LockTable: "lerian-tfstate-lock-dev"},
+// Only this environment's own bucket is a candidate. lerian-tfstate-stg-<account>
+// is stg's state, and adopting it as prd's would point two environments at one
+// state file — the one mistake this screen must not make possible.
+func TestOnlyThisEnvironmentsOwnBackendIsAdopted(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	choices := backendOptions(found, "dev", "123456789012")
+	// The account holds dev and stg, and prd is what was chosen.
+	lister := &fakeBackends{found: []infra.StateBackend{
+		{Bucket: "lerian-tfstate-dev-111122223333", Env: "dev", Region: "us-east-2"},
+		{Bucket: "lerian-tfstate-stg-111122223333", Env: "stg", Region: "us-east-2"},
+	}}
 
-	if choices[0].value != "lerian-tfstate-dev-123456789012" {
-		t.Errorf("this environment's own backend is not first: %+v", choices)
+	var out bytes.Buffer
+	if err := resolveBackend(context.Background(), newPrompter(&out), &out, lister, layout,
+		"prd", "p", "us-east-2", "111122223333"); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(choices[0].note, "us-east-2") {
-		t.Errorf("the region is not shown, and adopting one in the wrong region fails at init: %q", choices[0].note)
+
+	if _, statErr := os.Stat(layout.BackendFile("prd")); !os.IsNotExist(statErr) {
+		t.Error("another environment's bucket was adopted as prd's")
 	}
-	values := make([]string, 0, len(choices))
-	for _, choice := range choices {
-		values = append(values, choice.value)
+	if !strings.Contains(out.String(), "none of them prd's") {
+		t.Errorf("it does not say why nothing was adopted:\n%s", out.String())
 	}
-	if !strings.Contains(strings.Join(values, " "), "lerian-tfstate-stg-123456789012") {
-		t.Errorf("a backend made for another environment is hidden: %v", values)
-	}
-	if values[len(values)-1] != backendCreate {
-		t.Errorf("creating a new one is not offered: %v", values)
+	// And it does not offer a menu of other environments' buckets.
+	for _, other := range []string{"lerian-tfstate-dev-111122223333", "lerian-tfstate-stg-111122223333"} {
+		if strings.Contains(out.String(), other) {
+			t.Errorf("%s was offered for prd:\n%s", other, out.String())
+		}
 	}
 }
 
 // A backend with no lock table is usable and unsafe for concurrent runs. That is
 // the one thing worth knowing before adopting it.
 func TestAMissingLockTableIsSaidOutLoud(t *testing.T) {
-	choices := backendOptions([]infra.StateBackend{
-		{Bucket: "lerian-tfstate-dev-123456789012", Env: "dev", Region: "us-east-1"},
-	}, "dev", "123456789012")
+	described := describeBackend(infra.StateBackend{
+		Bucket: "lerian-tfstate-dev-123456789012", Env: "dev", Region: "us-east-1",
+	})
 
-	if !strings.Contains(choices[0].note, "no lock table") {
-		t.Errorf("note = %q", choices[0].note)
+	if !strings.Contains(described, "no lock table") {
+		t.Errorf("describeBackend = %q", described)
+	}
+	if !strings.Contains(described, "us-east-1") {
+		t.Errorf("the region is not shown, and adopting one in the wrong region fails at init: %q", described)
 	}
 }
 
@@ -256,8 +272,10 @@ func TestAdoptingABackendUnlocksTheTargetList(t *testing.T) {
 		}
 	}
 
-	// Enter twice: adopt the backend, then take the target the cursor is on.
-	ask, painted := selectorFor(t, keyEnterSeq+keyEnterSeq)
+	// "yes" adopts the backend; the Enter after it takes the target the cursor is
+	// on.
+	noDrain(t)
+	ask, painted := selectorFor(t, "yes\n"+keyEnterSeq)
 	opts := options{
 		environment: "dev",
 		profile:     "dev-profile",
@@ -269,7 +287,7 @@ func TestAdoptingABackendUnlocksTheTargetList(t *testing.T) {
 		}}},
 	}
 
-	if err := askTargetStep(context.Background(), ask, catalog, layout, &opts); err != nil {
+	if _, err := askTargetStep(context.Background(), ask, catalog, layout, &opts); err != nil {
 		t.Fatalf("askTargetStep = %v\n%s", err, painted.String())
 	}
 
@@ -278,6 +296,10 @@ func TestAdoptingABackendUnlocksTheTargetList(t *testing.T) {
 		t.Fatalf("the backend was not adopted:\n%s", painted.String())
 	}
 	for _, opt := range runTargetOptions(catalog, layout, "dev") {
+		// Except bootstrap, which now has nothing to create.
+		if opt.value == "bootstrap" {
+			continue
+		}
 		if opt.disabled {
 			t.Errorf("%q is still disabled after adopting a backend", opt.value)
 		}
@@ -305,5 +327,37 @@ func TestNoTerminalMeansNoLookup(t *testing.T) {
 	}
 	if lister.calls != 0 {
 		t.Errorf("the account was called %d times with nobody to answer", lister.calls)
+	}
+}
+
+// Adopting writes a file that decides where state lives, so it is confirmed.
+// Removing the confirmation must break a test rather than pass quietly.
+func TestAdoptingIsConfirmedBeforeItWrites(t *testing.T) {
+	checkout := fakeCheckout(t, "", "")
+	layout, err := infra.NewLayout(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lister := &fakeBackends{found: []infra.StateBackend{{
+		Bucket: "lerian-tfstate-dev-111122223333", Env: "dev", Region: "us-east-2",
+		LockTable: "lerian-tfstate-lock-dev",
+	}}}
+
+	noDrain(t)
+	var out bytes.Buffer
+	// "no" is not "yes", which is the bar this prompt has always had.
+	ask := &prompter{interactive: true, in: bufio.NewReader(strings.NewReader("no\n")), out: &out}
+
+	err = resolveBackend(context.Background(), ask, &out, lister, layout,
+		"dev", "p", "us-east-2", "111122223333")
+
+	if !errors.Is(err, infra.ErrAborted) {
+		t.Fatalf("resolveBackend = %v, want the declined confirmation", err)
+	}
+	if _, statErr := os.Stat(layout.BackendFile("dev")); !os.IsNotExist(statErr) {
+		t.Error("the backend file was written without a confirmation")
+	}
+	if !strings.Contains(out.String(), "Use it as dev's state backend?") {
+		t.Errorf("no confirmation was asked:\n%s", out.String())
 	}
 }

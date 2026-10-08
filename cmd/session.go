@@ -119,7 +119,7 @@ func childChoices(root *cobra.Command, name string) []infracli.Choice {
 	// subcommand does would be unreachable from this menu.
 	choices := make([]infracli.Choice, 0, len(parent.Commands()))
 
-	var last []infracli.Choice
+	var first, last []infracli.Choice
 	for _, child := range parent.Commands() {
 		if child.Hidden || !child.IsAvailableCommand() {
 			continue
@@ -132,13 +132,16 @@ func childChoices(root *cobra.Command, name string) []infracli.Choice {
 			Label: child.Name(),
 			Note:  child.Short,
 		}
-		if child.Annotations[menuAnnotation] == menuLast {
+		switch child.Annotations[menuAnnotation] {
+		case menuFirst:
+			first = append(first, choice)
+		case menuLast:
 			last = append(last, choice)
-			continue
+		default:
+			choices = append(choices, choice)
 		}
-		choices = append(choices, choice)
 	}
-	return append(choices, last...)
+	return append(append(first, choices...), last...)
 }
 
 func findChild(root *cobra.Command, name string) *cobra.Command {

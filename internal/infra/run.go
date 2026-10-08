@@ -281,15 +281,6 @@ func (r *Runner) Outputs(ctx context.Context, units []Unit) (map[string]map[stri
 	return outputs, nil
 }
 
-// HelmValues merges the Helm handoff of every unit into one document.
-func (r *Runner) HelmValues(ctx context.Context, units []Unit) (Document, error) {
-	// The Layout travels through so a product in shared mode can have its values
-	// built from the tier that owns its datastore, instead of requiring an apply of
-	// a root that creates nothing.
-	return CollectHelmValuesFrom(ctx, r.opts.Terraform, r.opts.Layout, units,
-		r.opts.Backend, r.opts.Env, r.opts.Progress)
-}
-
 // PlanFile is where the saved plan of one unit lives for this run.
 func (r *Runner) PlanFile(unit Unit) string {
 	return filepath.Join(r.opts.RunDir, unit.slug()+".tfplan")

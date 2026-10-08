@@ -6,7 +6,7 @@ import (
 )
 
 func TestParseAction(t *testing.T) {
-	for _, valid := range []string{"plan", "apply", "destroy", "output", "helm-values"} {
+	for _, valid := range []string{"plan", "apply", "destroy", "output"} {
 		action, err := ParseAction(valid)
 		if err != nil {
 			t.Errorf("ParseAction(%q): %v", valid, err)
@@ -21,7 +21,7 @@ func TestParseAction(t *testing.T) {
 		t.Fatal("ParseAction accepted a typo")
 	}
 	// The error lists what is valid, because a typo is the only way to reach it.
-	if !strings.Contains(err.Error(), "helm-values") {
+	if !strings.Contains(err.Error(), "destroy") {
 		t.Errorf("error = %q, want the list of valid actions", err)
 	}
 }

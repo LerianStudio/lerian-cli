@@ -96,6 +96,11 @@ const (
 	// most likely keypress the destructive one — cobra sorts alphabetically, which
 	// is how "reset" ended up above "show".
 	menuLast = "last"
+	// menuFirst puts a command at the head of its submenu, where the cursor
+	// starts. Without it the order is cobra's, which is alphabetical — and
+	// alphabetical put "kubeconfig" above "show" in config, so the menu opened on
+	// a command that talks to AWS instead of the one that prints a page.
+	menuFirst = "first"
 )
 
 // menuChoices is the command list the menu offers: what cobra knows, minus the

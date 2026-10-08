@@ -26,7 +26,8 @@ Give every Lerian operator one tool for the repeatable parts of running the plat
 | `lerian` (no arguments) | Opens an interactive session: pick a command, run it, pick the next one | [`docs/interactive-session.md`](./docs/interactive-session.md) |
 | `lerian auth` | Signs in to the Lerian platform (not AWS) with a named profile | [Authentication](#authentication) |
 | `lerian infra` | Drives the Terraform roots of [lerian-terraform-foundation](https://github.com/LerianStudio/lerian-terraform-foundation) on AWS, from bootstrap to per-product services | [`docs/infra.md`](./docs/infra.md) |
-| `lerian config` | Shows or resets what the CLI remembers on this machine | [`docs/infra.md`](./docs/infra.md#what-the-cli-remembers-and-how-to-forget-it) |
+| `lerian config` | Shows or resets what the CLI remembers on this machine; points kubectl at a cluster, signs in to GitHub | [`docs/infra.md`](./docs/infra.md#what-the-cli-remembers-and-how-to-forget-it) |
+| `lerian config repo` | Copies what you configured into a repository of your own, with a Makefile and a README | [`docs/infra.md`](./docs/infra.md#taking-the-estate-with-you) |
 | `lerian version` | Prints build information | — |
 
 Safety properties worth knowing before you run `infra`:
@@ -34,6 +35,7 @@ Safety properties worth knowing before you run `infra`:
 - **Account guard.** Three checks run before anything touches AWS, with no flag to bypass them.
 - **Dry run.** `--dry-run` resolves and prints the whole execution plan without a single AWS call.
 - **CI-safe.** Outside a terminal nothing is ever asked; a missing flag is named in the error.
+- **Yours to leave.** `lerian config repo` writes everything you configured into a repository of your own — a copy, not a link, that the CLI never comes back to.
 
 ## 👀 How it works
 
@@ -315,8 +317,8 @@ lerian infra --env dev --target all --dry-run
 lerian infra --env dev --target bootstrap  --action apply
 lerian infra --env dev --target infra-base --action apply
 
-# Read the helm values of a product back out
-lerian infra --env dev --target <product> --action helm-values --format yaml
+# Copy what you configured into a repository of your own
+lerian config repo ~/infrastructure
 ```
 
 Run with no `--env` in a terminal and it asks instead. `lerian infra --help` has every flag, the ordering rules and the environment variables it reads. Full walkthrough: [`docs/infra.md`](./docs/infra.md).

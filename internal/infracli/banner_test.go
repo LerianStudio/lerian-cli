@@ -2,6 +2,7 @@ package infracli
 
 import (
 	"bytes"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -170,7 +171,7 @@ func TestTheAnimationLandsOnExactlyTheBanner(t *testing.T) {
 	banner := renderBanner("v1.7.0", 100)
 
 	var painted screen
-	revealBanner(&painted, banner, 0)
+	revealBanner(&painted, banner, 0, hasWordmark(100))
 
 	want := trimTrailing(banner)
 	got := trimTrailing(painted.String())
@@ -185,7 +186,7 @@ func TestTheNarrowAnimationLandsOnTheNarrowBanner(t *testing.T) {
 	banner := renderBanner("v1.7.0", 40)
 
 	var painted screen
-	revealBanner(&painted, banner, 0)
+	revealBanner(&painted, banner, 0, hasWordmark(40))
 
 	if trimTrailing(painted.String()) != trimTrailing(banner) {
 		t.Errorf("narrow animation ended at:\n%q\nwant:\n%q", painted.String(), banner)
@@ -232,5 +233,34 @@ func TestTheNameOutlivesTheRestOfTheNarrowBanner(t *testing.T) {
 	tight := renderBanner("development build", 20)
 	if !strings.Contains(tight, "lerian-cli") {
 		t.Errorf("the name was dropped before the release:\n%q", tight)
+	}
+}
+
+// The sweep has to actually run: the test above only proves where the animation
+// LANDS, and it lands on the same screen whether or not anything swept across it.
+func TestTheWordmarkIsSweptAfterItArrives(t *testing.T) {
+	var raw bytes.Buffer
+	revealBanner(&raw, renderBanner("v1.7.0", 100), 0, hasWordmark(100))
+
+	// One cursor-up per frame, each going back over the whole wordmark.
+	up := strings.Count(raw.String(), fmt.Sprintf("\x1b[%dA", len(wordmark)))
+	if up == 0 {
+		t.Fatal("nothing swept across the wordmark")
+	}
+	if !strings.Contains(raw.String(), "\x1b[1;97m") {
+		t.Error("the sweep wrote no highlight")
+	}
+}
+
+// The narrow banner has no wordmark, so there is nothing to sweep and nothing to
+// move the cursor back over — doing it anyway would walk up over whatever the
+// terminal had on screen before the command ran.
+func TestTheNarrowBannerIsNotSwept(t *testing.T) {
+	var raw bytes.Buffer
+	revealBanner(&raw, renderBanner("v1.7.0", 40), 0, hasWordmark(40))
+
+	if strings.Contains(raw.String(), "\x1b[") && strings.Contains(raw.String(), "A") &&
+		strings.Contains(raw.String(), fmt.Sprintf("\x1b[%dA", len(wordmark))) {
+		t.Errorf("the narrow banner moved the cursor back up:\n%q", raw.String())
 	}
 }
