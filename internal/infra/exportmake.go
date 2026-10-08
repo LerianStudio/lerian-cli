@@ -327,6 +327,14 @@ func firstShort(plan ExportPlan) string {
 }
 
 func firstPath(plan ExportPlan) string {
+	// Skipping the bootstrap, for the same reason firstShort does: it is the one
+	// root nobody runs twice, and an example built from it shows the shortest
+	// path in the repository where the point is to show a long one.
+	for _, root := range plan.Roots {
+		if !root.Bootstrap {
+			return filepath.ToSlash(plan.Target(root.Path))
+		}
+	}
 	if len(plan.Roots) > 0 {
 		return filepath.ToSlash(plan.Target(plan.Roots[0].Path))
 	}

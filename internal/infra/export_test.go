@@ -356,7 +356,7 @@ func TestTheReadmeDescribesWhereThingsLanded(t *testing.T) {
 			t.Errorf("the README still sends the reader to %q:\n%s", wrong, readme)
 		}
 	}
-	if !strings.Contains(string(readme), "### infra-base/vpc") {
+	if !strings.Contains(string(readme), "**`infra-base/vpc`**") {
 		t.Errorf("the roots are not listed where they landed:\n%s", readme)
 	}
 	if !strings.Contains(string(readme), "cd infra-base/vpc") {
@@ -560,7 +560,7 @@ func TestTheReadmeWarnsThatTheBootstrapStateStayedBehind(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"state did not travel",
+		"did not travel with this repository",
 		"terraform.tfstate.d",
 		"Do not apply it against an environment that already has a backend",
 	} {
@@ -580,7 +580,7 @@ func TestTheReadmeSaysHowToTellAnEmptyStateFromAMissingEstate(t *testing.T) {
 		}},
 	})
 
-	if !strings.Contains(readme, "If a plan proposes to create everything") {
+	if !strings.Contains(readme, "A plan proposes to create everything") {
 		t.Errorf("the README does not cover the case:\n%s", readme)
 	}
 	for _, want := range []string{"aws sts get-caller-identity", "aws s3 ls"} {
@@ -607,7 +607,7 @@ func TestTheReadmeExplainsTheOrderBetweenRoots(t *testing.T) {
 
 	// One root has no order to explain.
 	alone := exportReadme("v1.11.0", ExportPlan{Roots: plan.Roots[:1]})
-	if strings.Contains(alone, "Order matters") {
+	if strings.Contains(alone, "no matching EC2 VPC found") {
 		t.Errorf("it explains an order between one root:\n%s", alone)
 	}
 }
@@ -680,5 +680,111 @@ func TestAddingTheRemoteFailingGetsItsOwnAdvice(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "git remote add origin") {
 		t.Errorf("it does not say to add the remote:\n%v", err)
+	}
+}
+
+// The page follows the lerian-cli README's shape — badges, what is here, a
+// quick start, then usage — because a client who has seen one Lerian repository
+// should not have to learn a second layout to find the same facts.
+func TestTheReadmeFollowsTheHouseLayout(t *testing.T) {
+	plan := ExportPlan{
+		Base: "examples/aws",
+		Roots: []ExportedRoot{
+			{Path: "examples/aws/bootstrap", StateKey: "aws/bootstrap/terraform.tfstate", Bootstrap: true},
+			{Path: "examples/aws/infra-base/vpc", StateKey: "aws/infra-base/vpc/terraform.tfstate"},
+			{Path: "examples/aws/infra-base/eks", StateKey: "aws/infra-base/eks/terraform.tfstate"},
+		},
+		Modules: []string{"examples/aws/_modules/naming"},
+	}
+
+	readme := exportReadme("v1.11.0", plan)
+
+	// The sections, in order. A page whose headings arrive in a different order
+	// from the CLI's reads as a different kind of document.
+	sections := []string{
+		"# Infrastructure for Lerian applications",
+		"## This is a bootstrap, and it is now yours",
+		"## What is here",
+		"## Core Features",
+		"## Quick Start",
+		"## Usage",
+		"## Adding a service",
+		"## Troubleshooting",
+	}
+	at := 0
+	for _, section := range sections {
+		found := strings.Index(readme[at:], section)
+		if found < 0 {
+			t.Fatalf("%q is missing, or out of order:\n%s", section, readme)
+		}
+		at += found
+	}
+
+	// Badges say what this is at a glance, and the scope one is the whole point.
+	for _, badge := range []string{
+		"img.shields.io/badge/generated%20by-lerian--cli",
+		"img.shields.io/badge/templates-v1.11.0",
+		"img.shields.io/badge/scope-bootstrap%20only",
+	} {
+		if !strings.Contains(readme, badge) {
+			t.Errorf("the %q badge is missing:\n%s", badge, readme)
+		}
+	}
+
+	// The scope badge links to the section that explains it, and the anchor has
+	// to match the heading GitHub generates.
+	if !strings.Contains(readme, "(#this-is-a-bootstrap-and-it-is-now-yours)") {
+		t.Errorf("the scope badge does not link to its section:\n%s", readme)
+	}
+}
+
+// Each root is named with what it is for, not with a count of its resources.
+func TestTheReadmeSaysWhatEachRootIsFor(t *testing.T) {
+	plan := ExportPlan{Base: "examples/aws", Roots: []ExportedRoot{
+		{Path: "examples/aws/bootstrap", StateKey: "aws/bootstrap/terraform.tfstate", Bootstrap: true},
+		{Path: "examples/aws/infra-base/vpc", StateKey: "aws/infra-base/vpc/terraform.tfstate"},
+		{Path: "examples/aws/products/midaz/postgres",
+			StateKey: "aws/products/midaz/postgres/terraform.tfstate"},
+	}}
+
+	readme := exportReadme("v1.11.0", plan)
+
+	if !strings.Contains(readme, "**`bootstrap`** — the state bucket and lock table") {
+		t.Errorf("the bootstrap is not described:\n%s", readme)
+	}
+	if !strings.Contains(readme, "**`infra-base/vpc`** — the network") {
+		t.Errorf("the vpc is not described:\n%s", readme)
+	}
+	// One the templates do not ship a description for falls back to its state key
+	// rather than to an invented sentence. Checked on the bullet itself: the key
+	// appears again under "Running Terraform directly", and asserting on it
+	// anywhere in the page passed with the fallback replaced by "a root".
+	if !strings.Contains(readme,
+		"**`products/midaz/postgres`** — `aws/products/midaz/postgres/terraform.tfstate`") {
+		t.Errorf("an unknown root got no honest description:\n%s", readme)
+	}
+}
+
+// The quick start is three commands, and the first is the one that catches the
+// mistake the rest of the page is about: being in the wrong account.
+func TestTheQuickStartChecksTheAccountFirst(t *testing.T) {
+	readme := exportReadme("v1.11.0", ExportPlan{Base: "examples/aws", Roots: []ExportedRoot{
+		{Path: "examples/aws/infra-base/vpc", StateKey: "aws/infra-base/vpc/terraform.tfstate"},
+	}})
+
+	start := strings.Index(readme, "## Quick Start")
+	usage := strings.Index(readme, "## Usage")
+	if start < 0 || usage < 0 {
+		t.Fatal("the quick start is missing")
+	}
+	section := readme[start:usage]
+
+	identity := strings.Index(section, "aws sts get-caller-identity")
+	plan := strings.Index(section, "make plan")
+	if identity < 0 || plan < 0 {
+		t.Fatalf("the quick start does not get as far as a plan:\n%s", section)
+	}
+	if identity > plan {
+		t.Errorf("it plans before checking which account it is in:\n%s", section)
 	}
 }
