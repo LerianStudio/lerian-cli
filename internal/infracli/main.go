@@ -2004,7 +2004,10 @@ func withAgent(preset []string, catalog infra.Catalog, layout infra.Layout, opts
 	if !layout.HasAgent() || opts.targetsFromSetup {
 		return preset
 	}
-	if len(preset) != 0 && !(len(preset) == 1 && preset[0] == defaultTarget) {
+	// Anything other than the flag's own default is somebody's answer, and an
+	// answer is not something to add to.
+	explicit := len(preset) != 0 && (len(preset) != 1 || preset[0] != defaultTarget)
+	if explicit {
 		return preset
 	}
 	if !targetIsConfigured(layout, catalog, "agent", opts.environment) {

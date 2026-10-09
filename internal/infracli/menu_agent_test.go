@@ -90,7 +90,7 @@ func TestAgentRanksBetweenInfraBaseAndTheProducts(t *testing.T) {
 	product := rankTarget(option{value: "midaz"}, configured)
 	all := rankTarget(option{value: "all"}, configured)
 
-	if !(base < agent && agent < product && product < all) {
+	if base >= agent || agent >= product || product >= all {
 		t.Errorf("ranks out of order: infra-base=%d agent=%d midaz=%d all=%d",
 			base, agent, product, all)
 	}
