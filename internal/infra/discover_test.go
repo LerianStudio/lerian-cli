@@ -677,11 +677,11 @@ func agentCheckout(t *testing.T) Layout {
 func TestAgentResolvesAlone(t *testing.T) {
 	layout := agentCheckout(t)
 
-	stages, err := Resolve(layout, Catalog{}, "infra-base/agent")
+	stages, err := Resolve(layout, Catalog{}, "agent")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := stageNames(stages); len(got) != 1 || got[0] != "infra-base/agent" {
+	if got := stageNames(stages); len(got) != 1 || got[0] != "agent" {
 		t.Fatalf("the agent target must resolve to exactly itself, got %v", got)
 	}
 	if units := Units(stages); len(units) != 1 || units[0].Dir != layout.AgentDir() {
@@ -695,15 +695,33 @@ func TestAgentResolvesAlone(t *testing.T) {
 func TestAgentRefusesWhenTheCheckoutHasNoRoot(t *testing.T) {
 	layout := Layout{Root: t.TempDir()}
 
-	_, err := Resolve(layout, Catalog{}, "infra-base/agent")
+	_, err := Resolve(layout, Catalog{}, "agent")
 	if err == nil {
 		t.Fatal("a checkout without the agent root must not resolve the target")
 	}
-	if !strings.Contains(err.Error(), "infra-base/agent") {
+	if !strings.Contains(err.Error(), "agent") {
 		t.Errorf("the refusal does not name the target: %v", err)
+	}
+	if !strings.Contains(err.Error(), "infra-base/agent") {
+		t.Errorf("the refusal does not say which directory is missing: %v", err)
 	}
 	if !strings.Contains(err.Error(), "--templates-ref") {
 		t.Errorf("the refusal does not say how to get the root: %v", err)
+	}
+}
+
+// The directory spelling is what the checkout, the state key and every log line
+// show, so somebody will type it. It resolves to the same single stage rather
+// than to "unknown target".
+func TestAgentAcceptsTheDirectorySpelling(t *testing.T) {
+	layout := agentCheckout(t)
+
+	stages, err := Resolve(layout, Catalog{}, "infra-base/agent")
+	if err != nil {
+		t.Fatalf("the directory spelling must resolve: %v", err)
+	}
+	if got := stageNames(stages); len(got) != 1 || got[0] != "agent" {
+		t.Fatalf("it must resolve to the same stage as \"agent\", got %v", got)
 	}
 }
 
@@ -723,7 +741,7 @@ func TestAgentRunsAfterTheClusterInAll(t *testing.T) {
 		switch name {
 		case "infra-base/eks":
 			eks = index
-		case "infra-base/agent":
+		case "agent":
 			agent = index
 		}
 	}
@@ -745,7 +763,7 @@ func TestAllOmitsTheAgentWhenTheCheckoutLacksIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range stageNames(stages) {
-		if name == "infra-base/agent" {
+		if name == "agent" {
 			t.Fatalf("all must not schedule a root this checkout does not have: %v", stageNames(stages))
 		}
 	}
@@ -758,14 +776,14 @@ func TestAllOmitsTheAgentWhenTheCheckoutLacksIt(t *testing.T) {
 func TestAgentSurvivesACompositeTarget(t *testing.T) {
 	layout := agentCheckout(t)
 
-	stages, err := Resolve(layout, Catalog{}, "infra-base,infra-base/agent")
+	stages, err := Resolve(layout, Catalog{}, "infra-base,agent")
 	if err != nil {
 		t.Fatal(err)
 	}
 	names := stageNames(stages)
 	var found bool
 	for _, name := range names {
-		if name == "infra-base/agent" {
+		if name == "agent" {
 			found = true
 		}
 	}

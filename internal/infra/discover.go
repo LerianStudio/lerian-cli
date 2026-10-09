@@ -90,9 +90,17 @@ func (c Catalog) ProductNames() []string {
 }
 
 // agentTarget names the agent root, both as a target and as the stage it
-// produces. Spelled under infra-base because that is where it lives in the
-// checkout, and because the state key follows the path.
-const agentTarget = "infra-base/agent"
+// produces.
+//
+// Just "agent", not the "infra-base/agent" the checkout spells: a target is
+// what somebody types to say what they want, and where the directory happens
+// to sit is not part of that. The unit underneath keeps the path, so the state
+// key is still aws/infra-base/agent/terraform.tfstate.
+const agentTarget = "agent"
+
+// agentPathTarget is the directory spelling, accepted because it is what the
+// checkout, the state key and the logs all show — somebody will type it.
+const agentPathTarget = "infra-base/agent"
 
 // Resolve turns an operator's --target into the ordered stages a run walks.
 //
@@ -169,7 +177,7 @@ func Resolve(layout Layout, catalog Catalog, target string) ([]Stage, error) {
 		return []Stage{stage("infra-base/vpc", layout.VPCDir())}, nil
 	case "infra-base/eks":
 		return []Stage{stage("infra-base/eks", layout.EKSDir())}, nil
-	case agentTarget:
+	case agentTarget, agentPathTarget:
 		// On its own, deliberately. The agent needs a cluster, but it finds one by
 		// name through a data source rather than through another root's state — so
 		// this target installs it into a cluster somebody else built just as
@@ -189,7 +197,7 @@ func Resolve(layout Layout, catalog Catalog, target string) ([]Stage, error) {
 		return nil, fmt.Errorf("infra: unknown target %q\n"+
 			"%q is not a product under %s with a service holding a main.tf.\n"+
 			"Non-product targets: bootstrap, infra-base, infra-base/vpc, infra-base/eks,\n"+
-			"infra-base/agent, all.\n"+
+			"agent, all.\n"+
 			"Discovered products: %s",
 			target, product, layout.RepoRel(layout.ProductsDir()),
 			strings.Join(catalog.Names, ", "))

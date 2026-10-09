@@ -1866,8 +1866,8 @@ func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment st
 	// than no row.
 	if layout.HasAgent() {
 		options = append(options, option{
-			value: "infra-base/agent",
-			label: "infra-base/agent",
+			value: "agent",
+			label: "agent",
 			note:  "the Lerian agent, into the cluster",
 		})
 	}
@@ -1968,7 +1968,7 @@ func configuredTargets(catalog infra.Catalog, layout infra.Layout, environment s
 	var ready []string
 	fixed := []string{"infra-base"}
 	if layout.HasAgent() {
-		fixed = append(fixed, "infra-base/agent")
+		fixed = append(fixed, "agent")
 	}
 	for _, name := range append(fixed, catalog.Names...) {
 		if targetIsConfigured(layout, catalog, name, environment) {
@@ -1989,7 +1989,7 @@ func rankTarget(opt option, configured map[string]bool) int {
 	// Below infra-base and above the products, which is where it runs: into the
 	// cluster the one above builds, before anything the control plane installs
 	// through it.
-	case opt.value == "infra-base/agent":
+	case opt.value == "agent":
 		return 2
 	case configured[opt.value]:
 		return 3
@@ -2038,7 +2038,7 @@ func printTargets(out io.Writer, layout infra.Layout, catalog infra.Catalog) {
 	// Listed on its own line rather than beside the other two: it is a target in
 	// its own right, not a part the infra-base group runs.
 	if layout.HasAgent() {
-		fmt.Fprint(out, "  infra-base/agent      the Lerian agent, into the cluster\n")
+		fmt.Fprint(out, "  agent                 the Lerian agent, into the cluster\n")
 	}
 	fmt.Fprint(out, "  all\n\nProducts\n")
 
@@ -2156,7 +2156,7 @@ func explainStages(out io.Writer, stages []infra.Stage, action infra.Action) {
 		"infra-base/eks": "The Kubernetes cluster the products run on. The slowest step by " +
 			"far — the control plane alone takes around fifteen minutes, then the nodes " +
 			"join and the add-ons install.",
-		"infra-base/agent": "The Lerian agent, installed into that cluster as a Helm release. " +
+		"agent": "The Lerian agent, installed into that cluster as a Helm release. " +
 			"It connects outward to the Lerian control plane and runs the Helm operations " +
 			"it is given — nothing reaches into the cluster from outside. It needs a " +
 			"control plane URL and an enrollment token; without them the plan stops and " +

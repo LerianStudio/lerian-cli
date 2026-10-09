@@ -40,7 +40,7 @@ func TestRunMenuOffersTheAgent(t *testing.T) {
 
 	var found bool
 	for _, value := range rows {
-		if value == "infra-base/agent" {
+		if value == "agent" {
 			found = true
 		}
 	}
@@ -55,7 +55,7 @@ func TestRunMenuHidesTheAgentWithoutTheRoot(t *testing.T) {
 	layout := infra.Layout{Root: t.TempDir()}
 
 	for _, value := range rowValues(runTargetOptions(infra.Catalog{}, layout, "dev")) {
-		if value == "infra-base/agent" {
+		if value == "agent" {
 			t.Error("a checkout without the agent root must not offer the row")
 		}
 	}
@@ -70,7 +70,7 @@ func TestInitOffersTheAgentToConfigure(t *testing.T) {
 
 	var found bool
 	for _, value := range rows {
-		if value == "infra-base/agent" {
+		if value == "agent" {
 			found = true
 		}
 	}
@@ -85,7 +85,7 @@ func TestAgentRanksBetweenInfraBaseAndTheProducts(t *testing.T) {
 	configured := map[string]bool{"midaz": true}
 
 	base := rankTarget(option{value: "infra-base"}, configured)
-	agent := rankTarget(option{value: "infra-base/agent"}, configured)
+	agent := rankTarget(option{value: "agent"}, configured)
 	product := rankTarget(option{value: "midaz"}, configured)
 	all := rankTarget(option{value: "all"}, configured)
 
@@ -101,8 +101,8 @@ func TestListNamesTheAgentTarget(t *testing.T) {
 	var out strings.Builder
 	printTargets(&out, checkoutWithAgent(t), infra.Catalog{})
 
-	if !strings.Contains(out.String(), "infra-base/agent") {
-		t.Errorf("--list does not name the agent target:\n%s", out.String())
+	if !strings.Contains(out.String(), "\n  agent ") {
+		t.Errorf("--list does not name the agent target on a row of its own:\n%s", out.String())
 	}
 }
 
@@ -111,7 +111,7 @@ func TestListOmitsTheAgentWithoutTheRoot(t *testing.T) {
 	var out strings.Builder
 	printTargets(&out, infra.Layout{Root: t.TempDir()}, infra.Catalog{})
 
-	if strings.Contains(out.String(), "infra-base/agent") {
+	if strings.Contains(out.String(), "\n  agent ") {
 		t.Errorf("--list names a target this checkout cannot run:\n%s", out.String())
 	}
 }

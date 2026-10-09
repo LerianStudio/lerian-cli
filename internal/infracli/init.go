@@ -1270,8 +1270,8 @@ func targetOptions(catalog infra.Catalog, layout infra.Layout) []option {
 	// a control plane URL and a token that only the control plane can issue.
 	if layout.HasAgent() {
 		options = append(options, option{
-			value: "infra-base/agent",
-			label: "infra-base/agent",
+			value: "agent",
+			label: "agent",
 			note:  "the Lerian agent — needs a control plane URL and a token",
 		})
 	}
