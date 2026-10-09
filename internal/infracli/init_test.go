@@ -1164,7 +1164,7 @@ func TestTheConfigurePurposeFitsOnOneLine(t *testing.T) {
 // reads as an oversight — or as a choice somebody made wrong — until the row is
 // there with a tick in it.
 func TestBootstrapIsShownAsAlreadyIncluded(t *testing.T) {
-	options := targetOptions(infra.Catalog{Names: []string{"midaz"}})
+	options := targetOptions(infra.Catalog{Names: []string{"midaz"}}, infra.Layout{})
 
 	if len(options) == 0 || options[0].value != "bootstrap" {
 		t.Fatalf("bootstrap is not the first row: %+v", options)

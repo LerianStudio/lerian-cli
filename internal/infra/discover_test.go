@@ -656,3 +656,159 @@ func TestCompositeKeepsASingleServiceInItsProductSlot(t *testing.T) {
 		t.Errorf("order = %v,\nwant     %v", got, want)
 	}
 }
+
+// agentCheckout is a layout whose infra-base carries the agent root, which is
+// what HasAgent is reading for.
+func agentCheckout(t *testing.T) Layout {
+	t.Helper()
+	layout := Layout{Root: t.TempDir()}
+	if err := os.MkdirAll(layout.AgentDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(layout.AgentDir(), "main.tf"), []byte("# root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return layout
+}
+
+// The point of the target: an agent installed on its own, into a cluster this
+// CLI did not necessarily build. One stage, one unit, and no VPC or EKS dragged
+// along with it.
+func TestAgentResolvesAlone(t *testing.T) {
+	layout := agentCheckout(t)
+
+	stages, err := Resolve(layout, Catalog{}, "infra-base/agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(stages); len(got) != 1 || got[0] != "infra-base/agent" {
+		t.Fatalf("the agent target must resolve to exactly itself, got %v", got)
+	}
+	if units := Units(stages); len(units) != 1 || units[0].Dir != layout.AgentDir() {
+		t.Errorf("it must run the agent root and nothing else, got %+v", units)
+	}
+}
+
+// A checkout pinned to a ref older than the agent root has no directory to run.
+// Saying so names the thing to do; resolving it would fail later, inside
+// Terraform, against a path the operator never typed.
+func TestAgentRefusesWhenTheCheckoutHasNoRoot(t *testing.T) {
+	layout := Layout{Root: t.TempDir()}
+
+	_, err := Resolve(layout, Catalog{}, "infra-base/agent")
+	if err == nil {
+		t.Fatal("a checkout without the agent root must not resolve the target")
+	}
+	if !strings.Contains(err.Error(), "infra-base/agent") {
+		t.Errorf("the refusal does not name the target: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--templates-ref") {
+		t.Errorf("the refusal does not say how to get the root: %v", err)
+	}
+}
+
+// Order is the whole point of "all": the agent installs INTO the cluster, so it
+// cannot be scheduled before eks. It is last here because no product root exists
+// in this fixture; what must hold is that eks precedes it.
+func TestAgentRunsAfterTheClusterInAll(t *testing.T) {
+	layout := agentCheckout(t)
+
+	stages, err := Resolve(layout, Catalog{}, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := stageNames(stages)
+	eks, agent := -1, -1
+	for index, name := range names {
+		switch name {
+		case "infra-base/eks":
+			eks = index
+		case "infra-base/agent":
+			agent = index
+		}
+	}
+	if agent == -1 {
+		t.Fatalf("all must include the agent when the checkout has it, got %v", names)
+	}
+	if eks == -1 || eks > agent {
+		t.Errorf("the agent must come after the cluster it installs into, got %v", names)
+	}
+}
+
+// A checkout without the root must leave "all" exactly as it was. This is the
+// regression that keeps older checkouts working.
+func TestAllOmitsTheAgentWhenTheCheckoutLacksIt(t *testing.T) {
+	layout := Layout{Root: t.TempDir()}
+
+	stages, err := Resolve(layout, Catalog{}, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range stageNames(stages) {
+		if name == "infra-base/agent" {
+			t.Fatalf("all must not schedule a root this checkout does not have: %v", stageNames(stages))
+		}
+	}
+}
+
+// The reason the agent is in the canonical order at all. resolveComposite places
+// a stage that "all" does not contain by its product prefix, and "infra-base" is
+// not a product — so an agent left out of "all" was dropped from a composite
+// without a word, and the run silently did not install it.
+func TestAgentSurvivesACompositeTarget(t *testing.T) {
+	layout := agentCheckout(t)
+
+	stages, err := Resolve(layout, Catalog{}, "infra-base,infra-base/agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := stageNames(stages)
+	var found bool
+	for _, name := range names {
+		if name == "infra-base/agent" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the agent vanished from the composite: %v", names)
+	}
+	if len(names) != 3 {
+		t.Errorf("expected vpc, eks and the agent, got %v", names)
+	}
+}
+
+// An empty agent/ directory is not an agent root. It is what a half-finished
+// copy or an interrupted checkout leaves behind, and treating the directory
+// itself as the signal offers a menu row whose Terraform run has nothing to
+// apply.
+func TestHasAgentWantsTheRootAndNotJustTheDirectory(t *testing.T) {
+	layout := Layout{Root: t.TempDir()}
+	if err := os.MkdirAll(layout.AgentDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if layout.HasAgent() {
+		t.Error("a directory with no main.tf is not a root this CLI can run")
+	}
+
+	if err := os.WriteFile(filepath.Join(layout.AgentDir(), "main.tf"), []byte("# root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !layout.HasAgent() {
+		t.Error("and with main.tf in it, it is")
+	}
+}
+
+// A main.tf that is itself a directory is not a root either. Terraform reads
+// *.tf files, not directories named like one, so Stat succeeding is not the
+// question — what it found is.
+func TestHasAgentRejectsADirectoryNamedMainTF(t *testing.T) {
+	layout := Layout{Root: t.TempDir()}
+	if err := os.MkdirAll(filepath.Join(layout.AgentDir(), "main.tf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if layout.HasAgent() {
+		t.Error("a directory named main.tf is not a Terraform root")
+	}
+}

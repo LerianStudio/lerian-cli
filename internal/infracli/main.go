@@ -1861,6 +1861,16 @@ func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment st
 		option{value: "bootstrap", label: "bootstrap", note: "state bucket and lock table"},
 		option{value: "infra-base", label: "infra-base", note: "the VPC then the cluster"},
 	)
+	// Offered only when the checkout has the root. It arrived after the CLI did,
+	// so an older ref does not carry it, and a row that cannot resolve is worse
+	// than no row.
+	if layout.HasAgent() {
+		options = append(options, option{
+			value: "infra-base/agent",
+			label: "infra-base/agent",
+			note:  "the Lerian agent, into the cluster",
+		})
+	}
 	for _, name := range catalog.Names {
 		options = append(options, option{
 			value: name,
@@ -1956,7 +1966,11 @@ func targetIsConfigured(layout infra.Layout, catalog infra.Catalog, target, envi
 // somebody configured are the targets they came here to deploy.
 func configuredTargets(catalog infra.Catalog, layout infra.Layout, environment string) []string {
 	var ready []string
-	for _, name := range append([]string{"infra-base"}, catalog.Names...) {
+	fixed := []string{"infra-base"}
+	if layout.HasAgent() {
+		fixed = append(fixed, "infra-base/agent")
+	}
+	for _, name := range append(fixed, catalog.Names...) {
 		if targetIsConfigured(layout, catalog, name, environment) {
 			ready = append(ready, name)
 		}
@@ -1972,12 +1986,17 @@ func rankTarget(opt option, configured map[string]bool) int {
 		return 0
 	case opt.value == "infra-base":
 		return 1
-	case configured[opt.value]:
+	// Below infra-base and above the products, which is where it runs: into the
+	// cluster the one above builds, before anything the control plane installs
+	// through it.
+	case opt.value == "infra-base/agent":
 		return 2
-	case opt.value == "all":
-		return 4
-	default:
+	case configured[opt.value]:
 		return 3
+	case opt.value == "all":
+		return 5
+	default:
+		return 4
 	}
 }
 
@@ -2015,7 +2034,13 @@ func actionOptions() []option {
 func printTargets(out io.Writer, layout infra.Layout, catalog infra.Catalog) {
 	fmt.Fprintf(out, "Discovered targets  (from %s/*/*/main.tf)\n\n",
 		layout.RepoRel(layout.ProductsDir()))
-	fmt.Fprint(out, "  bootstrap\n  infra-base            infra-base/vpc  infra-base/eks\n  all\n\nProducts\n")
+	fmt.Fprint(out, "  bootstrap\n  infra-base            infra-base/vpc  infra-base/eks\n")
+	// Listed on its own line rather than beside the other two: it is a target in
+	// its own right, not a part the infra-base group runs.
+	if layout.HasAgent() {
+		fmt.Fprint(out, "  infra-base/agent      the Lerian agent, into the cluster\n")
+	}
+	fmt.Fprint(out, "  all\n\nProducts\n")
 
 	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, name := range catalog.Names {
@@ -2131,6 +2156,11 @@ func explainStages(out io.Writer, stages []infra.Stage, action infra.Action) {
 		"infra-base/eks": "The Kubernetes cluster the products run on. The slowest step by " +
 			"far — the control plane alone takes around fifteen minutes, then the nodes " +
 			"join and the add-ons install.",
+		"infra-base/agent": "The Lerian agent, installed into that cluster as a Helm release. " +
+			"It connects outward to the Lerian control plane and runs the Helm operations " +
+			"it is given — nothing reaches into the cluster from outside. It needs a " +
+			"control plane URL and an enrollment token; without them the plan stops and " +
+			"names the variable to set.",
 	}
 
 	var lines []string

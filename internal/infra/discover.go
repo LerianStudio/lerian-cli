@@ -89,6 +89,11 @@ func (c Catalog) ProductNames() []string {
 	return names
 }
 
+// agentTarget names the agent root, both as a target and as the stage it
+// produces. Spelled under infra-base because that is where it lives in the
+// checkout, and because the state key follows the path.
+const agentTarget = "infra-base/agent"
+
 // Resolve turns an operator's --target into the ordered stages a run walks.
 //
 // The order is the dependency order of the repository and is not configurable:
@@ -132,6 +137,20 @@ func Resolve(layout Layout, catalog Catalog, target string) ([]Stage, error) {
 			stage("infra-base/vpc", layout.VPCDir()),
 			stage("infra-base/eks", layout.EKSDir()),
 		}
+		// After the cluster, before the products: the agent installs into the one
+		// eks created, and a product the control plane later asks it to deploy is
+		// its work, not this run's.
+		//
+		// Included here rather than left to an explicit target so that a composite
+		// like "infra-base,infra-base/agent" resolves at all: resolveComposite
+		// places anything "all" does not contain by its product prefix, and
+		// "infra-base" is not a product, so the stage would be dropped without a
+		// word. A checkout with no variables for it is already handled the way
+		// every other unconfigured target is — the menu says so, and readiness
+		// stops the run.
+		if layout.HasAgent() {
+			stages = append(stages, stage(agentTarget, layout.AgentDir()))
+		}
 		if _, ok := catalog.Products[sharedResources]; ok {
 			stages = append(stages, productStage(sharedResources))
 		}
@@ -150,6 +169,18 @@ func Resolve(layout Layout, catalog Catalog, target string) ([]Stage, error) {
 		return []Stage{stage("infra-base/vpc", layout.VPCDir())}, nil
 	case "infra-base/eks":
 		return []Stage{stage("infra-base/eks", layout.EKSDir())}, nil
+	case agentTarget:
+		// On its own, deliberately. The agent needs a cluster, but it finds one by
+		// name through a data source rather than through another root's state — so
+		// this target installs it into a cluster somebody else built just as
+		// readily as into the one next door.
+		if !layout.HasAgent() {
+			return nil, fmt.Errorf("infra: this checkout has no %s root\n"+
+				"%s does not exist. It arrived after the rest of infra-base; update the\n"+
+				"checkout, or run: lerian infra init --clone --templates-ref <tag>",
+				agentTarget, layout.RepoRel(layout.AgentDir()))
+		}
+		return []Stage{stage(agentTarget, layout.AgentDir())}, nil
 	}
 
 	product, service, hasService := strings.Cut(target, "/")
@@ -157,7 +188,8 @@ func Resolve(layout Layout, catalog Catalog, target string) ([]Stage, error) {
 	if !known {
 		return nil, fmt.Errorf("infra: unknown target %q\n"+
 			"%q is not a product under %s with a service holding a main.tf.\n"+
-			"Non-product targets: bootstrap, infra-base, infra-base/vpc, infra-base/eks, all.\n"+
+			"Non-product targets: bootstrap, infra-base, infra-base/vpc, infra-base/eks,\n"+
+			"infra-base/agent, all.\n"+
 			"Discovered products: %s",
 			target, product, layout.RepoRel(layout.ProductsDir()),
 			strings.Join(catalog.Names, ", "))

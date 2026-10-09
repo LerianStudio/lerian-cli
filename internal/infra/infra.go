@@ -32,6 +32,7 @@ package infra
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -135,6 +136,23 @@ func (l Layout) VPCDir() string { return filepath.Join(l.AWSDir(), "infra-base",
 
 // EKSDir is the cluster the products are installed into.
 func (l Layout) EKSDir() string { return filepath.Join(l.AWSDir(), "infra-base", "eks") }
+
+// AgentDir installs the Lerian agent into the cluster EKSDir created.
+//
+// Alongside the other two rather than inside them: it creates nothing in AWS,
+// only a Helm release, and it finds its cluster by name through a data source.
+// That is what lets it run on its own against a cluster this CLI never built.
+func (l Layout) AgentDir() string { return filepath.Join(l.AWSDir(), "infra-base", "agent") }
+
+// HasAgent reports whether this checkout carries the agent root.
+//
+// Asked rather than assumed. The root arrived later than the CLI did, so a
+// checkout pinned to an older ref does not have it — and a menu row that
+// resolves to a missing directory is worse than no row at all.
+func (l Layout) HasAgent() bool {
+	info, err := os.Stat(filepath.Join(l.AgentDir(), "main.tf"))
+	return err == nil && !info.IsDir()
+}
 
 // rel returns dir as a path relative to examples/aws, which is the identity of a
 // unit: it names the stack, keys its state and labels it on screen.
