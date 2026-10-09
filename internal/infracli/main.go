@@ -108,7 +108,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		"path to the lerian-terraform-foundation checkout "+
 			"(default: $LERIAN_TF_REPO, else discovered by walking up from the working directory)")
 	flags.StringVar(&opts.environment, "env", "", "dev, stg or prd")
-	flags.StringVar(&opts.target, "target", "infra-base", "what to operate on")
+	flags.StringVar(&opts.target, "target", defaultTarget, "what to operate on")
 	flags.StringVar(&opts.action, "action", "plan", "plan, apply, destroy or output")
 	flags.IntVar(&opts.jobs, "jobs", 4, "how many services of one product run at once")
 	flags.BoolVar(&opts.autoApprove, "auto-approve", false, "skip the confirmation before apply/destroy")
@@ -1368,6 +1368,7 @@ func askTargetStep(
 	if len(preset) == 0 {
 		preset = configuredTargets(catalog, layout, opts.environment)
 	}
+	preset = withAgent(preset, catalog, layout, opts)
 
 	targets, err := ask.pickMany(
 		"What do you want to operate on?",
@@ -1976,6 +1977,42 @@ func configuredTargets(catalog infra.Catalog, layout infra.Layout, environment s
 		}
 	}
 	return ready
+}
+
+// defaultTarget is what --target holds when nobody passed one. Named rather
+// than repeated, because withAgent below has to tell the default apart from the
+// same word typed on purpose.
+const defaultTarget = "infra-base"
+
+// withAgent ticks the agent row unless somebody chose otherwise.
+//
+// A cluster without the agent is a cluster the control plane cannot reach, so
+// the agent is part of what "deploy the base" means here, not an extra. It is
+// preselected and not forced: the row is a checkbox like any other, and
+// unticking it is one keystroke.
+//
+// Only when it would actually run. A target with no tfvars stops the run before
+// Terraform starts — "1 stack(s) are not ready" — so ticking an unconfigured
+// agent by default would turn a working deploy of the base into a refusal,
+// which is the opposite of a sensible default. Unconfigured, the row still
+// shows, saying so, and choosing it is how it gets set up.
+//
+// An explicit --target is left alone. Somebody who names what to run has said
+// what they want; the default flag value is not that, which is the whole reason
+// defaultTarget has a name.
+func withAgent(preset []string, catalog infra.Catalog, layout infra.Layout, opts *options) []string {
+	if !layout.HasAgent() || opts.targetsFromSetup {
+		return preset
+	}
+	if len(preset) != 0 && !(len(preset) == 1 && preset[0] == defaultTarget) {
+		return preset
+	}
+	if !targetIsConfigured(layout, catalog, "agent", opts.environment) {
+		return preset
+	}
+	// No duplicate check: the only preset that reaches here is the default one
+	// word, which is not this one.
+	return append(preset, "agent")
 }
 
 // rankTarget groups the target list: the fixed rows keep their place, then
