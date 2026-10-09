@@ -456,7 +456,7 @@ func buildInitPlan(
 		answer, err := ask.pickMany(
 			"What do you want to configure?",
 			configurePurpose(),
-			"--targets", targetOptions(catalog), []string{"infra-base"})
+			"--targets", targetOptions(catalog, layout), []string{"infra-base"})
 		if err != nil {
 			return plan, err
 		}
@@ -1245,7 +1245,7 @@ func profileOptions(resolved []infra.ResolvedProfile) []option {
 // targetOptions is the same catalog `--list` prints, offered as rows. A product
 // carries its services as the note, which is what makes "midaz" decidable without
 // leaving the question to go and look.
-func targetOptions(catalog infra.Catalog) []option {
+func targetOptions(catalog infra.Catalog, layout infra.Layout) []option {
 	options := make([]option, 0, 2+len(catalog.Names))
 	// Shown rather than left to the line above the list. bootstrap is configured
 	// whatever else is chosen, and a list of everything else reads as an oversight
@@ -1265,6 +1265,16 @@ func targetOptions(catalog infra.Catalog) []option {
 		label: "infra-base",
 		note:  "the VPC and the cluster",
 	})
+	// Configurable separately from the rest of infra-base, because it is the one
+	// root here that cannot be filled in from what the CLI already knows: it needs
+	// a control plane URL and a token that only the control plane can issue.
+	if layout.HasAgent() {
+		options = append(options, option{
+			value: "agent",
+			label: "agent",
+			note:  "the Lerian agent — needs a control plane URL and a token",
+		})
+	}
 	for _, name := range catalog.Names {
 		options = append(options, option{
 			value: name,

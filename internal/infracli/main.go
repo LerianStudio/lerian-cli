@@ -108,7 +108,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		"path to the lerian-terraform-foundation checkout "+
 			"(default: $LERIAN_TF_REPO, else discovered by walking up from the working directory)")
 	flags.StringVar(&opts.environment, "env", "", "dev, stg or prd")
-	flags.StringVar(&opts.target, "target", "infra-base", "what to operate on")
+	flags.StringVar(&opts.target, "target", defaultTarget, "what to operate on")
 	flags.StringVar(&opts.action, "action", "plan", "plan, apply, destroy or output")
 	flags.IntVar(&opts.jobs, "jobs", 4, "how many services of one product run at once")
 	flags.BoolVar(&opts.autoApprove, "auto-approve", false, "skip the confirmation before apply/destroy")
@@ -1368,6 +1368,7 @@ func askTargetStep(
 	if len(preset) == 0 {
 		preset = configuredTargets(catalog, layout, opts.environment)
 	}
+	preset = withAgent(preset, catalog, layout, opts)
 
 	targets, err := ask.pickMany(
 		"What do you want to operate on?",
@@ -1861,6 +1862,16 @@ func runTargetOptions(catalog infra.Catalog, layout infra.Layout, environment st
 		option{value: "bootstrap", label: "bootstrap", note: "state bucket and lock table"},
 		option{value: "infra-base", label: "infra-base", note: "the VPC then the cluster"},
 	)
+	// Offered only when the checkout has the root. It arrived after the CLI did,
+	// so an older ref does not carry it, and a row that cannot resolve is worse
+	// than no row.
+	if layout.HasAgent() {
+		options = append(options, option{
+			value: "agent",
+			label: "agent",
+			note:  "the Lerian agent, into the cluster",
+		})
+	}
 	for _, name := range catalog.Names {
 		options = append(options, option{
 			value: name,
@@ -1956,12 +1967,55 @@ func targetIsConfigured(layout infra.Layout, catalog infra.Catalog, target, envi
 // somebody configured are the targets they came here to deploy.
 func configuredTargets(catalog infra.Catalog, layout infra.Layout, environment string) []string {
 	var ready []string
-	for _, name := range append([]string{"infra-base"}, catalog.Names...) {
+	fixed := []string{"infra-base"}
+	if layout.HasAgent() {
+		fixed = append(fixed, "agent")
+	}
+	for _, name := range append(fixed, catalog.Names...) {
 		if targetIsConfigured(layout, catalog, name, environment) {
 			ready = append(ready, name)
 		}
 	}
 	return ready
+}
+
+// defaultTarget is what --target holds when nobody passed one. Named rather
+// than repeated, because withAgent below has to tell the default apart from the
+// same word typed on purpose.
+const defaultTarget = "infra-base"
+
+// withAgent ticks the agent row unless somebody chose otherwise.
+//
+// A cluster without the agent is a cluster the control plane cannot reach, so
+// the agent is part of what "deploy the base" means here, not an extra. It is
+// preselected and not forced: the row is a checkbox like any other, and
+// unticking it is one keystroke.
+//
+// Only when it would actually run. A target with no tfvars stops the run before
+// Terraform starts — "1 stack(s) are not ready" — so ticking an unconfigured
+// agent by default would turn a working deploy of the base into a refusal,
+// which is the opposite of a sensible default. Unconfigured, the row still
+// shows, saying so, and choosing it is how it gets set up.
+//
+// An explicit --target is left alone. Somebody who names what to run has said
+// what they want; the default flag value is not that, which is the whole reason
+// defaultTarget has a name.
+func withAgent(preset []string, catalog infra.Catalog, layout infra.Layout, opts *options) []string {
+	if !layout.HasAgent() || opts.targetsFromSetup {
+		return preset
+	}
+	// Anything other than the flag's own default is somebody's answer, and an
+	// answer is not something to add to.
+	explicit := len(preset) != 0 && (len(preset) != 1 || preset[0] != defaultTarget)
+	if explicit {
+		return preset
+	}
+	if !targetIsConfigured(layout, catalog, "agent", opts.environment) {
+		return preset
+	}
+	// No duplicate check: the only preset that reaches here is the default one
+	// word, which is not this one.
+	return append(preset, "agent")
 }
 
 // rankTarget groups the target list: the fixed rows keep their place, then
@@ -1972,12 +2026,17 @@ func rankTarget(opt option, configured map[string]bool) int {
 		return 0
 	case opt.value == "infra-base":
 		return 1
-	case configured[opt.value]:
+	// Below infra-base and above the products, which is where it runs: into the
+	// cluster the one above builds, before anything the control plane installs
+	// through it.
+	case opt.value == "agent":
 		return 2
-	case opt.value == "all":
-		return 4
-	default:
+	case configured[opt.value]:
 		return 3
+	case opt.value == "all":
+		return 5
+	default:
+		return 4
 	}
 }
 
@@ -2015,7 +2074,13 @@ func actionOptions() []option {
 func printTargets(out io.Writer, layout infra.Layout, catalog infra.Catalog) {
 	fmt.Fprintf(out, "Discovered targets  (from %s/*/*/main.tf)\n\n",
 		layout.RepoRel(layout.ProductsDir()))
-	fmt.Fprint(out, "  bootstrap\n  infra-base            infra-base/vpc  infra-base/eks\n  all\n\nProducts\n")
+	fmt.Fprint(out, "  bootstrap\n  infra-base            infra-base/vpc  infra-base/eks\n")
+	// Listed on its own line rather than beside the other two: it is a target in
+	// its own right, not a part the infra-base group runs.
+	if layout.HasAgent() {
+		fmt.Fprint(out, "  agent                 the Lerian agent, into the cluster\n")
+	}
+	fmt.Fprint(out, "  all\n\nProducts\n")
 
 	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, name := range catalog.Names {
@@ -2131,6 +2196,11 @@ func explainStages(out io.Writer, stages []infra.Stage, action infra.Action) {
 		"infra-base/eks": "The Kubernetes cluster the products run on. The slowest step by " +
 			"far — the control plane alone takes around fifteen minutes, then the nodes " +
 			"join and the add-ons install.",
+		"agent": "The Lerian agent, installed into that cluster as a Helm release. " +
+			"It connects outward to the Lerian control plane and runs the Helm operations " +
+			"it is given — nothing reaches into the cluster from outside. It needs a " +
+			"control plane URL and an enrollment token; without them the plan stops and " +
+			"names the variable to set.",
 	}
 
 	var lines []string
