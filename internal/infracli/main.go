@@ -69,6 +69,11 @@ type options struct {
 	// targetsFromSetup records that init just chose the targets, so the question
 	// that would ask for them again is skipped.
 	targetsFromSetup bool
+	// targetGiven records that --target was actually typed, which the value alone
+	// cannot say: "--target infra-base" and no flag at all leave opts.target
+	// identical, and the two mean opposite things to anything that wants to
+	// extend the selection.
+	targetGiven bool
 
 	// backends lists the state backends an account holds. It is here so a test can
 	// answer the question without credentials; a run leaves it nil and gets the
@@ -80,6 +85,22 @@ type options struct {
 	dryRun                bool
 	list                  bool
 	showVersion           bool
+}
+
+// recordTypedFlags notes which flags were actually typed, which their values
+// cannot say.
+//
+// Visit walks only the flags that were set — the one place the difference
+// between a default and the same value typed on purpose survives. --target is
+// the one that needs it: "--target infra-base" and no flag at all leave
+// opts.target identical, and they mean opposite things to anything that would
+// extend the selection.
+func recordTypedFlags(flags *flag.FlagSet, opts *options) {
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "target" {
+			opts.targetGiven = true
+		}
+	})
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -121,6 +142,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	recordTypedFlags(flags, &opts)
 	if rest := flags.Args(); len(rest) > 0 {
 		// deploy.sh took the provider as a positional argument and redirected
 		// azure/gcp to the legacy script. This tool replaces deploy.sh, so it
@@ -2004,10 +2026,11 @@ func withAgent(preset []string, catalog infra.Catalog, layout infra.Layout, opts
 	if !layout.HasAgent() || opts.targetsFromSetup {
 		return preset
 	}
-	// Anything other than the flag's own default is somebody's answer, and an
-	// answer is not something to add to.
-	explicit := len(preset) != 0 && (len(preset) != 1 || preset[0] != defaultTarget)
-	if explicit {
+	// Somebody's own answer is not something to add to. Asked of the flag set
+	// rather than inferred from the value: "--target infra-base" produces exactly
+	// the preset that no flag at all produces, so comparing against the default
+	// quietly extended a selection that was typed on purpose.
+	if opts.targetGiven {
 		return preset
 	}
 	if !targetIsConfigured(layout, catalog, "agent", opts.environment) {

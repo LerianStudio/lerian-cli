@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"flag"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
+	"io"
 )
 
 // checkoutWithAgent is a layout whose agent root exists, which is what the rows
@@ -130,7 +132,15 @@ func presetHas(values []string, want string) bool {
 // agentPreset is what the targets question arrives preticked with.
 func agentPreset(t *testing.T, layout infra.Layout, target string) []string {
 	t.Helper()
+	// No --target typed: the preset is whatever the flag's default produced.
 	opts := &options{target: target, environment: "dev"}
+	return withAgent(splitList(target), infra.Catalog{}, layout, opts)
+}
+
+// agentPresetWithFlag is the same question when --target was actually passed.
+func agentPresetWithFlag(t *testing.T, layout infra.Layout, target string) []string {
+	t.Helper()
+	opts := &options{target: target, environment: "dev", targetGiven: true}
 	return withAgent(splitList(target), infra.Catalog{}, layout, opts)
 }
 
@@ -175,10 +185,24 @@ func TestUnconfiguredAgentIsNotPreselected(t *testing.T) {
 
 // Somebody who names what to run has said what they want.
 func TestExplicitTargetIsNotExtendedWithTheAgent(t *testing.T) {
-	preset := agentPreset(t, configuredAgent(t), "midaz")
+	preset := agentPresetWithFlag(t, configuredAgent(t), "midaz")
 
 	if presetHas(preset, "agent") {
 		t.Errorf("an explicit --target must be left alone: %v", preset)
+	}
+}
+
+// The case a comparison against the default value cannot see: "--target
+// infra-base" produces the same preset as typing nothing, and silently
+// deploying an agent nobody asked for is the opposite of what the flag said.
+func TestTargetInfraBaseTypedOnPurposeIsNotExtended(t *testing.T) {
+	preset := agentPresetWithFlag(t, configuredAgent(t), defaultTarget)
+
+	if presetHas(preset, "agent") {
+		t.Errorf("--target infra-base was typed; the agent must not be added: %v", preset)
+	}
+	if !presetHas(preset, "infra-base") {
+		t.Errorf("and what was asked for must survive: %v", preset)
 	}
 }
 
@@ -196,7 +220,7 @@ func TestNoAgentRootMeansNoPreselection(t *testing.T) {
 // alone — this pins that reasoning, which is what lets withAgent append
 // without checking.
 func TestAgentIsNotPreselectedTwice(t *testing.T) {
-	preset := agentPreset(t, configuredAgent(t), "infra-base,agent")
+	preset := agentPresetWithFlag(t, configuredAgent(t), "infra-base,agent")
 
 	var count int
 	for _, name := range preset {
@@ -240,5 +264,42 @@ func TestTheTargetQuestionArrivesWithTheAgentTicked(t *testing.T) {
 	}
 	if !strings.Contains(screen, "[x] infra-base") {
 		t.Errorf("and infra-base must stay ticked beside it:\n%s", screen)
+	}
+}
+
+// What a flag's value cannot tell you: whether anybody typed it.
+//
+// This covers the reading, not the wiring. That run() still calls it is not
+// asserted here — reaching the preset through run() needs a terminal, which the
+// test binary does not have — so a mutation deleting the call survives. The
+// behavior it guards is the one above: with targetGiven set, the agent is not
+// added.
+func TestOnlyATypedTargetIsRecorded(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"typed", []string{"--target", "infra-base"}, true},
+		{"typed as the default value", []string{"--target", defaultTarget}, true},
+		{"not typed", []string{"--env", "dev"}, false},
+		{"nothing at all", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var opts options
+			flags := flag.NewFlagSet("test", flag.ContinueOnError)
+			flags.SetOutput(io.Discard)
+			flags.StringVar(&opts.target, "target", defaultTarget, "")
+			flags.StringVar(&opts.environment, "env", "", "")
+			if err := flags.Parse(tc.args); err != nil {
+				t.Fatal(err)
+			}
+
+			recordTypedFlags(flags, &opts)
+
+			if opts.targetGiven != tc.want {
+				t.Errorf("targetGiven = %v, want %v (args %v)", opts.targetGiven, tc.want, tc.args)
+			}
+		})
 	}
 }
