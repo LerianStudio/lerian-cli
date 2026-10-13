@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	infrapkg "github.com/lerian-studio/lerian-cli/internal/infra"
 	"github.com/lerian-studio/lerian-cli/internal/infracli"
@@ -153,6 +154,27 @@ func findChild(root *cobra.Command, name string) *cobra.Command {
 	return nil
 }
 
+// resetFlags returns every flag in the tree to the value it was defined with.
+//
+// One process runs every command of a session, so a flag is parsed into the
+// same variable over and over. Cobra has no hook between one Execute and the
+// next, and no notion of a run being over, so this is the seam.
+func resetFlags(cmd *cobra.Command) {
+	reset := func(flags *pflag.FlagSet) {
+		flags.VisitAll(func(f *pflag.Flag) {
+			// DefValue is the flag's value as it was registered, which is what a
+			// command invoked with nothing should see.
+			_ = f.Value.Set(f.DefValue)
+			f.Changed = false
+		})
+	}
+	reset(cmd.Flags())
+	reset(cmd.PersistentFlags())
+	for _, child := range cmd.Commands() {
+		resetFlags(child)
+	}
+}
+
 // interactive is the session wired to the real menu and the real commands.
 func interactive(root *cobra.Command) int {
 	infracli.Banner(root.OutOrStdout(), version.GetVersion())
@@ -164,6 +186,16 @@ func interactive(root *cobra.Command) int {
 			// this the second command inherits the first one's flags. Split, because
 			// a choice may be a path — "auth login" — rather than a single name.
 			root.SetArgs(strings.Fields(chosen))
+			// And fresh flag values, for the same reason one step deeper. SetArgs
+			// replaces what will be parsed; it does not undo the last parse. The
+			// variables flags are bound to still hold the previous run's values and
+			// still report Changed, so "install --wait=false" followed by plain
+			// "install" installs without waiting a second time — the operator typed
+			// nothing of the sort.
+			//
+			// Before Execute, because cobra parses during it: resetting afterwards
+			// would discard what was just typed.
+			resetFlags(root)
 			return root.Execute()
 		},
 	)

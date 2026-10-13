@@ -3,6 +3,8 @@ package agent
 import (
 	"testing"
 
+	"strings"
+
 	"github.com/lerian-studio/lerian-cli/internal/agent"
 )
 
@@ -77,5 +79,46 @@ func TestTheWaitAnswerSurvivesTheFlagDefault(t *testing.T) {
 
 	if !merged.NoWait {
 		t.Error("the answer about waiting was overruled by the flag's default")
+	}
+}
+
+// --no-control-plane stands in for the whole connection. Keeping a real URL
+// beside a placeholder token points the agent at a live control plane with a
+// credential it will reject, while every message says control-plane.invalid.
+func TestPlaceholderAndRealValuesAreRefusedTogether(t *testing.T) {
+	for name, opts := range map[string]agent.Options{
+		"with a control plane": {ControlPlaneURL: "https://cp.example.com"},
+		"with a token":         {Token: agent.EnrollmentPrefix + "x"},
+		"with a secret":        {ExistingSecret: "creds"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := placeholderConnection(opts); err == nil {
+				t.Fatalf("accepted %+v", opts)
+			} else if !strings.Contains(err.Error(), "--no-control-plane") {
+				t.Errorf("the error does not name the conflict: %v", err)
+			}
+		})
+	}
+}
+
+// With nothing given, it supplies both halves — the chart requires a URL and a
+// credential, so this is values rather than an exemption.
+func TestPlaceholderSuppliesBothHalves(t *testing.T) {
+	opts, err := placeholderConnection(agent.Options{Namespace: agent.DefaultNamespace})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if opts.ControlPlaneURL != agent.PlaceholderControlPlane {
+		t.Errorf("control plane = %q", opts.ControlPlaneURL)
+	}
+	if opts.Token != agent.PlaceholderToken {
+		t.Errorf("token = %q", opts.Token)
+	}
+	if !opts.IsPlaceholder() {
+		t.Error("the result is not recognized as a placeholder install")
+	}
+	if err := opts.Validate(); err != nil {
+		t.Errorf("what it built does not validate: %v", err)
 	}
 }

@@ -42,7 +42,7 @@ func Install(ctx context.Context, helm Installer, opts Options, timeout time.Dur
 	// Helm's own message is accurate and stays. What it leaves out is which
 	// thing the operator controls is wrong, and these are the two that are
 	// wrong often enough to be worth naming.
-	if advice := adviseOn(err); advice != "" {
+	if advice := adviseOn(err, opts.Namespace); advice != "" {
 		return fmt.Errorf("%w\n\n%s", err, advice)
 	}
 	return err
@@ -53,7 +53,10 @@ func Install(ctx context.Context, helm Installer, opts Options, timeout time.Dur
 var missingNamespace = regexp.MustCompile(`namespaces "([^"]+)" not found`)
 
 // adviseOn turns the failures worth recognizing into what to do about them.
-func adviseOn(err error) string {
+func adviseOn(err error, namespace string) string {
+	if namespace == "" {
+		namespace = DefaultNamespace
+	}
 	text := err.Error()
 
 	if matches := missingNamespace.FindAllStringSubmatch(text, -1); matches != nil {
@@ -79,15 +82,22 @@ func adviseOn(err error) string {
 	// install did almost everything: the release exists and the pod is running.
 	// What did not happen is readiness, and readiness means registered.
 	if strings.Contains(text, "timed out waiting") || strings.Contains(text, "context deadline exceeded") {
-		return "The objects were created and the pod is running; what did not happen is readiness.\n" +
-			"The agent reports ready on /health/ready only once it has registered with the\n" +
-			"control plane, so a control plane that is unreachable — or does not exist yet —\n" +
-			"means this wait can never end.\n\n" +
-			"What it is doing right now:\n" +
-			"  kubectl -n " + DefaultNamespace + " logs deploy/" + ReleaseName + "\n\n" +
-			"To install without waiting for readiness, which is what you want while the\n" +
-			"control plane is still being built:\n" +
-			"  lerian agent install --wait=false ..."
+		// What the error proves is that readiness did not arrive in time. Why is
+		// a separate question — the pod may be running and unable to register, or
+		// may not have started at all — and the pod is the only thing that says
+		// which. Claiming registration outright sent people to debug a control
+		// plane when the image could not be pulled.
+		return "The objects were created; readiness did not arrive before the timeout.\n\n" +
+			"What the pod is doing:\n" +
+			"  kubectl -n " + namespace + " get pods -l app.kubernetes.io/name=" + ReleaseName + "\n" +
+			"  kubectl -n " + namespace + " logs deploy/" + ReleaseName + "\n\n" +
+			"Running but not ready is usually registration: the agent reports ready on\n" +
+			"/health/ready only once it has registered, so an unreachable control plane —\n" +
+			"or one that does not exist yet — makes this wait one that cannot end. For that\n" +
+			"case, --wait=false returns once the objects exist, and --no-control-plane\n" +
+			"installs against a placeholder.\n\n" +
+			"Pending, CrashLoopBackOff or ImagePullBackOff is something else, and the two\n" +
+			"commands above say which."
 	}
 
 	if strings.Contains(text, "cannot re-use a name that is still in use") {

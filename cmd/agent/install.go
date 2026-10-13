@@ -82,6 +82,24 @@ func profileFlag(cmd *cobra.Command) string {
 	return name
 }
 
+// placeholderConnection fills in a connection for an install that is not meant
+// to reach anything.
+//
+// Refused rather than half-applied when real values are also given: keeping a
+// real URL beside a placeholder token points the agent at a live control plane
+// with a credential it will reject, while every message printed here says it is
+// talking to control-plane.invalid.
+func placeholderConnection(opts agent.Options) (agent.Options, error) {
+	if opts.ControlPlaneURL != "" || opts.Token != "" || opts.ExistingSecret != "" {
+		return opts, fmt.Errorf("--no-control-plane stands in for the connection, so it cannot be " +
+			"combined with --control-plane, --token or --existing-secret. Drop it to use the real " +
+			"values, or drop them to install against a placeholder")
+	}
+	opts.ControlPlaneURL = agent.PlaceholderControlPlane
+	opts.Token = agent.PlaceholderToken
+	return opts, nil
+}
+
 // needsAsking reports that nothing was given, so the questions are the only way
 // to find out.
 //
@@ -120,13 +138,10 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 	// credential regardless, so this supplies them rather than exempting
 	// anything — see agent.PlaceholderControlPlane.
 	if install.noControlPlane {
-		if opts.ControlPlaneURL == "" {
-			opts.ControlPlaneURL = agent.PlaceholderControlPlane
+		var err error
+		if opts, err = placeholderConnection(opts); err != nil {
+			return err
 		}
-		if opts.Token == "" && opts.ExistingSecret == "" {
-			opts.Token = agent.PlaceholderToken
-		}
-		opts.NoWait = true
 	}
 
 	// What auth login already recorded, before anything is asked: a scripted run
@@ -147,6 +162,12 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 	// default would otherwise overrule the answer.
 	if cmd.Flags().Changed("wait") {
 		opts.NoWait = !install.wait
+	}
+	// After the flag, not before: --no-control-plane --wait would otherwise ask
+	// helm to wait for a registration that cannot happen, and spend the whole
+	// timeout finding out.
+	if install.noControlPlane {
+		opts.NoWait = true
 	}
 
 	helm, err := agent.NewHelm()

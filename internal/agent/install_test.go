@@ -21,7 +21,7 @@ const missingNamespaces = `agent: helm could not install the agent: Error: Helm 
 // Helm says what failed. What it does not say is which thing the operator
 // controls is wrong, or that one command fixes it.
 func TestMissingNamespacesBecomeCommands(t *testing.T) {
-	advice := adviseOn(errors.New(missingNamespaces))
+	advice := adviseOn(errors.New(missingNamespaces), DefaultNamespace)
 
 	if advice == "" {
 		t.Fatal("the failure was not recognized")
@@ -40,7 +40,7 @@ func TestMissingNamespacesBecomeCommands(t *testing.T) {
 // object it could not place, which is not the same number.
 func TestARepeatedNamespaceIsListedOnce(t *testing.T) {
 	advice := adviseOn(errors.New(`* namespaces "apps" not found
-* namespaces "apps" not found`))
+* namespaces "apps" not found`), DefaultNamespace)
 
 	if got := strings.Count(advice, "kubectl create namespace apps"); got != 1 {
 		t.Errorf("the same namespace is offered %d times:\n%s", got, advice)
@@ -51,7 +51,7 @@ func TestARepeatedNamespaceIsListedOnce(t *testing.T) {
 // naming — it is what the operator hits on the retry, and the fix is not
 // obvious from helm's own wording.
 func TestANameAlreadyInUsePointsAtUninstall(t *testing.T) {
-	advice := adviseOn(errors.New("Error: cannot re-use a name that is still in use"))
+	advice := adviseOn(errors.New("Error: cannot re-use a name that is still in use"), DefaultNamespace)
 
 	if !strings.Contains(advice, "lerian agent uninstall") {
 		t.Errorf("the advice does not say how to clear it:\n%s", advice)
@@ -69,7 +69,7 @@ func TestUnrelatedFailuresGetNoAdvice(t *testing.T) {
 		"Error: UPGRADE FAILED: another operation is in progress",
 		"",
 	} {
-		if advice := adviseOn(errors.New(text)); advice != "" {
+		if advice := adviseOn(errors.New(text), DefaultNamespace); advice != "" {
 			t.Errorf("invented advice for %q:\n%s", text, advice)
 		}
 	}
@@ -142,8 +142,8 @@ func (r reaching) Install(context.Context, Options, time.Duration) error {
 // says "timed out waiting for the condition", which is true and says nothing
 // about what was waited for or that the agent is in fact running.
 func TestATimeoutExplainsThatReadinessMeansRegistered(t *testing.T) {
-	advice := adviseOn(errors.New("agent: helm could not install the agent: " +
-		"Error: timed out waiting for the condition"))
+	advice := adviseOn(errors.New("agent: helm could not install the agent: "+
+		"Error: timed out waiting for the condition"), "infra")
 
 	if advice == "" {
 		t.Fatal("a readiness timeout was not recognized")
@@ -154,7 +154,16 @@ func TestATimeoutExplainsThatReadinessMeansRegistered(t *testing.T) {
 	if !strings.Contains(advice, "--wait=false") {
 		t.Errorf("it does not offer the way out:\n%s", advice)
 	}
-	if !strings.Contains(advice, "pod is running") {
-		t.Errorf("it does not say the install mostly worked:\n%s", advice)
+	// What the error proves is that readiness did not arrive. Saying the pod is
+	// running is a guess, and a wrong one when the image could not be pulled.
+	if strings.Contains(advice, "the pod is running") {
+		t.Errorf("it states a pod state the error does not establish:\n%s", advice)
+	}
+	if !strings.Contains(advice, "CrashLoopBackOff") {
+		t.Errorf("it does not admit the other reasons readiness never came:\n%s", advice)
+	}
+	// The namespace that was installed into, not the default.
+	if !strings.Contains(advice, "kubectl -n infra") {
+		t.Errorf("it reads logs from the wrong namespace:\n%s", advice)
 	}
 }
