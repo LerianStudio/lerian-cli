@@ -3,11 +3,12 @@ package infra
 import (
 	"testing"
 
-	"github.com/hashicorp/terraform-exec/tfexec"
-	tfjson "github.com/hashicorp/terraform-json"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/hashicorp/terraform-exec/tfexec"
+	tfjson "github.com/hashicorp/terraform-json"
 )
 
 // countChanges replaces the jq the shell version counted plans with. The rule it
