@@ -23,7 +23,7 @@ Official command-line interface for the Lerian platform. One binary, `lerian`, t
 - [Directory layout](#-directory-layout)
 - **[Install](#-install)** — one command, plus packages, `go install` and completions
 - **[Upgrade](#-upgrade)** — move to the current release in place
-- [Usage](#-usage) — flags, authentication, infrastructure, configuration
+- [Usage](#-usage) — flags, authentication, infrastructure, the agent, configuration
 - [Troubleshooting](#-troubleshooting)
 - [Testing & operations](#-testing--operations)
 - [Development](#-development) — building, trying a change, commits
@@ -40,6 +40,7 @@ Give every Lerian operator one tool for the repeatable parts of running the plat
 | `lerian` (no arguments) | Opens an interactive session: pick a command, run it, pick the next one | [`docs/interactive-session.md`](./docs/interactive-session.md) |
 | `lerian auth` | Signs in to the Lerian platform (not AWS) with a named profile | [Authentication](#authentication) |
 | `lerian infra` | Drives the Terraform roots of [lerian-terraform-foundation](https://github.com/LerianStudio/lerian-terraform-foundation) on AWS, from bootstrap to per-product services | [`docs/infra.md`](./docs/infra.md) |
+| `lerian agent` | Installs and manages the Lerian agent in a Kubernetes cluster, over Helm | [`docs/agent.md`](./docs/agent.md) |
 | `lerian config` | Shows or resets what the CLI remembers on this machine; points kubectl at a cluster, signs in to GitHub | [`docs/infra.md`](./docs/infra.md#what-the-cli-remembers-and-how-to-forget-it) |
 | `lerian config repo` | Copies what you configured into a repository of your own, with a Makefile and a README | [`docs/infra.md`](./docs/infra.md#taking-the-estate-with-you) |
 | `lerian version` | Prints build information | — |
@@ -399,6 +400,24 @@ lerian config repo ~/infrastructure
 ```
 
 Run with no `--env` in a terminal and it asks instead. `lerian infra --help` has every flag, the ordering rules and the environment variables it reads. Full walkthrough: [`docs/infra.md`](./docs/infra.md).
+
+### The agent
+
+```bash
+# Install into the cluster kubectl points at
+lerian agent install --control-plane https://cp.example.com --token lerian_enroll_...
+
+# Or without the credential ever passing through the CLI
+lerian agent install --control-plane https://cp.example.com --existing-secret agent-creds
+
+# What is installed, and what it is running
+lerian agent status
+
+# Move to another chart version, keeping every other value
+lerian agent upgrade --chart-version 1.0.2
+```
+
+The agent connects outward to the Lerian control plane and runs the Helm operations it is given; nothing reaches into the cluster from outside. It installs into whatever cluster your kubeconfig points at, so it does not have to be one this CLI created — and the menu at the end of a cluster deploy offers the same installation for the cluster just built. Full reference: [`docs/agent.md`](./docs/agent.md).
 
 ### Configuration
 
