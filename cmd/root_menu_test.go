@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lerian-studio/lerian-cli/internal/infracli"
 	"github.com/spf13/cobra"
+
+	"github.com/lerian-studio/lerian-cli/internal/infracli"
 )
 
 func fakeRoot(t *testing.T) *cobra.Command {
