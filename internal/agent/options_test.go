@@ -36,6 +36,13 @@ func TestValidateRefusesWhatTheChartWould(t *testing.T) {
 			func(o *Options) { o.AgentID = "agent-1" },
 			"--agent-id must be empty",
 		},
+		// The other half of the same rule: a per-agent token carries no identity
+		// of its own, so without the id the agent installs and cannot
+		// authenticate.
+		"per-agent token with no agent id": {
+			func(o *Options) { o.Token = "lerian_agent_abc" },
+			"--agent-id is required",
+		},
 		"cleartext control plane": {
 			func(o *Options) { o.ControlPlaneURL = "http://control.example.com" },
 			"--allow-insecure-http",

@@ -136,6 +136,14 @@ func (o Options) Validate() error {
 		return fmt.Errorf("--agent-id must be empty with an enrollment token: the agent is given its " +
 			"identity when it redeems one, and keeps it in the Secret " + IdentitySecretName)
 	}
+	// The other half of the same rule. The chart refuses this too, in its own
+	// template, so the install fails either way — but it fails naming a line in
+	// secrets.yaml, and the thing to change is a flag.
+	if o.Token != "" && !strings.HasPrefix(o.Token, EnrollmentPrefix) && o.AgentID == "" {
+		return fmt.Errorf("--agent-id is required with a per-agent token: it comes from the same " +
+			"POST /api/tenants/:tenantId/agents response as the token. An enrollment token " +
+			"(" + EnrollmentPrefix + "...) is the form that carries no id")
+	}
 	if !o.AllowInsecureHTTP && !strings.HasPrefix(o.ControlPlaneURL, "https://") {
 		return fmt.Errorf("--control-plane must be https://, or pass --allow-insecure-http. The agent "+
 			"sends its bearer token on every request; cleartext is for an isolated dev cluster only (got %q)",
