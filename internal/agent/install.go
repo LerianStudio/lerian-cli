@@ -70,7 +70,7 @@ func adviseOn(err error) string {
 		out.WriteString("puts a Role and a RoleBinding in each, and Kubernetes has nowhere to put them\n")
 		out.WriteString("otherwise. Create them, or leave them out of --managed-namespaces:\n")
 		for _, name := range names {
-			out.WriteString(fmt.Sprintf("  kubectl create namespace %s\n", name))
+			fmt.Fprintf(&out, "  kubectl create namespace %s\n", name)
 		}
 		return strings.TrimRight(out.String(), "\n")
 	}
@@ -78,7 +78,7 @@ func adviseOn(err error) string {
 	if strings.Contains(text, "cannot re-use a name that is still in use") {
 		return "A release called " + ReleaseName + " is already there and helm will not reuse the name.\n" +
 			"`lerian agent status` says what it is; `lerian agent uninstall` removes it, keeping\n" +
-			"the Secret " + IdentitySecret + " so a reinstall is still the same agent."
+			"the Secret " + IdentitySecretName + " so a reinstall is still the same agent."
 	}
 
 	return ""

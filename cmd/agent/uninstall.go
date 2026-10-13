@@ -19,7 +19,7 @@ var uninstallCmd = &cobra.Command{
 	Short: "Remove the agent, keeping its identity",
 	Long: `Remove the agent from the cluster.
 
-The Secret ` + agent.IdentitySecret + ` is kept, which is the chart's own
+The Secret ` + agent.IdentitySecretName + ` is kept, which is the chart's own
 behavior and the right one: the control plane knows this agent by an identity
 it was given once, and a reinstall that threw it away would arrive as a
 stranger.`,
@@ -66,6 +66,6 @@ func runUninstall(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "\nRemoved. %s was kept, so a reinstall is the same agent.\n",
-		agent.IdentitySecret)
+		agent.IdentitySecretName)
 	return nil
 }

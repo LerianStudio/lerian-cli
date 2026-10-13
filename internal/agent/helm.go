@@ -157,6 +157,10 @@ func (h *Helm) Uninstall(ctx context.Context, namespace string) error {
 
 // run executes helm with its output going to the operator.
 func (h *Helm) run(ctx context.Context, args ...string) error {
+	// #nosec G204 -- the binary is whatever LookPath found for "helm", and every
+	// argument is built in this file from values Options.Validate has already
+	// accepted. Nothing an operator types becomes a command name, and the values
+	// that do come from them reach helm through a file rather than argv.
 	command := exec.CommandContext(ctx, h.binary, h.withContext(args)...)
 	command.Stdout = h.Out
 	command.Stderr = h.Out
@@ -172,6 +176,7 @@ func (h *Helm) run(ctx context.Context, args ...string) error {
 // output executes helm and returns what it printed, for the commands that are
 // read rather than watched.
 func (h *Helm) output(ctx context.Context, args ...string) (string, error) {
+	// #nosec G204 -- see run above: fixed binary, arguments built here.
 	command := exec.CommandContext(ctx, h.binary, h.withContext(args)...)
 	var stderr strings.Builder
 	command.Stderr = &stderr

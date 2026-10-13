@@ -23,9 +23,13 @@ const (
 	Chart = "oci://ghcr.io/lerianstudio/agent-helm"
 	// DefaultNamespace is where the agent runs, which is not where it installs.
 	DefaultNamespace = "lerian-system"
-	// IdentitySecret survives an uninstall, so a reinstall keeps the identity the
-	// control plane already knows.
-	IdentitySecret = "lerian-agent-identity"
+	// IdentitySecretName is the name of the Secret holding the identity, not the
+	// identity itself. The Secret survives an uninstall, so a reinstall keeps the
+	// identity the control plane already knows.
+	// #nosec G101 -- a Kubernetes object name, not a credential. The identity it
+	// refers to is written by the agent into the cluster and never passes
+	// through here.
+	IdentitySecretName = "lerian-agent-identity"
 	// EnrollmentPrefix marks a single-use token that carries no identity yet.
 	EnrollmentPrefix = "lerian_enroll_"
 	// ChartDefaultRegistries is what the chart allows when nothing is set.
@@ -130,7 +134,7 @@ func (o Options) Validate() error {
 	}
 	if strings.HasPrefix(o.Token, EnrollmentPrefix) && o.AgentID != "" {
 		return fmt.Errorf("--agent-id must be empty with an enrollment token: the agent is given its " +
-			"identity when it redeems one, and keeps it in the Secret " + IdentitySecret)
+			"identity when it redeems one, and keeps it in the Secret " + IdentitySecretName)
 	}
 	if !o.AllowInsecureHTTP && !strings.HasPrefix(o.ControlPlaneURL, "https://") {
 		return fmt.Errorf("--control-plane must be https://, or pass --allow-insecure-http. The agent "+

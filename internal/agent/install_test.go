@@ -56,7 +56,7 @@ func TestANameAlreadyInUsePointsAtUninstall(t *testing.T) {
 	if !strings.Contains(advice, "lerian agent uninstall") {
 		t.Errorf("the advice does not say how to clear it:\n%s", advice)
 	}
-	if !strings.Contains(advice, IdentitySecret) {
+	if !strings.Contains(advice, IdentitySecretName) {
 		t.Errorf("and does not say the identity survives:\n%s", advice)
 	}
 }
