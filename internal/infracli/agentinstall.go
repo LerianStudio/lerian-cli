@@ -61,6 +61,21 @@ func installAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poi
 	return nil
 }
 
+// AskAgentOptions asks for an install, for a caller outside this package.
+//
+// `lerian agent install` with no flags arrives here. The alternative was what
+// it did at first: answer somebody who picked "install" off a menu with the
+// usage text of a command they never typed, which leaves them exactly where
+// they started.
+//
+// Outside a terminal, prompter.ask already refuses and names the flag to pass,
+// which is the same contract every other question in this CLI has. A second
+// check here said the same thing in different words and was unreachable in
+// practice.
+func AskAgentOptions(out io.Writer) (agent.Options, error) {
+	return askAgentOptions(newPrompter(out))
+}
+
 // askAgentOptions asks only what this CLI cannot work out for itself.
 func askAgentOptions(ask *prompter) (agent.Options, error) {
 	opts := agent.Options{Namespace: agent.DefaultNamespace}

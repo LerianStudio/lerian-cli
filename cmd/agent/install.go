@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/lerian-studio/lerian-cli/internal/agent"
+	"github.com/lerian-studio/lerian-cli/internal/infracli"
 )
 
 var install struct {
@@ -65,11 +66,47 @@ func init() {
 		"kubeconfig context to install into; empty uses the current one")
 	flags.DurationVar(&install.timeout, "timeout", agent.DefaultTimeout,
 		"how long to wait for the agent to become ready")
+}
 
-	_ = installCmd.MarkFlagRequired("control-plane")
+// needsAsking reports that nothing was given, so the questions are the only way
+// to find out.
+//
+// The control plane URL stands for the whole set: it has no sensible default,
+// so a run without it was never going to work, and a run with it is somebody
+// driving the command rather than picking it off a menu. Printing the usage
+// text of a command nobody typed is what this exists to avoid.
+func needsAsking(flags agent.Options) bool {
+	return flags.ControlPlaneURL == ""
+}
+
+// keepFlags takes the answers while keeping what the caller already said.
+//
+// The questions cover what somebody picking "install" off a menu must be asked:
+// where the control plane is, the token, the namespaces. Everything else has a
+// flag and no question, so an answer set would silently drop
+// `--namespace infra` from a command that carried it.
+func keepFlags(flags, asked agent.Options) agent.Options {
+	asked.Namespace = flags.Namespace
+	asked.ChartVersion = flags.ChartVersion
+	asked.ImageRepository = flags.ImageRepository
+	asked.ImageDigest = flags.ImageDigest
+	asked.AllowedRegistries = flags.AllowedRegistries
+	asked.ImagePullSecrets = flags.ImagePullSecrets
+	asked.AllowInsecureHTTP = flags.AllowInsecureHTTP
+	return asked
 }
 
 func runInstall(cmd *cobra.Command, _ []string) error {
+	opts := install.opts
+
+	if needsAsking(opts) {
+		asked, err := infracli.AskAgentOptions(cmd.OutOrStdout())
+		if err != nil {
+			return err
+		}
+		opts = keepFlags(opts, asked)
+	}
+
 	helm, err := agent.NewHelm()
 	if err != nil {
 		return err
@@ -77,11 +114,11 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 	helm.Context = install.kubeContext
 	helm.Out = cmd.OutOrStdout()
 
-	if err := agent.Install(cmd.Context(), helm, install.opts, install.timeout); err != nil {
+	if err := agent.Install(cmd.Context(), helm, opts, install.timeout); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "\nThe agent is installed in %s.\n", install.opts.Namespace)
+	fmt.Fprintf(cmd.OutOrStdout(), "\nThe agent is installed in %s.\n", opts.Namespace)
 	fmt.Fprintf(cmd.OutOrStdout(), "It appears in the control plane once it sends its first heartbeat:\n")
 	fmt.Fprintf(cmd.OutOrStdout(), "  lerian agent status\n")
 	return nil

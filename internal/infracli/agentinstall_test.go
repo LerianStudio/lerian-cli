@@ -87,3 +87,30 @@ func TestNoManagedNamespacesSaysWhatThatMeans(t *testing.T) {
 		t.Errorf("the list is not rendered: %q", got)
 	}
 }
+
+// `lerian agent install` with no flags reaches this. Outside a terminal it must
+// say what is missing rather than block on a question nobody will answer — a
+// flag missing in CI is a flag to add to the script.
+func TestAskingForAnInstallOutsideATerminalSaysWhatIsMissing(t *testing.T) {
+	var out strings.Builder
+
+	_, err := AskAgentOptions(&out)
+
+	if err == nil {
+		t.Fatal("it tried to ask with no terminal")
+	}
+	if !strings.Contains(err.Error(), "--control-plane") {
+		t.Errorf("the error does not name the flag to add: %v", err)
+	}
+	if !strings.Contains(err.Error(), "no terminal") {
+		t.Errorf("and does not say why it could not ask: %v", err)
+	}
+	// The first question is the one that fails, so the message is about the
+	// control plane rather than about the token two questions later.
+	if strings.Contains(err.Error(), "--token") {
+		t.Errorf("it reported a later question instead of the first: %v", err)
+	}
+	if out.String() != "" {
+		t.Errorf("it printed a prompt anyway:\n%s", out.String())
+	}
+}
