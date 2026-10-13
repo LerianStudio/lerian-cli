@@ -33,7 +33,15 @@ What now?
 ```
 
 Both end up in the same code. The second only asks what the CLI cannot work out
-for itself — where the control plane is, and the token it issued.
+for itself.
+
+Where the control plane is, it usually can: `lerian auth login` records the
+platform's `api-url` in a profile, and the agent connects to that same platform.
+So `--control-plane` defaults to the current profile's URL, the question offers
+it as the answer Enter accepts, and only a cluster pointed at a different
+control plane has to type one. The chart has no default of its own — it refuses
+to render without the URL — so this is a value somebody always has to have, not
+one worth asking for twice.
 
 The offer appears after an `apply` that left a cluster behind, never after a
 `plan`, and never preselected: it reaches a real cluster and needs a credential

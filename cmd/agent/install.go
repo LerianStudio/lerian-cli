@@ -39,7 +39,7 @@ otherwise.`,
 func init() {
 	flags := installCmd.Flags()
 	flags.StringVar(&install.opts.ControlPlaneURL, "control-plane", "",
-		"base URL of the Lerian control plane")
+		"base URL of the Lerian control plane (default: the api-url of the current auth profile)")
 	flags.StringVar(&install.opts.Token, "token", "",
 		"enrollment or per-agent token from the control plane")
 	flags.StringVar(&install.opts.AgentID, "agent-id", "",
@@ -66,6 +66,12 @@ func init() {
 		"kubeconfig context to install into; empty uses the current one")
 	flags.DurationVar(&install.timeout, "timeout", agent.DefaultTimeout,
 		"how long to wait for the agent to become ready")
+}
+
+// profileFlag is the --profile the root command defines, when it was given.
+func profileFlag(cmd *cobra.Command) string {
+	name, _ := cmd.Flags().GetString("profile")
+	return name
 }
 
 // needsAsking reports that nothing was given, so the questions are the only way
@@ -98,6 +104,12 @@ func keepFlags(flags, asked agent.Options) agent.Options {
 
 func runInstall(cmd *cobra.Command, _ []string) error {
 	opts := install.opts
+
+	// What auth login already recorded, before anything is asked: a scripted run
+	// that signed in should not also have to repeat where it signed in to.
+	if opts.ControlPlaneURL == "" {
+		opts.ControlPlaneURL = agent.ControlPlaneFromProfile(profileFlag(cmd))
+	}
 
 	if needsAsking(opts) {
 		asked, err := infracli.AskAgentOptions(cmd.OutOrStdout())

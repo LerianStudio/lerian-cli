@@ -80,9 +80,16 @@ func AskAgentOptions(out io.Writer) (agent.Options, error) {
 func askAgentOptions(ask *prompter) (agent.Options, error) {
 	opts := agent.Options{Namespace: agent.DefaultNamespace}
 
-	url, err := ask.ask("Where is the Lerian control plane?",
-		"The agent connects outward to it. https:// — it sends a bearer token on every request.",
-		"", "--control-plane")
+	// Offered rather than asked blind: `lerian auth login` already wrote where
+	// the platform is, and the agent connects to that same platform. Enter takes
+	// it; a different cluster talking to a different control plane is the case
+	// that types one.
+	known := agent.ControlPlaneFromProfile("")
+	purpose := "The agent connects outward to it. https:// — it sends a bearer token on every request."
+	if known != "" {
+		purpose += " Enter takes the one you signed in to."
+	}
+	url, err := ask.ask("Where is the Lerian control plane?", purpose, known, "--control-plane")
 	if err != nil {
 		return opts, err
 	}
