@@ -81,17 +81,17 @@ func (r ResourceInUse) Advice(dir string) string {
 	var out strings.Builder
 
 	out.WriteString("This is drift, not a conflict with somebody else.\n")
-	out.WriteString(fmt.Sprintf(
+	fmt.Fprintf(&out,
 		"AWS has %s; the state does not. That happens when a run is killed between\n"+
 			"creating a resource and writing the state down — the API call completed, the\n"+
 			"record never landed. Every later run repeats this failure until the state\n"+
-			"catches up.\n", r.Kind))
+			"catches up.\n", r.Kind)
 
 	switch {
 	case r.Orphan && r.Address != "" && r.ImportID != "":
 		out.WriteString("\nTo put it back in the state:\n")
-		out.WriteString(fmt.Sprintf("  terraform -chdir=%s import '%s' %s\n",
-			dir, r.Address, r.ImportID))
+		fmt.Fprintf(&out, "  terraform -chdir=%s import '%s' %s\n",
+			dir, r.Address, r.ImportID)
 		out.WriteString("\nIf that import is refused by a count the module cannot resolve, and the\n" +
 			"intent was to destroy anyway, deleting the resource in AWS reaches the same\n" +
 			"place: the state never knew about it.\n")
