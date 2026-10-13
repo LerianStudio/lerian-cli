@@ -932,11 +932,16 @@ func unlockOne(
 }
 
 func printFailureAdvice(out io.Writer, unit infra.UnitResult) {
-	lock := infra.ReadStateLock(unit.Err.Error())
-	if lock == nil {
+	if lock := infra.ReadStateLock(unit.Err.Error()); lock != nil {
+		fmt.Fprintf(out, "\n%s\n", indent(lock.Advice(unit.Unit.Dir, time.Now()), "  "))
 		return
 	}
-	fmt.Fprintf(out, "\n%s\n", indent(lock.Advice(unit.Unit.Dir, time.Now()), "  "))
+	// A resource AWS has and the state does not. Worth recognizing for the same
+	// reason as the lock: Terraform's message is accurate and says nothing about
+	// the cause, and the fix is one command nobody can write from memory.
+	if drift := infra.ReadResourceInUse(unit.Err.Error()); drift != nil {
+		fmt.Fprintf(out, "\n%s\n", indent(drift.Advice(unit.Unit.Dir), "  "))
+	}
 }
 
 // guardCredentialLifetime says out loud how long the run's credentials have, and

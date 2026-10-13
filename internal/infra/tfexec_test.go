@@ -3,6 +3,11 @@ package infra
 import (
 	"testing"
 
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/hashicorp/terraform-exec/tfexec"
 	tfjson "github.com/hashicorp/terraform-json"
 )
 
@@ -76,5 +81,72 @@ func TestCountChanges(t *testing.T) {
 				t.Errorf("Empty() = %v for %+v", got.Empty(), got)
 			}
 		})
+	}
+}
+
+// The grace period has one job: outlive the slowest thing Terraform can be in
+// the middle of when it is interrupted. What it is protecting against is a real
+// incident — an EKS node group created in AWS at 19:44:39 whose last state write
+// was 19:44:31, because terraform-exec's 60-second default killed Terraform
+// before it could record what it had just made.
+//
+// This asserts the one thing a unit test can: that the value is still well clear
+// of that default, and that tfexec accepts it. Whether an interrupted Terraform
+// actually finishes inside it cannot be proven without a real binary and a real
+// apply; what this catches is somebody tuning the constant back down to
+// something that does not survive a node group.
+func TestTheShutdownGraceOutlivesTheDangerousDefault(t *testing.T) {
+	const tfexecDefault = 60 * time.Second
+
+	if gracefulShutdown <= tfexecDefault {
+		t.Fatalf("the grace period is %v, no better than terraform-exec's own %v default",
+			gracefulShutdown, tfexecDefault)
+	}
+	// An EKS node group takes three to five minutes to come up, and it is the
+	// slowest single resource these roots create.
+	if gracefulShutdown < 10*time.Minute {
+		t.Errorf("%v does not outlive an EKS node group being created", gracefulShutdown)
+	}
+	// Not unbounded either: a Terraform that is genuinely stuck has to die.
+	if gracefulShutdown == 0 {
+		t.Error("a zero grace period waits forever on a stuck Terraform")
+	}
+
+	client, err := tfexec.NewTerraform(t.TempDir(), "/usr/bin/false")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetWaitDelay(gracefulShutdown); err != nil {
+		t.Errorf("tfexec rejects the grace period: %v", err)
+	}
+}
+
+// And that every client actually gets it. A constant nobody applies is the
+// mutation a check on the value alone walks straight past — the client would go
+// back to terraform-exec's 60-second default and nothing would say so.
+func TestEveryClientIsGivenTheShutdownGrace(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "terraform")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []time.Duration
+	previous := setWaitDelay
+	setWaitDelay = func(client *tfexec.Terraform, delay time.Duration) error {
+		got = append(got, delay)
+		return previous(client, delay)
+	}
+	t.Cleanup(func() { setWaitDelay = previous })
+
+	cli := &CLI{execPath: fake, byDir: map[string]*tfexec.Terraform{}}
+	if _, err := cli.terraform(Unit{Dir: t.TempDir(), Name: "infra-base/eks"}); err != nil {
+		t.Fatalf("terraform() = %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("the grace period was set %d times, want once: %v", len(got), got)
+	}
+	if got[0] != gracefulShutdown {
+		t.Errorf("set to %v, want %v", got[0], gracefulShutdown)
 	}
 }
