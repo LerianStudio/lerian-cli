@@ -43,7 +43,7 @@ func TestTheApplyFailureYieldsAnImportCommand(t *testing.T) {
 	}
 
 	advice := drift.Advice("/checkout/examples/aws/infra-base/eks")
-	if !strings.Contains(advice, "terraform -chdir='/checkout/examples/aws/infra-base/eks' import '"+want+"' example-eks:example-eks-default") {
+	if !strings.Contains(advice, "terraform -chdir='/checkout/examples/aws/infra-base/eks' import '"+want+"' 'example-eks:example-eks-default'") {
 		t.Errorf("the advice does not carry a runnable import:\n%s", advice)
 	}
 }
@@ -67,7 +67,7 @@ func TestTheDestroyFailureDoesNotOfferAnImport(t *testing.T) {
 	// be offering a command that cannot be completed. Saying the word while
 	// explaining the options is fine; printing `terraform ... import '<addr>'`
 	// is not.
-	if strings.Contains(advice, "' import '") {
+	if strings.Contains(advice, " import '") {
 		t.Errorf("it offers an import command for a resource it cannot name:\n%s", advice)
 	}
 	if !strings.Contains(advice, "list-nodegroups") {
@@ -152,5 +152,23 @@ func TestTheImportCommandSurvivesASpaceInThePath(t *testing.T) {
 
 	if !strings.Contains(advice, "-chdir='/Users/a b/infrastructure'") {
 		t.Errorf("the path is not quoted, so the command splits:\n%s", advice)
+	}
+}
+
+// A for_each key can hold an apostrophe: module.x["o'brien"] is a legal
+// address. One unquoted value is enough to break the command this promises is
+// ready to run.
+func TestTheImportCommandSurvivesAnApostropheInTheAddress(t *testing.T) {
+	failure := `Error: creating EKS Node Group (example-eks:example-eks-default): ` +
+		`ResourceInUseException: NodeGroup already exists with name example-eks-default and cluster name example-eks
+
+    with module.eks.module.eks_managed_node_group["o'brien"].aws_eks_node_group.this[0],`
+
+	advice := ReadResourceInUse(failure).Advice("/checkout")
+
+	// Closed, emitted, reopened — the only way a single quote survives inside
+	// single quotes.
+	if !strings.Contains(advice, `'module.eks.module.eks_managed_node_group["o'\''brien"].aws_eks_node_group.this[0]'`) {
+		t.Errorf("the apostrophe breaks the command:\n%s", advice)
 	}
 }

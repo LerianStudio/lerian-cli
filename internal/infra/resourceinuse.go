@@ -99,14 +99,20 @@ func (r ResourceInUse) Advice(dir string) string {
 	case r.Orphan && r.Address != "" && r.ImportID != "":
 		// Terraform planned to create it, so the state does not have it, and AWS
 		// says it is there. That pair is drift, and this one is safe to assert.
-		fmt.Fprintf(&out,
-			"AWS already has %s and Terraform planned to create it, so it is missing from\n"+
-				"the state. A run killed between creating a resource and writing the state\n"+
-				"down does this: the API call completed, the record never landed. Every later\n"+
-				"run repeats the failure until the state catches up.\n", r.Kind)
+		// The name goes on a line of its own: it is as long as the resource
+		// somebody named, and wrapping around it is how a paragraph ends up at
+		// 120 columns in a terminal that is 80.
+		fmt.Fprintf(&out, "AWS already has %s, and Terraform planned to create it.\n\n", r.Kind)
+		out.WriteString("So it is missing from the state. A run killed between creating a resource\n" +
+			"and writing the state down does this: the API call completed, the record\n" +
+			"never landed. Every later run repeats the failure until the state catches up.\n")
 		out.WriteString("\nTo put it back in the state:\n")
-		fmt.Fprintf(&out, "  terraform -chdir=%s import '%s' %s\n",
-			shellQuote(dir), r.Address, r.ImportID)
+		// Every one of the three quoted, not just the directory: a for_each key
+		// can hold an apostrophe — module.x["o'brien"] is a legal address — and
+		// one unquoted value is enough to break the command this promises is
+		// ready to run.
+		fmt.Fprintf(&out, "  terraform -chdir=%s import %s %s\n",
+			shellQuote(dir), shellQuote(r.Address), shellQuote(r.ImportID))
 		out.WriteString("\nIf that import is refused by a count the module cannot resolve, and the\n" +
 			"intent was to destroy anyway, deleting the resource in AWS reaches the same\n" +
 			"place — but only once you have confirmed it is yours to delete.\n")
