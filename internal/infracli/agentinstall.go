@@ -78,6 +78,7 @@ func AskAgentOptions(out io.Writer) (agent.Options, error) {
 
 // askAgentOptions asks only what this CLI cannot work out for itself.
 func askAgentOptions(ask *prompter) (agent.Options, error) {
+	out := ask.out
 	opts := agent.Options{Namespace: agent.DefaultNamespace}
 
 	// Offered rather than asked blind: `lerian auth login` already wrote where
@@ -86,14 +87,36 @@ func askAgentOptions(ask *prompter) (agent.Options, error) {
 	// that types one.
 	known := agent.ControlPlaneFromProfile("")
 	purpose := "The agent connects outward to it. https:// — it sends a bearer token on every request."
-	if known != "" {
+	switch {
+	case known != "":
 		purpose += " Enter takes the one you signed in to."
+	default:
+		// The state this CLI is used in today: the control plane is still being
+		// built. Refusing to install until it exists would be refusing to test
+		// everything that does not depend on it — the chart, the RBAC, the pod.
+		purpose += " Leave empty if it does not exist yet."
 	}
 	url, err := ask.ask("Where is the Lerian control plane?", purpose, known, "--control-plane")
 	if err != nil {
 		return opts, err
 	}
 	opts.ControlPlaneURL = strings.TrimSpace(url)
+
+	if opts.ControlPlaneURL == "" {
+		// Both, because a token without somewhere to redeem it is no more useful
+		// than a URL with nothing to present.
+		opts.ControlPlaneURL = agent.PlaceholderControlPlane
+		opts.Token = agent.PlaceholderToken
+		opts.NoWait = true
+
+		fmt.Fprintf(out, "\n  %s\n", newStyle(out).bold("Installing without a control plane"))
+		fmt.Fprintf(out, "  The agent will start and retry against %s, which never\n", agent.PlaceholderControlPlane)
+		fmt.Fprintf(out, "  resolves. That exercises the chart, the RBAC and the pod — not the\n")
+		fmt.Fprintf(out, "  registration, which is the part that needs a control plane.\n")
+		fmt.Fprintf(out, "  Re-run this with the real values when it exists; it is the same command.\n")
+
+		return askManagedNamespaces(ask, opts)
+	}
 
 	token, err := ask.ask("Enrollment token?",
 		"Single-use, from POST /api/tenants/:tenantId/agents/enrollments. "+
@@ -104,17 +127,9 @@ func askAgentOptions(ask *prompter) (agent.Options, error) {
 	}
 	opts.Token = strings.TrimSpace(token)
 
-	namespaces, err := ask.ask("Namespaces the agent may install into?",
-		"Comma-separated, and each must already exist. Leave empty to decide later — "+
-			"adding one is another install with the same values.",
-		"", "--managed-namespaces")
+	opts, err = askManagedNamespaces(ask, opts)
 	if err != nil {
 		return opts, err
-	}
-	for _, name := range strings.Split(namespaces, ",") {
-		if name = strings.TrimSpace(name); name != "" {
-			opts.ManagedNamespaces = append(opts.ManagedNamespaces, name)
-		}
 	}
 
 	// Asked, because waiting is right when the control plane is there and a trap
@@ -122,6 +137,12 @@ func askAgentOptions(ask *prompter) (agent.Options, error) {
 	// does not answer this waits the whole timeout and then fails with the agent
 	// running the entire time. Nothing the CLI can see tells it which case this
 	// is — only the person who knows whether that URL is live yet.
+	if opts.IsPlaceholder() {
+		// Nothing to wait for, and asking would be offering a choice with one
+		// answer.
+		return opts, opts.Validate()
+	}
+
 	wait, err := ask.pick("Wait for the agent to connect?",
 		"It reports ready once it has registered with the control plane.", "",
 		[]option{
@@ -141,6 +162,24 @@ func askAgentOptions(ask *prompter) (agent.Options, error) {
 		return opts, err
 	}
 	return opts, nil
+}
+
+// askManagedNamespaces is the last question, reached whether or not there is a
+// control plane to point at.
+func askManagedNamespaces(ask *prompter, opts agent.Options) (agent.Options, error) {
+	namespaces, err := ask.ask("Namespaces the agent may install into?",
+		"Comma-separated, and each must already exist. Leave empty to decide later — "+
+			"adding one is another install with the same values.",
+		"", "--managed-namespaces")
+	if err != nil {
+		return opts, err
+	}
+	for _, name := range strings.Split(namespaces, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			opts.ManagedNamespaces = append(opts.ManagedNamespaces, name)
+		}
+	}
+	return opts, opts.Validate()
 }
 
 // describeCredential says which form was given without printing it.

@@ -233,3 +233,40 @@ func TestWaitingIsTheDefaultAndCanBeTurnedOff(t *testing.T) {
 		t.Error("the option did not take")
 	}
 }
+
+// "The control plane does not exist yet" is a real answer, and the chart still
+// requires a URL and a credential — so it is answered with values, not with an
+// exemption. They have to be values that cannot accidentally be real.
+func TestThePlaceholdersAreUnroutableAndRecognizable(t *testing.T) {
+	opts := Options{
+		Namespace:       DefaultNamespace,
+		ControlPlaneURL: PlaceholderControlPlane,
+		Token:           PlaceholderToken,
+	}
+
+	// It must pass the same validation as any other install: the chart is going
+	// to render these.
+	if err := opts.Validate(); err != nil {
+		t.Errorf("the placeholder install does not validate: %v", err)
+	}
+	if !opts.IsPlaceholder() {
+		t.Error("a placeholder install is not recognized as one")
+	}
+	// .invalid is reserved by RFC 2606 and never resolves, so the agent retries
+	// against something nobody could have meant.
+	if !strings.HasSuffix(PlaceholderControlPlane, ".invalid") {
+		t.Errorf("the placeholder could resolve to a real host: %q", PlaceholderControlPlane)
+	}
+	// https, or the cleartext rule would have to be waived for it.
+	if !strings.HasPrefix(PlaceholderControlPlane, "https://") {
+		t.Errorf("the placeholder would need --allow-insecure-http: %q", PlaceholderControlPlane)
+	}
+	// An enrollment token, so it does not also demand an agent id.
+	if !strings.HasPrefix(PlaceholderToken, EnrollmentPrefix) {
+		t.Errorf("the placeholder token would require --agent-id: %q", PlaceholderToken)
+	}
+
+	if (Options{ControlPlaneURL: "https://real.example.com", Token: "lerian_enroll_x"}).IsPlaceholder() {
+		t.Error("a real install was taken for a placeholder")
+	}
+}

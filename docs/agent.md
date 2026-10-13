@@ -136,15 +136,19 @@ it has signed in to the control plane. So an install against a control plane
 that is not reachable yet waits the whole timeout and then fails — with the pod
 running the entire time, which makes the failure read worse than it is.
 
-`--wait=false` returns once the objects exist:
+There is a shorter way to say all of that:
 
 ```bash
-lerian agent install --control-plane https://placeholder.invalid \
-  --token lerian_enroll_placeholder --wait=false
+lerian agent install --no-control-plane
 ```
 
+It supplies `https://control-plane.invalid` and a placeholder enrollment token —
+`.invalid` is reserved by RFC 2606 and never resolves, so the agent retries
+against something nobody could have meant — and does not wait for readiness. The
+interactive install does the same when the control plane question is left empty.
+
 That still exercises most of it: the chart renders, the release is created, the
-RBAC lands in the managed namespaces, and the agent starts and initialises its
+RBAC lands in the managed namespaces, and the agent starts and initializes its
 Kubernetes client. What it does not exercise is registration, which is the part
 that needs a control plane.
 

@@ -11,10 +11,11 @@ import (
 )
 
 var install struct {
-	opts        agent.Options
-	kubeContext string
-	timeout     time.Duration
-	wait        bool
+	opts           agent.Options
+	kubeContext    string
+	timeout        time.Duration
+	wait           bool
+	noControlPlane bool
 }
 
 var installCmd = &cobra.Command{
@@ -67,6 +68,9 @@ func init() {
 		"kubeconfig context to install into; empty uses the current one")
 	flags.DurationVar(&install.timeout, "timeout", agent.DefaultTimeout,
 		"how long to wait for the agent to become ready")
+	flags.BoolVar(&install.noControlPlane, "no-control-plane", false,
+		"install against a placeholder, for a control plane that does not exist yet: "+
+			"it exercises the chart, the RBAC and the pod, but never the registration")
 	flags.BoolVar(&install.wait, "wait", true,
 		"wait for the agent to become ready; --wait=false returns once the objects exist, "+
 			"which is what you want against a control plane that does not exist yet")
@@ -111,6 +115,19 @@ func keepFlags(flags, asked agent.Options) agent.Options {
 
 func runInstall(cmd *cobra.Command, _ []string) error {
 	opts := install.opts
+
+	// An install nobody expects to connect. The chart requires a URL and a
+	// credential regardless, so this supplies them rather than exempting
+	// anything — see agent.PlaceholderControlPlane.
+	if install.noControlPlane {
+		if opts.ControlPlaneURL == "" {
+			opts.ControlPlaneURL = agent.PlaceholderControlPlane
+		}
+		if opts.Token == "" && opts.ExistingSecret == "" {
+			opts.Token = agent.PlaceholderToken
+		}
+		opts.NoWait = true
+	}
 
 	// What auth login already recorded, before anything is asked: a scripted run
 	// that signed in should not also have to repeat where it signed in to.

@@ -38,6 +38,26 @@ const (
 	ChartDefaultRegistries = "ghcr.io/lerianstudio"
 )
 
+// Placeholders stand in for a control plane that has not been built yet.
+//
+// The chart requires a URL and a credential and will not render without them,
+// so "install it anyway, I have nowhere to point it" needs values rather than
+// an exemption. .invalid is reserved by RFC 2606 and never resolves, which is
+// the point: the agent starts, retries, and says plainly where it was trying to
+// reach, instead of finding some real host nobody meant to name.
+const (
+	PlaceholderControlPlane = "https://control-plane.invalid"
+	PlaceholderToken        = EnrollmentPrefix + "placeholder"
+)
+
+// IsPlaceholder reports an install that was never going to connect.
+//
+// Worth knowing rather than inferring: an install with these values should not
+// wait for readiness, and should say what it did and did not prove.
+func (o Options) IsPlaceholder() bool {
+	return o.ControlPlaneURL == PlaceholderControlPlane || o.Token == PlaceholderToken
+}
+
 // Options is everything the chart needs that this CLI does not already know.
 type Options struct {
 	// Namespace is where the agent itself runs.
