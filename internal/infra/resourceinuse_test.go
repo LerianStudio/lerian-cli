@@ -43,7 +43,7 @@ func TestTheApplyFailureYieldsAnImportCommand(t *testing.T) {
 	}
 
 	advice := drift.Advice("/checkout/examples/aws/infra-base/eks")
-	if !strings.Contains(advice, "terraform -chdir=/checkout/examples/aws/infra-base/eks import '"+want+"' example-eks:example-eks-default") {
+	if !strings.Contains(advice, "terraform -chdir='/checkout/examples/aws/infra-base/eks' import '"+want+"' example-eks:example-eks-default") {
 		t.Errorf("the advice does not carry a runnable import:\n%s", advice)
 	}
 }
@@ -56,12 +56,19 @@ func TestTheDestroyFailureDoesNotOfferAnImport(t *testing.T) {
 		t.Fatal("the failure was not recognized")
 	}
 	if drift.Orphan {
-		t.Error("nothing here is importable: the attached resource is not in the state")
+		t.Error("nothing here is importable: the attached resource may not be in the state")
+	}
+	if !drift.Blocked {
+		t.Error("something attached is blocking the removal, and that is its own case")
 	}
 
 	advice := drift.Advice("/checkout/examples/aws/infra-base/eks")
-	if strings.Contains(advice, "terraform -chdir") && strings.Contains(advice, "import") {
-		t.Errorf("it offers an import for a resource it cannot name:\n%s", advice)
+	// No runnable import: there is no address to import, and offering one would
+	// be offering a command that cannot be completed. Saying the word while
+	// explaining the options is fine; printing `terraform ... import '<addr>'`
+	// is not.
+	if strings.Contains(advice, "' import '") {
+		t.Errorf("it offers an import command for a resource it cannot name:\n%s", advice)
 	}
 	if !strings.Contains(advice, "list-nodegroups") {
 		t.Errorf("and it does not say how to find what is attached:\n%s", advice)
@@ -77,10 +84,7 @@ func TestBothFailuresExplainTheCause(t *testing.T) {
 			t.Fatalf("%s: not recognized", name)
 		}
 		advice := drift.Advice("/dir")
-		if !strings.Contains(advice, "This is drift, not a conflict with somebody else.") {
-			t.Errorf("%s: does not rule out the obvious wrong guess:\n%s", name, advice)
-		}
-		if !strings.Contains(advice, "killed between") {
+		if !strings.Contains(advice, "killed") {
 			t.Errorf("%s: does not say what produces this:\n%s", name, advice)
 		}
 	}
@@ -97,5 +101,56 @@ func TestUnrelatedFailuresAreNotRecognized(t *testing.T) {
 		if drift := ReadResourceInUse(text); drift != nil {
 			t.Errorf("recognized a failure that is not this one: %q -> %+v", text, drift)
 		}
+	}
+}
+
+// The exception says something is attached. It does not say the state is
+// missing it: AWS refuses this whenever node groups exist, including when
+// Terraform knows about them and is simply removing things in an order AWS will
+// not take. Stating drift as fact sent somebody to import what was already
+// there.
+func TestTheDestroyFailureDoesNotAssertDrift(t *testing.T) {
+	advice := ReadResourceInUse(destroyFailure).Advice("/dir")
+
+	for _, claim := range []string{"This is drift", "the state does not"} {
+		if strings.Contains(advice, claim) {
+			t.Errorf("it asserts %q, which the exception does not establish:\n%s", claim, advice)
+		}
+	}
+	if !strings.Contains(advice, "state list") {
+		t.Errorf("it does not ask for the state to be checked first:\n%s", advice)
+	}
+	if !strings.Contains(advice, "often") {
+		t.Errorf("it does not present drift as one explanation among others:\n%s", advice)
+	}
+}
+
+// A ResourceInUseException this does not recognize is neither importable nor
+// known to be blocked by node groups. Telling somebody to list node groups for
+// a failure that has nothing to do with EKS is worse than saying less.
+func TestAnUnrecognizedExceptionGetsNoEKSAdvice(t *testing.T) {
+	drift := ReadResourceInUse("Error: deleting Something Else: ResourceInUseException: in use")
+	if drift == nil {
+		t.Fatal("not recognized at all")
+	}
+	if drift.Blocked || drift.Orphan {
+		t.Errorf("an unrecognized exception was classified: %+v", drift)
+	}
+
+	advice := drift.Advice("/dir")
+	if strings.Contains(advice, "list-nodegroups") {
+		t.Errorf("it offers an EKS command for a failure that may not be EKS:\n%s", advice)
+	}
+	if !strings.Contains(advice, "state list") {
+		t.Errorf("it does not say how to find out:\n%s", advice)
+	}
+}
+
+// A checkout path with a space must survive into a command somebody can run.
+func TestTheImportCommandSurvivesASpaceInThePath(t *testing.T) {
+	advice := ReadResourceInUse(applyFailure).Advice("/Users/a b/infrastructure")
+
+	if !strings.Contains(advice, "-chdir='/Users/a b/infrastructure'") {
+		t.Errorf("the path is not quoted, so the command splits:\n%s", advice)
 	}
 }

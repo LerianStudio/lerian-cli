@@ -29,6 +29,11 @@ type ResourceInUse struct {
 	// the importable case. False when the state is the thing holding a reference
 	// to something that must go first.
 	Orphan bool
+	// Blocked is true when something attached to the resource must go first.
+	// Separate from !Orphan: a ResourceInUseException this does not recognize is
+	// neither, and telling somebody to list node groups for a failure that has
+	// nothing to do with EKS is worse than saying less.
+	Blocked bool
 }
 
 var (
@@ -65,8 +70,8 @@ func ReadResourceInUse(text string) *ResourceInUse {
 	if clusterHasNodeGroups.MatchString(text) {
 		return &ResourceInUse{
 			Address: address,
-			Kind:    "the cluster's node groups",
-			Orphan:  false,
+			Kind:    "node groups attached to the cluster",
+			Blocked: true,
 		}
 	}
 
@@ -76,32 +81,57 @@ func ReadResourceInUse(text string) *ResourceInUse {
 	return &ResourceInUse{Address: address, Kind: "the resource named above"}
 }
 
+// shellQuote renders a path for a command line somebody is invited to run.
+//
+// Single quotes, not %q: a checkout under "/Users/a b/work" splits into two
+// arguments otherwise, and the ready-to-run command this promises would not
+// run. Inside single quotes nothing is substituted; the only character needing
+// care is the quote itself, which has to be closed, emitted and reopened.
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
 // Advice is what to do about it, with this run's directory already in it.
 func (r ResourceInUse) Advice(dir string) string {
 	var out strings.Builder
 
-	out.WriteString("This is drift, not a conflict with somebody else.\n")
-	fmt.Fprintf(&out,
-		"AWS has %s; the state does not. That happens when a run is killed between\n"+
-			"creating a resource and writing the state down — the API call completed, the\n"+
-			"record never landed. Every later run repeats this failure until the state\n"+
-			"catches up.\n", r.Kind)
-
 	switch {
 	case r.Orphan && r.Address != "" && r.ImportID != "":
+		// Terraform planned to create it, so the state does not have it, and AWS
+		// says it is there. That pair is drift, and this one is safe to assert.
+		fmt.Fprintf(&out,
+			"AWS already has %s and Terraform planned to create it, so it is missing from\n"+
+				"the state. A run killed between creating a resource and writing the state\n"+
+				"down does this: the API call completed, the record never landed. Every later\n"+
+				"run repeats the failure until the state catches up.\n", r.Kind)
 		out.WriteString("\nTo put it back in the state:\n")
 		fmt.Fprintf(&out, "  terraform -chdir=%s import '%s' %s\n",
-			dir, r.Address, r.ImportID)
+			shellQuote(dir), r.Address, r.ImportID)
 		out.WriteString("\nIf that import is refused by a count the module cannot resolve, and the\n" +
 			"intent was to destroy anyway, deleting the resource in AWS reaches the same\n" +
-			"place: the state never knew about it.\n")
-	case !r.Orphan:
-		out.WriteString("\nThe thing in the way is not in the state either, so Terraform cannot remove\n" +
-			"it first. List what is attached and deal with it before re-running:\n")
+			"place — but only once you have confirmed it is yours to delete.\n")
+
+	case r.Blocked:
+		// Here the cause is genuinely open. Drift is one explanation and a common
+		// one, but AWS refuses this whenever something is attached — including
+		// when Terraform knows about it perfectly well and is removing things in
+		// an order AWS will not take.
+		fmt.Fprintf(&out,
+			"AWS will not remove it while %s exist.\n\n"+
+				"That is often drift — something created by a run that was killed before it\n"+
+				"wrote the state — but it is not the only reason, so check before concluding:\n",
+			r.Kind)
+		fmt.Fprintf(&out, "  terraform -chdir=%s state list\n", shellQuote(dir))
 		out.WriteString("  aws eks list-nodegroups --cluster-name <cluster> --region <region>\n")
+		out.WriteString("\nIn the state as well: re-run, and let Terraform remove them in order.\n" +
+			"Missing from the state: import them, or remove them in AWS once you have\n" +
+			"confirmed they are yours to remove.\n")
+
 	default:
-		out.WriteString("\nCompare what AWS has against `terraform state list`, and import what is\n" +
-			"missing before re-running.\n")
+		fmt.Fprintf(&out,
+			"AWS is refusing to touch %s because something is still using it. Compare what\n"+
+				"AWS has against the state before concluding which:\n", r.Kind)
+		fmt.Fprintf(&out, "  terraform -chdir=%s state list\n", shellQuote(dir))
 	}
 	return strings.TrimRight(out.String(), "\n")
 }
