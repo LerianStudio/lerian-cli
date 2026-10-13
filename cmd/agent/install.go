@@ -174,7 +174,7 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	helm.Context = install.kubeContext
+	helm.Context = target.Context
 	helm.Out = cmd.OutOrStdout()
 
 	if err := agent.Install(cmd.Context(), helm, opts, install.timeout); err != nil {

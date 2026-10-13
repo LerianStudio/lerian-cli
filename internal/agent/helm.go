@@ -134,7 +134,7 @@ func installArgs(opts Options, valuesPath string, timeout time.Duration) []strin
 // --reuse-values, so an upgrade does not have to be handed the credential
 // again. The alternative is asking for a token to change a version, which
 // invites somebody to paste one into a shell for no reason.
-func (h *Helm) Reuse(ctx context.Context, version, namespace string, timeout time.Duration) error {
+func (h *Helm) Reuse(ctx context.Context, version, namespace string, timeout time.Duration, noWait bool) error {
 	if timeout == 0 {
 		timeout = DefaultTimeout
 	}
@@ -142,14 +142,24 @@ func (h *Helm) Reuse(ctx context.Context, version, namespace string, timeout tim
 		"upgrade", ReleaseName, Chart,
 		"--namespace", namespace,
 		"--reuse-values",
-		"--wait",
 		"--timeout", timeout.String(),
+	}
+	// An agent that was never able to register is not ready and will not become
+	// ready by being upgraded. Waiting for it spends the whole timeout and then
+	// reports the upgrade as failed, when what actually happened is that the
+	// chart was replaced and the pod is doing exactly what it was doing before.
+	if !noWait {
+		args = append(args, "--wait")
 	}
 	if version != "" {
 		args = append(args, "--version", version)
 	}
 	if err := h.run(ctx, args...); err != nil {
-		return fmt.Errorf("agent: helm could not upgrade the agent: %w", err)
+		err = fmt.Errorf("agent: helm could not upgrade the agent: %w", err)
+		if advice := adviseOn(err, namespace); advice != "" {
+			return fmt.Errorf("%w\n\n%s", err, advice)
+		}
+		return err
 	}
 	return nil
 }

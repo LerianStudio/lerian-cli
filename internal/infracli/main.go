@@ -395,6 +395,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if !found {
 			return nil, why
 		}
+		// What this run knows, recorded for the agent install offered below. The
+		// cluster was just built here; asking which cluster, in this session, is
+		// a question whose answer is still on screen.
+		//
+		// The ARN is preferred over one assembled from parts: it is what the EKS
+		// stack reported, and it is the kubeconfig context verbatim.
+		CarryAgentTargetARN(config.Profile, config.Region, opts.account, facts.Name, facts.ARN)
 		return func() error {
 			return pointKubectl(ctx, ask, progressOut, facts, config.Region, config.Profile)
 		}, ""

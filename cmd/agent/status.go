@@ -2,11 +2,13 @@ package agent
 
 import (
 	"fmt"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/lerian-studio/lerian-cli/internal/agent"
+	"github.com/lerian-studio/lerian-cli/internal/infracli"
 )
 
 var status struct {
@@ -32,15 +34,21 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	helm.Context = status.kubeContext
+	helm.Context = target.Context
 	helm.Out = cmd.OutOrStdout()
 
+	var mu sync.Mutex
+	spin := infracli.Spin(&mu, cmd.OutOrStdout(), "reading the release")
 	release, installed, err := helm.Installed(cmd.Context(), status.namespace)
+	spin.Stop()
 	if err != nil {
 		return err
 	}
 
 	out := cmd.OutOrStdout()
+	// Where it looked, before what it found: "no agent" means nothing without
+	// the cluster it is about.
+	fmt.Fprintf(out, "\n%s\n", infracli.Heading(out, "==> "+target.Described()))
 	if !installed {
 		// Not an error. "Is it there?" is a question whose answer can be no.
 		fmt.Fprintf(out, "No agent in %s.\n\n  lerian agent install --control-plane <url> --token <token>\n",

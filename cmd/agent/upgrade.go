@@ -14,6 +14,7 @@ var upgrade struct {
 	namespace   string
 	kubeContext string
 	timeout     time.Duration
+	wait        bool
 }
 
 var upgradeCmd = &cobra.Command{
@@ -38,6 +39,8 @@ func init() {
 		"kubeconfig context to act in; empty uses the current one")
 	upgradeCmd.Flags().DurationVar(&upgrade.timeout, "timeout", agent.DefaultTimeout,
 		"how long to wait for the agent to become ready")
+	upgradeCmd.Flags().BoolVar(&upgrade.wait, "wait", true,
+		"wait for the agent to become ready; skipped automatically when it was not ready to begin with")
 }
 
 func runUpgrade(cmd *cobra.Command, _ []string) error {
@@ -45,7 +48,7 @@ func runUpgrade(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	helm.Context = upgrade.kubeContext
+	helm.Context = target.Context
 	helm.Out = cmd.OutOrStdout()
 
 	// Refused rather than turned into an install. An upgrade of something that
@@ -60,7 +63,12 @@ func runUpgrade(cmd *cobra.Command, _ []string) error {
 			upgrade.namespace)
 	}
 
-	if err := helm.Reuse(cmd.Context(), upgrade.version, upgrade.namespace, upgrade.timeout); err != nil {
+	// An agent that is not ready now will not be made ready by a new chart, so
+	// waiting for it would spend the timeout to report a failure that is really
+	// the state it was already in. status says which case this is.
+	noWait := !upgrade.wait || release.Status != "deployed"
+
+	if err := helm.Reuse(cmd.Context(), upgrade.version, upgrade.namespace, upgrade.timeout, noWait); err != nil {
 		return err
 	}
 
