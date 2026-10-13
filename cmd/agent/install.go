@@ -14,6 +14,7 @@ var install struct {
 	opts        agent.Options
 	kubeContext string
 	timeout     time.Duration
+	wait        bool
 }
 
 var installCmd = &cobra.Command{
@@ -66,6 +67,9 @@ func init() {
 		"kubeconfig context to install into; empty uses the current one")
 	flags.DurationVar(&install.timeout, "timeout", agent.DefaultTimeout,
 		"how long to wait for the agent to become ready")
+	flags.BoolVar(&install.wait, "wait", true,
+		"wait for the agent to become ready; --wait=false returns once the objects exist, "+
+			"which is what you want against a control plane that does not exist yet")
 }
 
 // profileFlag is the --profile the root command defines, when it was given.
@@ -118,6 +122,8 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 		}
 		opts = keepFlags(opts, asked)
 	}
+
+	opts.NoWait = !install.wait
 
 	helm, err := agent.NewHelm()
 	if err != nil {

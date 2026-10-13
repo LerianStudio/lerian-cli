@@ -96,26 +96,37 @@ func (h *Helm) Install(ctx context.Context, opts Options, timeout time.Duration)
 	}
 	defer cleanup()
 
+	// Not --atomic. A rollback deletes the pod, and the pod is the evidence:
+	// `kubectl logs` on a failed install is how anybody finds out whether the
+	// token was wrong or a managed namespace was missing.
+	if err := h.run(ctx, installArgs(opts, valuesPath, timeout)...); err != nil {
+		return fmt.Errorf("agent: helm could not install the agent: %w", err)
+	}
+	return nil
+}
+
+// installArgs is the command line Install runs.
+//
+// Built apart from running it so a test can read it: whether --wait is there
+// decides whether an install against a control plane that does not exist yet
+// finishes or hangs for the whole timeout, and that is worth pinning without a
+// cluster.
+func installArgs(opts Options, valuesPath string, timeout time.Duration) []string {
 	args := []string{
 		"upgrade", ReleaseName, Chart,
 		"--install",
 		"--namespace", opts.Namespace,
 		"--create-namespace",
 		"--values", valuesPath,
-		"--wait",
 		"--timeout", timeout.String(),
+	}
+	if !opts.NoWait {
+		args = append(args, "--wait")
 	}
 	if opts.ChartVersion != "" {
 		args = append(args, "--version", opts.ChartVersion)
 	}
-
-	// Not --atomic. A rollback deletes the pod, and the pod is the evidence:
-	// `kubectl logs` on a failed install is how anybody finds out whether the
-	// token was wrong or a managed namespace was missing.
-	if err := h.run(ctx, args...); err != nil {
-		return fmt.Errorf("agent: helm could not install the agent: %w", err)
-	}
-	return nil
+	return args
 }
 
 // Reuse upgrades the release while keeping every value it already has.

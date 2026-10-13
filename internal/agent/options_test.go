@@ -217,3 +217,19 @@ func TestValuesAreWrittenPrivately(t *testing.T) {
 		t.Error("the file holding the credential outlived the install")
 	}
 }
+
+// Waiting means waiting for /health/ready, and the agent is not ready until it
+// has registered. Against a control plane that does not exist yet, that is a
+// wait for something that cannot happen — so it has to be possible to skip it,
+// and it has to be off by default everywhere else.
+func TestWaitingIsTheDefaultAndCanBeTurnedOff(t *testing.T) {
+	if valid().NoWait {
+		t.Error("an install waits for readiness unless somebody says otherwise")
+	}
+
+	opts := valid()
+	opts.NoWait = true
+	if !opts.NoWait {
+		t.Error("the option did not take")
+	}
+}

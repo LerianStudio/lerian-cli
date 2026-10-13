@@ -92,6 +92,14 @@ and access your data.`,
 const (
 	menuAnnotation = "menu"
 	menuSkip       = "skip"
+	// menuDisabled shows a command in the menu without letting it be chosen.
+	// Different from menuSkip: skipping hides a command that works and is simply
+	// not worth a row, while this one is a row worth seeing precisely because
+	// somebody would otherwise go looking for it.
+	menuDisabled = "disabled"
+	// menuDisabledReason replaces the command's Short in the menu, because "what
+	// it does" is the wrong thing to read on a row that cannot be chosen.
+	menuDisabledReason = "menu-disabled-reason"
 	// menuLast puts a command at the end of its submenu. The cursor starts on the
 	// first row, and a list that opens on the command that removes things makes the
 	// most likely keypress the destructive one — cobra sorts alphabetically, which
@@ -120,10 +128,16 @@ func menuChoices(root *cobra.Command) []infracli.Choice {
 		if child.Annotations[menuAnnotation] == menuSkip {
 			continue
 		}
+		note := child.Short
+		disabled := child.Annotations[menuAnnotation] == menuDisabled
+		if disabled {
+			note = child.Annotations[menuDisabledReason]
+		}
 		choices = append(choices, infracli.Choice{
-			Value: child.Name(),
-			Label: child.Name(),
-			Note:  child.Short,
+			Value:    child.Name(),
+			Label:    child.Name(),
+			Note:     note,
+			Disabled: disabled,
 		})
 	}
 	return choices

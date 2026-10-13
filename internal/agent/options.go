@@ -74,6 +74,19 @@ type Options struct {
 	AllowedRegistries string
 	// ImagePullSecrets name Secrets for a registry that refuses anonymous reads.
 	ImagePullSecrets []string
+
+	// NoWait returns as soon as the objects are created, instead of waiting for
+	// the agent to become ready.
+	//
+	// Readiness means /health/ready, and the agent is not ready until it has
+	// registered with the control plane — so against a control plane that does
+	// not exist yet, waiting is waiting for something that cannot happen. The
+	// install itself is still a real test: the chart renders, the release is
+	// created, the RBAC lands in the managed namespaces, and the pod starts.
+	//
+	// Off by default, because everywhere else a green install should mean a
+	// running agent rather than a set of objects.
+	NoWait bool
 }
 
 // UsesExistingSecret reports whether the credential stays out of this process.

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lerian-studio/lerian-cli/internal/infracli"
 	"github.com/spf13/cobra"
 )
 
@@ -151,6 +152,34 @@ func TestTheMenuOffersAgentAuthConfigInfraAndVersion(t *testing.T) {
 	for index, name := range want {
 		if offered[index] != name {
 			t.Errorf("offered[%d] = %q, want %q (%v)", index, offered[index], name, offered)
+		}
+	}
+}
+
+// A command that does not work yet is shown and not offered. Hiding it would
+// send somebody looking for a command they have heard of; leaving it selectable
+// sends them into something broken.
+func TestAuthIsShownButNotSelectable(t *testing.T) {
+	var auth *infracli.Choice
+	for index, choice := range menuChoices(rootCmd) {
+		if choice.Value == "auth" {
+			auth = &menuChoices(rootCmd)[index]
+		}
+	}
+
+	if auth == nil {
+		t.Fatal("auth was removed from the menu rather than disabled")
+	}
+	if !auth.Disabled {
+		t.Error("auth is selectable, and it does not work yet")
+	}
+	if !strings.Contains(auth.Note, "not available") {
+		t.Errorf("the row does not say why it cannot be chosen: %q", auth.Note)
+	}
+	// And the rest of the menu is untouched.
+	for _, choice := range menuChoices(rootCmd) {
+		if choice.Value != "auth" && choice.Disabled {
+			t.Errorf("%q was disabled too", choice.Value)
 		}
 	}
 }
