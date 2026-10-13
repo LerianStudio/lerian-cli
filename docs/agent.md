@@ -129,6 +129,28 @@ than a line inside a chart template:
   `ghcr.io/lerianstudio`, and the agent would refuse to update itself weeks
   later, in somebody else's terminal
 
+## Installing before the control plane exists
+
+Readiness means registered: the agent reports ready on `/health/ready` only once
+it has signed in to the control plane. So an install against a control plane
+that is not reachable yet waits the whole timeout and then fails — with the pod
+running the entire time, which makes the failure read worse than it is.
+
+`--wait=false` returns once the objects exist:
+
+```bash
+lerian agent install --control-plane https://placeholder.invalid \
+  --token lerian_enroll_placeholder --wait=false
+```
+
+That still exercises most of it: the chart renders, the release is created, the
+RBAC lands in the managed namespaces, and the agent starts and initialises its
+Kubernetes client. What it does not exercise is registration, which is the part
+that needs a control plane.
+
+The interactive install asks instead of assuming, because nothing the CLI can
+see says whether a given URL is live yet.
+
 ## After installing
 
 ```bash

@@ -103,6 +103,9 @@ func keepFlags(flags, asked agent.Options) agent.Options {
 	asked.AllowedRegistries = flags.AllowedRegistries
 	asked.ImagePullSecrets = flags.ImagePullSecrets
 	asked.AllowInsecureHTTP = flags.AllowInsecureHTTP
+	// NoWait is not carried over: the questions ask about waiting, and --wait
+	// defaults to true, so taking the flag here would overrule the answer with a
+	// value nobody typed.
 	return asked
 }
 
@@ -123,7 +126,11 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 		opts = keepFlags(opts, asked)
 	}
 
-	opts.NoWait = !install.wait
+	// Only when it was typed: the questions already asked, and the flag's own
+	// default would otherwise overrule the answer.
+	if cmd.Flags().Changed("wait") {
+		opts.NoWait = !install.wait
+	}
 
 	helm, err := agent.NewHelm()
 	if err != nil {

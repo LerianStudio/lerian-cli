@@ -66,7 +66,7 @@ func TestANameAlreadyInUsePointsAtUninstall(t *testing.T) {
 func TestUnrelatedFailuresGetNoAdvice(t *testing.T) {
 	for _, text := range []string{
 		"Error: connection refused",
-		"Error: timed out waiting for the condition",
+		"Error: UPGRADE FAILED: another operation is in progress",
 		"",
 	} {
 		if advice := adviseOn(errors.New(text)); advice != "" {
@@ -136,4 +136,25 @@ type reaching struct{ called *bool }
 func (r reaching) Install(context.Context, Options, time.Duration) error {
 	*r.called = true
 	return nil
+}
+
+// The failure somebody hits while the control plane is still being built. Helm
+// says "timed out waiting for the condition", which is true and says nothing
+// about what was waited for or that the agent is in fact running.
+func TestATimeoutExplainsThatReadinessMeansRegistered(t *testing.T) {
+	advice := adviseOn(errors.New("agent: helm could not install the agent: " +
+		"Error: timed out waiting for the condition"))
+
+	if advice == "" {
+		t.Fatal("a readiness timeout was not recognized")
+	}
+	if !strings.Contains(advice, "registered") {
+		t.Errorf("it does not say what readiness depends on:\n%s", advice)
+	}
+	if !strings.Contains(advice, "--wait=false") {
+		t.Errorf("it does not offer the way out:\n%s", advice)
+	}
+	if !strings.Contains(advice, "pod is running") {
+		t.Errorf("it does not say the install mostly worked:\n%s", advice)
+	}
 }

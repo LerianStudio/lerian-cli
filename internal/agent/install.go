@@ -75,6 +75,21 @@ func adviseOn(err error) string {
 		return strings.TrimRight(out.String(), "\n")
 	}
 
+	// The timeout somebody hits when the control plane is not there yet. The
+	// install did almost everything: the release exists and the pod is running.
+	// What did not happen is readiness, and readiness means registered.
+	if strings.Contains(text, "timed out waiting") || strings.Contains(text, "context deadline exceeded") {
+		return "The objects were created and the pod is running; what did not happen is readiness.\n" +
+			"The agent reports ready on /health/ready only once it has registered with the\n" +
+			"control plane, so a control plane that is unreachable — or does not exist yet —\n" +
+			"means this wait can never end.\n\n" +
+			"What it is doing right now:\n" +
+			"  kubectl -n " + DefaultNamespace + " logs deploy/" + ReleaseName + "\n\n" +
+			"To install without waiting for readiness, which is what you want while the\n" +
+			"control plane is still being built:\n" +
+			"  lerian agent install --wait=false ..."
+	}
+
 	if strings.Contains(text, "cannot re-use a name that is still in use") {
 		return "A release called " + ReleaseName + " is already there and helm will not reuse the name.\n" +
 			"`lerian agent status` says what it is; `lerian agent uninstall` removes it, keeping\n" +

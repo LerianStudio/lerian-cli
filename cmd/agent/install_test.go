@@ -62,3 +62,20 @@ func TestFlagsSurviveTheQuestions(t *testing.T) {
 		t.Errorf("the answers were discarded: %+v", merged)
 	}
 }
+
+// The questions ask about waiting, and --wait defaults to true. Carrying the
+// flag over would overrule an answer with a value nobody typed.
+func TestTheWaitAnswerSurvivesTheFlagDefault(t *testing.T) {
+	flags := agent.Options{Namespace: agent.DefaultNamespace}
+	asked := agent.Options{
+		ControlPlaneURL: "https://cp.example.com",
+		Token:           agent.EnrollmentPrefix + "abc",
+		NoWait:          true, // answered "do not wait"
+	}
+
+	merged := keepFlags(flags, asked)
+
+	if !merged.NoWait {
+		t.Error("the answer about waiting was overruled by the flag's default")
+	}
+}

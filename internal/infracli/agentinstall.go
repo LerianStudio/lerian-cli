@@ -117,6 +117,24 @@ func askAgentOptions(ask *prompter) (agent.Options, error) {
 		}
 	}
 
+	// Asked, because waiting is right when the control plane is there and a trap
+	// when it is not: readiness means registered, so against a control plane that
+	// does not answer this waits the whole timeout and then fails with the agent
+	// running the entire time. Nothing the CLI can see tells it which case this
+	// is — only the person who knows whether that URL is live yet.
+	wait, err := ask.pick("Wait for the agent to connect?",
+		"It reports ready once it has registered with the control plane.", "",
+		[]option{
+			{value: "wait", label: "wait for it to connect",
+				note: "a green install means a working agent"},
+			{value: "skip", label: "do not wait",
+				note: "the control plane is not reachable yet — install and check later"},
+		}, "--wait=false")
+	if err != nil {
+		return opts, err
+	}
+	opts.NoWait = wait == "skip"
+
 	// Checked here so a wrong answer is corrected while the operator is still
 	// standing here, rather than three minutes into a helm install.
 	if err := opts.Validate(); err != nil {
