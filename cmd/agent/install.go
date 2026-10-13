@@ -160,8 +160,19 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "\nThe agent is installed in %s.\n", opts.Namespace)
-	fmt.Fprintf(cmd.OutOrStdout(), "It appears in the control plane once it sends its first heartbeat:\n")
-	fmt.Fprintf(cmd.OutOrStdout(), "  lerian agent status\n")
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "\nThe agent is installed in %s.\n", opts.Namespace)
+	if opts.IsPlaceholder() {
+		// Saying "it appears in the control plane once it heartbeats" would be
+		// promising something this install cannot do: there is no control plane
+		// to appear in, and the pod will sit at 0/1 forever.
+		fmt.Fprintf(out, "It has nowhere to register, so it will retry against %s\n", agent.PlaceholderControlPlane)
+		fmt.Fprintf(out, "and stay unready. What it is doing:\n")
+		fmt.Fprintf(out, "  kubectl -n %s logs deploy/%s\n\n", opts.Namespace, agent.ReleaseName)
+		fmt.Fprintf(out, "Re-run with the real --control-plane and --token when there is one.\n")
+		return nil
+	}
+	fmt.Fprintf(out, "It appears in the control plane once it sends its first heartbeat:\n")
+	fmt.Fprintf(out, "  lerian agent status\n")
 	return nil
 }

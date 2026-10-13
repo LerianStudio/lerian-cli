@@ -158,7 +158,7 @@ see says whether a given URL is live yet.
 ## After installing
 
 ```bash
-kubectl -n lerian-system get pods -l app.kubernetes.io/name=agent
+kubectl -n lerian-system get pods -l app.kubernetes.io/name=lerian-agent
 kubectl -n lerian-system logs deploy/lerian-agent | grep "sent initial heartbeat"
 ```
 
