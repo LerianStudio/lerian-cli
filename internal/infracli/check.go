@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/lerian-studio/lerian-cli/internal/agent"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
@@ -82,6 +83,7 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		checkTerraform(ctx),
 		checkGit(),
 		checkGH(ctx),
+		checkHelm(),
 		checkTemplates(ctx, opts.repo, os.Getenv("LERIAN_TF_REPO"), opts.templatesDir),
 	}
 
@@ -118,6 +120,22 @@ func terraformResult(err error) checkResult {
 		result.ok = false
 		result.summary = "not usable"
 		result.detail = err.Error()
+	}
+	return result
+}
+
+// checkHelm reports whether the agent can be installed from here.
+//
+// optional, like gh: a deploy of the AWS stacks needs nothing from helm, and
+// failing the whole verdict over a tool that only one step uses would make
+// `check` useless as a gate for everything else. The row still says absent, so
+// somebody who came here to install the agent finds out now rather than at the
+// end of a twenty-minute apply.
+func checkHelm() checkResult {
+	result := checkResult{name: "helm", summary: binaryPath("helm"), ok: true, optional: true}
+	if _, err := agent.NewHelm(); err != nil {
+		result.ok = false
+		result.summary = "not installed — only for installing the Lerian agent"
 	}
 	return result
 }

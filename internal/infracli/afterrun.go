@@ -17,6 +17,7 @@ const (
 	afterDetail  = "\x00detail"
 	afterExport  = "\x00export"
 	afterKubectl = "\x00kubectl"
+	afterAgent   = "\x00agent"
 	afterDone    = "\x00done"
 )
 
@@ -91,6 +92,11 @@ func afterRun(
 				fmt.Fprintf(out, "\n  %v\n\n", err)
 			} else {
 				exported = true
+			}
+			continue
+		case picked == afterAgent:
+			if err := installAgentFromMenu(ctx, ask, out, point); err != nil {
+				agentInstallFailed(out, err)
 			}
 			continue
 		case picked == afterKubectl:
@@ -197,6 +203,13 @@ func afterOptions(done infra.Action, cluster bool) []option {
 	if cluster {
 		options = append(options, option{value: afterKubectl, label: "point kubectl at the cluster",
 			note: "runs aws eks update-kubeconfig"})
+	}
+	// Offered where somebody is already looking at the cluster they just built,
+	// which is the moment the answer to "which cluster?" is obvious. Only after
+	// an apply: there is nothing to install into after a plan.
+	if agentOffer(done, cluster) {
+		options = append(options, option{value: afterAgent, label: "install the Lerian agent",
+			note: "connects this cluster to the Lerian control plane"})
 	}
 	options = append(options,
 		option{value: string(infra.ActionOutput), label: "output", note: "reads terraform output"},

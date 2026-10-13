@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	agentcmd "github.com/lerian-studio/lerian-cli/cmd/agent"
 	"github.com/lerian-studio/lerian-cli/cmd/auth"
 	"github.com/lerian-studio/lerian-cli/cmd/infra"
 	"github.com/lerian-studio/lerian-cli/cmd/midaz"
@@ -164,4 +165,5 @@ func init() {
 	midaz.MidazCmd.Annotations = map[string]string{menuAnnotation: menuSkip}
 	rootCmd.AddCommand(midaz.MidazCmd)
 	rootCmd.AddCommand(infra.InfraCmd)
+	rootCmd.AddCommand(agentcmd.AgentCmd)
 }
