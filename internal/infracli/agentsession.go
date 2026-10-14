@@ -277,10 +277,15 @@ func CarriedAgentTarget() (AgentTarget, bool) {
 	return *carried, true
 }
 
+// Stopper is a running spinner, for a caller outside this package. An
+// interface, because the spinner type is this package's own and the only thing
+// a caller does with one is stop it.
+type Stopper interface{ Stop() }
+
 // Spin starts the same spinner the infra run uses, for a caller outside this
 // package. The agent's operations are the same shape — seconds of waiting on
 // something remote with nothing to show — and they should not look different.
-func Spin(mu *sync.Mutex, out io.Writer, label string) *spinner {
+func Spin(mu *sync.Mutex, out io.Writer, label string) Stopper {
 	return newSpinner(mu, out, label)
 }
 

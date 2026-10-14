@@ -47,7 +47,9 @@ func sameValues(ctx context.Context, helm *Helm, opts Options) (bool, error) {
 
 	var installed map[string]any
 	if err := json.Unmarshal([]byte(out), &installed); err != nil {
-		return false, nil
+		// Same as above: values that cannot be read are values that cannot be
+		// compared, and the install runs rather than refusing over it.
+		return false, nil //nolint:nilerr // unreadable means "go ahead".
 	}
 
 	// Through JSON on both sides so the comparison is of data rather than of Go

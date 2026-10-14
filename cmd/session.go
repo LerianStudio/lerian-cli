@@ -9,6 +9,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"reflect"
+	"unsafe"
+
 	infrapkg "github.com/lerian-studio/lerian-cli/internal/infra"
 	"github.com/lerian-studio/lerian-cli/internal/infracli"
 	"github.com/lerian-studio/lerian-cli/internal/version"
@@ -154,6 +157,38 @@ func findChild(root *cobra.Command, name string) *cobra.Command {
 	return nil
 }
 
+// openingFlags records the persistent flags the session was started with.
+//
+// Persistent only: a subcommand's own flags belong to the command that was run,
+// and carrying "lerian agent install --wait=false" into the next choice is the
+// leak the reset exists to stop. A flag given on the way in is different — it
+// describes the session, not one command in it.
+func openingFlags(root *cobra.Command) map[string]string {
+	given := map[string]string{}
+	// VisitAll and Changed, not Visit: Visit walks what was parsed into this
+	// flag set, and cobra parses a subcommand's line into the subcommand's own.
+	// The persistent flag carries Changed either way, which is the fact worth
+	// reading.
+	root.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		if f.Changed {
+			given[f.Name] = f.Value.String()
+		}
+	})
+	return given
+}
+
+// restoreFlags puts the session's opening values back after a reset.
+func restoreFlags(root *cobra.Command, opening map[string]string) {
+	for name, value := range opening {
+		flag := root.PersistentFlags().Lookup(name)
+		if flag == nil {
+			continue
+		}
+		_ = flag.Value.Set(value)
+		flag.Changed = true
+	}
+}
+
 // resetFlags returns every flag in the tree to the value it was defined with.
 //
 // One process runs every command of a session, so a flag is parsed into the
@@ -168,6 +203,11 @@ func resetFlags(cmd *cobra.Command) {
 			// Three passes produced three of them, and they reached a cluster.
 			if slice, ok := f.Value.(pflag.SliceValue); ok {
 				_ = slice.Replace(defaultSlice(f.DefValue))
+				// And the parser's own state, which Replace does not touch. A
+				// slice value remembers that it has been Set, and appends from
+				// then on — so after a reset, "--ns second" produced
+				// ["the-default", "second"] rather than ["second"].
+				forgetSliceParse(f.Value)
 				f.Changed = false
 				return
 			}
@@ -182,6 +222,31 @@ func resetFlags(cmd *cobra.Command) {
 	for _, child := range cmd.Commands() {
 		resetFlags(child)
 	}
+}
+
+// forgetSliceParse clears the "I have been Set" bit a slice flag keeps.
+//
+// pflag's slice values replace on the first Set and append on every one after,
+// and the field recording which is unexported with no accessor. SliceValue
+// offers Replace, which changes the value and not that bit — so a flag parsed
+// once keeps appending for the life of the process, and this session runs every
+// command in one process.
+//
+// Reaching for an unexported field is worth saying out loud: it is wrong if
+// pflag renames it, and the test below fails loudly in that case rather than
+// letting the appending come back unnoticed.
+func forgetSliceParse(value pflag.Value) {
+	field := reflect.ValueOf(value)
+	if field.Kind() != reflect.Ptr || field.IsNil() {
+		return
+	}
+	changed := field.Elem().FieldByName("changed")
+	if !changed.IsValid() || changed.Kind() != reflect.Bool {
+		return
+	}
+	// #nosec G103 -- the address is of a field in a struct this process owns,
+	// reached to clear a bool pflag provides no other way to clear. See above.
+	reflect.NewAt(changed.Type(), unsafe.Pointer(changed.UnsafeAddr())).Elem().SetBool(false)
 }
 
 // defaultSlice reads a slice flag's registered default back out of the string
@@ -211,6 +276,15 @@ func defaultSlice(rendered string) []string {
 func interactive(root *cobra.Command) int {
 	infracli.Banner(root.OutOrStdout(), version.GetVersion())
 
+	// What the session was started with. `lerian --profile work` parses that
+	// before the menu opens, and resetting to the registered default afterwards
+	// threw away the one thing the operator had said — along with --config and
+	// --output.
+	//
+	// Taken once, here, because every later value comes from a menu choice and
+	// belongs to that command alone.
+	opening := openingFlags(root)
+
 	return session(
 		menuAsk(root),
 		func(chosen string) error {
@@ -228,6 +302,7 @@ func interactive(root *cobra.Command) int {
 			// Before Execute, because cobra parses during it: resetting afterwards
 			// would discard what was just typed.
 			resetFlags(root)
+			restoreFlags(root, opening)
 			return root.Execute()
 		},
 	)

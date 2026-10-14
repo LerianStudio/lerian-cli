@@ -194,10 +194,15 @@ func (s settled) Unchanged(context.Context, Options, Release) (bool, error) {
 // the install consults it — the gap a mutation deleting the skip walked
 // straight through.
 func TestInstallSkipsHelmWhenNothingWouldChange(t *testing.T) {
+	// No namespaces to make, so no kubectl: this is about what the install
+	// decides, not about creating anything.
+	t.Setenv("PATH", t.TempDir())
 	var ran bool
 	helm := settled{Release{Chart: "agent-helm-1.0.1", Status: "deployed"}, true, &ran}
 
-	outcome, err := InstallReporting(context.Background(), helm, deployedOpts(), time.Minute)
+	opts := deployedOpts()
+	opts.ManagedNamespaces = nil
+	outcome, err := InstallReporting(context.Background(), helm, opts, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,10 +218,15 @@ func TestInstallSkipsHelmWhenNothingWouldChange(t *testing.T) {
 // And when something would change, it runs and says it reconfigured rather
 // than installed: the release was already there.
 func TestInstallReportsAReconfiguration(t *testing.T) {
+	// No namespaces to make, so no kubectl: this is about what the install
+	// decides, not about creating anything.
+	t.Setenv("PATH", t.TempDir())
 	var ran bool
 	helm := settled{Release{Chart: "agent-helm-1.0.1", Status: "deployed"}, false, &ran}
 
-	outcome, err := InstallReporting(context.Background(), helm, deployedOpts(), time.Minute)
+	opts := deployedOpts()
+	opts.ManagedNamespaces = nil
+	outcome, err := InstallReporting(context.Background(), helm, opts, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

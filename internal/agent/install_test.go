@@ -165,10 +165,17 @@ func TestATimeoutExplainsThatReadinessMeansRegistered(t *testing.T) {
 	if !strings.Contains(advice, "--wait=false") {
 		t.Errorf("it does not offer the way out:\n%s", advice)
 	}
-	// What the error proves is that readiness did not arrive. Saying the pod is
-	// running is a guess, and a wrong one when the image could not be pulled.
-	if strings.Contains(advice, "the pod is running") {
-		t.Errorf("it states a pod state the error does not establish:\n%s", advice)
+	// What the error proves is that it timed out. Saying the pod is running is a
+	// guess, and a wrong one when the image could not be pulled — or when the
+	// context expired before helm applied anything, leaving no pod at all.
+	for _, claim := range []string{"The objects were created", "the pod is running"} {
+		if strings.Contains(advice, claim) {
+			t.Errorf("it states %q, which the error does not establish:\n%s", claim, advice)
+		}
+	}
+	// So it asks what exists before diagnosing why it is not ready.
+	if !strings.Contains(advice, "helm list -n") {
+		t.Errorf("it does not ask whether the release exists at all:\n%s", advice)
 	}
 	if !strings.Contains(advice, "CrashLoopBackOff") {
 		t.Errorf("it does not admit the other reasons readiness never came:\n%s", advice)

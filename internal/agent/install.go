@@ -171,16 +171,23 @@ func adviseOn(err error, namespace string) string {
 		// may not have started at all — and the pod is the only thing that says
 		// which. Claiming registration outright sent people to debug a control
 		// plane when the image could not be pulled.
-		return "The objects were created; readiness did not arrive before the timeout.\n\n" +
-			"What the pod is doing:\n" +
-			"  kubectl -n " + namespace + " get pods -l app.kubernetes.io/name=" + ReleaseName + "\n" +
+		// Not "the objects were created": a context that expires before helm
+		// applies the chart reaches here too, with nothing created at all. What
+		// is true in both cases is that it timed out, and the two commands below
+		// say which happened.
+		return "Timed out. Whether the release and the pod exist is the first thing to\n" +
+			"check — a context that expires before helm applies the chart arrives here\n" +
+			"too, with nothing created at all.\n\n" +
+			"What is there:\n" +
+			"  helm list -n " + namespace + "\n" +
+			"  kubectl -n " + namespace + " get pods -l app.kubernetes.io/name=" + ReleaseName + "\n\n" +
+			"A pod that is running but not ready is usually registration: the agent\n" +
+			"reports ready on /health/ready only once it has registered, so an\n" +
+			"unreachable control plane — or one that does not exist yet — makes this a\n" +
+			"wait that cannot end. For that case, --wait=false returns once the objects\n" +
+			"exist, and --no-control-plane installs against a placeholder.\n\n" +
 			"  kubectl -n " + namespace + " logs deploy/" + ReleaseName + "\n\n" +
-			"Running but not ready is usually registration: the agent reports ready on\n" +
-			"/health/ready only once it has registered, so an unreachable control plane —\n" +
-			"or one that does not exist yet — makes this wait one that cannot end. For that\n" +
-			"case, --wait=false returns once the objects exist, and --no-control-plane\n" +
-			"installs against a placeholder.\n\n" +
-			"Pending, CrashLoopBackOff or ImagePullBackOff is something else, and the two\n" +
+			"Pending, CrashLoopBackOff or ImagePullBackOff is something else, and the\n" +
 			"commands above say which."
 	}
 
