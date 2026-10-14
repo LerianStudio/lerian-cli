@@ -99,23 +99,9 @@ func askAgentAccount(ctx context.Context, ask *prompter, out io.Writer) (profile
 	_, resolved := checkAWSSession(ctx, infra.CLIIdentity{})
 	spin.Stop()
 
-	options := make([]option, 0, len(resolved))
-	for _, candidate := range resolved {
-		row := option{value: candidate.Profile.Name, label: candidate.Profile.Name}
-		switch {
-		case candidate.Err != nil:
-			row.disabled = true
-			row.note = "(unavailable)  " + shortReason(candidate.Err)
-		default:
-			row.note = "account " + candidate.Caller.Account
-			if candidate.Profile.Region != "" {
-				row.note += "  ·  " + candidate.Profile.Region
-			}
-		}
-		options = append(options, row)
-	}
+	options, targets := agentAccountOptions(resolved)
 	if len(options) == 0 {
-		return "", "", "", fmt.Errorf("no AWS profile resolves. `aws configure` or `aws sso login` first")
+		return "", "", "", fmt.Errorf("no AWS profile was found. `aws configure` creates one")
 	}
 
 	chosen, err := ask.pick("Which AWS account?", "The cluster the agent runs in lives there.",
@@ -125,11 +111,86 @@ func askAgentAccount(ctx context.Context, ask *prompter, out io.Writer) (profile
 	}
 
 	for _, candidate := range resolved {
-		if candidate.Profile.Name == chosen {
+		if candidate.Profile.Name != chosen {
+			continue
+		}
+		if candidate.Usable() {
 			return chosen, candidate.Caller.Account, candidate.Profile.Region, nil
 		}
+
+		// Choosing a profile whose session has expired is choosing to log in. The
+		// alternative is a menu where every row is unavailable and the only way
+		// forward is a command this tool could have run.
+		signedIn, err := offerLogin(ctx, ask, out, targets[chosen])
+		if err != nil {
+			return "", "", "", err
+		}
+		if !signedIn {
+			return "", "", "", fmt.Errorf("not signed in to %s, so there is no account to read clusters from",
+				chosen)
+		}
+		return resolveAfterLogin(ctx, out, chosen)
 	}
 	return chosen, "", "", nil
+}
+
+// agentAccountOptions builds the account rows, and the login each unusable one
+// would need.
+//
+// Three states, the same three the infra menu distinguishes, because the right
+// thing to say differs: a session that can be revived is worth choosing, an
+// access key that does not work is worth choosing to see why, and a [default]
+// section with nothing but a region is worth neither.
+func agentAccountOptions(resolved []infra.ResolvedProfile) ([]option, map[string][]infra.SSOTarget) {
+	options := make([]option, 0, len(resolved))
+	targets := make(map[string][]infra.SSOTarget, len(resolved))
+
+	for _, candidate := range resolved {
+		name := candidate.Profile.Name
+		if name == "" {
+			name = "credentials in this environment"
+		}
+		row := option{value: candidate.Profile.Name, label: name}
+
+		switch {
+		case candidate.Usable():
+			row.note = "account " + candidate.Caller.Account
+			if candidate.Profile.Region != "" {
+				row.note += "  ·  " + candidate.Profile.Region
+			}
+		case candidate.Profile.CanSignIn:
+			// Not disabled: this is the row somebody needs when every session has
+			// expired, which is most mornings.
+			row.note = "session expired — choose to log in"
+			targets[candidate.Profile.Name] = []infra.SSOTarget{{
+				Session: candidate.Profile.SSOSession,
+				Profile: candidate.Profile.Name,
+			}}
+		case candidate.Profile.Source == "credentials":
+			row.note = "the access key does not work — choose it to see why"
+		default:
+			// Nothing to revive and nothing to fix.
+			row.disabled = true
+			row.note = "no credentials configured — aws configure --profile " + candidate.Profile.Name
+		}
+		options = append(options, row)
+	}
+	return options, targets
+}
+
+// resolveAfterLogin asks AWS who the profile is now that it is signed in.
+func resolveAfterLogin(ctx context.Context, out io.Writer, profile string) (string, string, string, error) {
+	var mu sync.Mutex
+	spin := newSpinner(&mu, out, "checking "+profile)
+	_, resolved := checkAWSSession(ctx, infra.CLIIdentity{})
+	spin.Stop()
+
+	for _, candidate := range resolved {
+		if candidate.Profile.Name == profile && candidate.Usable() {
+			return profile, candidate.Caller.Account, candidate.Profile.Region, nil
+		}
+	}
+	return "", "", "", fmt.Errorf("%s still does not resolve after signing in", profile)
 }
 
 // askAgentCluster lists what is actually in the account and lets one be picked.
@@ -169,19 +230,6 @@ func askAgentCluster(
 		options = append(options, option{value: name, label: name})
 	}
 	return ask.pick("Which cluster?", "The agent is installed into it.", "", options, "--kube-context")
-}
-
-// shortReason trims a resolution failure to something that fits beside a row.
-func shortReason(err error) string {
-	text := err.Error()
-	if index := strings.IndexByte(text, '\n'); index >= 0 {
-		text = text[:index]
-	}
-	const width = 60
-	if len(text) > width {
-		text = text[:width] + "…"
-	}
-	return text
 }
 
 // Interactive reports whether questions can be asked at all, for a caller
