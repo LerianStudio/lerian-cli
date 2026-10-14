@@ -1,5 +1,33 @@
 # Lerian-cli Changelog
 
+## [1.5.0](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.5.0)
+
+Features:
+- Merged the `develop` branch into `main`. (@bedatty)
+- Implemented a feature to check what is installed before prompting the user to install. (@bedatty)
+- Enhanced the CLI to report where the agent is deployed and what is running. (@bedatty)
+- Styled the agent output to match the rest of the CLI. (@bedatty)
+- Enabled managing the agent from the deploy menu, not just installing it. (@bedatty)
+- Added functionality to settle which cluster to use before executing any agent command. (@bedatty)
+- Allowed installation without waiting and disabled authentication in the menu. (@bedatty)
+
+Fixes:
+- Cleared the slice parser state while keeping opening flags and softened the timeout. (@bedatty)
+- Reset slice flags by replacing them instead of using `Set`. (@bedatty)
+- Offered the agent whenever there is a cluster present. (@bedatty)
+- Prompted the user before removing the agent instead of requiring a flag. (@bedatty)
+- Provided the necessary login for the agent preflight requirements. (@bedatty)
+- Made four corrections from review and reset flags between commands. (@bedatty)
+
+Improvements:
+- Standardized the agent compatibility policy documentation. (@fredcamaral)
+- Updated style to use `reflect.Pointer` instead of the legacy `reflect.Ptr` alias. (@bedatty)
+- Grouped local imports according to `goimports` preferences. (@bedatty)
+
+[Compare changes](https://github.com/LerianStudio/lerian-cli/compare/v1.4.0...v1.5.0)
+
+---
+
 ## [1.4.0](https://github.com/LerianStudio/lerian-cli/releases/tag/v1.4.0)
 
 Features:
