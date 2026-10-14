@@ -162,6 +162,15 @@ func findChild(root *cobra.Command, name string) *cobra.Command {
 func resetFlags(cmd *cobra.Command) {
 	reset := func(flags *pflag.FlagSet) {
 		flags.VisitAll(func(f *pflag.Flag) {
+			// A slice is replaced, never Set. Set appends on a slice flag, and
+			// DefValue renders an empty one as the literal "[]" — so resetting
+			// with Set added an element called "[]" every time through the menu.
+			// Three passes produced three of them, and they reached a cluster.
+			if slice, ok := f.Value.(pflag.SliceValue); ok {
+				_ = slice.Replace(defaultSlice(f.DefValue))
+				f.Changed = false
+				return
+			}
 			// DefValue is the flag's value as it was registered, which is what a
 			// command invoked with nothing should see.
 			_ = f.Value.Set(f.DefValue)
@@ -173,6 +182,29 @@ func resetFlags(cmd *cobra.Command) {
 	for _, child := range cmd.Commands() {
 		resetFlags(child)
 	}
+}
+
+// defaultSlice reads a slice flag's registered default back out of the string
+// pflag renders it as.
+//
+// pflag prints an empty slice as "[]" and a populated one as "[a,b]". There is
+// no accessor for the original, so this is the only way back — and getting it
+// wrong is how "[]" became a value.
+func defaultSlice(rendered string) []string {
+	rendered = strings.TrimSpace(rendered)
+	rendered = strings.TrimPrefix(rendered, "[")
+	rendered = strings.TrimSuffix(rendered, "]")
+	if rendered == "" {
+		return nil
+	}
+	parts := strings.Split(rendered, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
 }
 
 // interactive is the session wired to the real menu and the real commands.

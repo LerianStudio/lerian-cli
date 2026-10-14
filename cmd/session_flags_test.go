@@ -58,3 +58,72 @@ func TestPersistentFlagsAreResetToo(t *testing.T) {
 		t.Errorf("profile = %q after reset, want the registered default", profile)
 	}
 }
+
+// A slice flag is replaced, never Set: Set appends, and pflag renders an empty
+// slice's default as the literal "[]". Resetting with Set therefore added an
+// element called "[]" on every pass through the menu — and three passes put
+// three of them in a Kubernetes Deployment, where the API server rejected the
+// duplicate keys.
+func TestResettingASliceDoesNotAppendItsOwnDefault(t *testing.T) {
+	var namespaces []string
+	root := &cobra.Command{Use: "root"}
+	child := &cobra.Command{Use: "child", Run: func(*cobra.Command, []string) {}}
+	child.Flags().StringSliceVar(&namespaces, "namespaces", nil, "")
+	root.AddCommand(child)
+
+	// Three passes, the way a session does it.
+	for range 3 {
+		resetFlags(root)
+		root.SetArgs([]string{"child"})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if len(namespaces) != 0 {
+		t.Errorf("the reset invented %d values: %q", len(namespaces), namespaces)
+	}
+}
+
+// A slice with a real default must come back to that default, not to empty.
+func TestASliceWithADefaultIsRestoredToIt(t *testing.T) {
+	var names []string
+	root := &cobra.Command{Use: "root"}
+	child := &cobra.Command{Use: "child", Run: func(*cobra.Command, []string) {}}
+	child.Flags().StringSliceVar(&names, "names", []string{"one", "two"}, "")
+	root.AddCommand(child)
+
+	root.SetArgs([]string{"child", "--names", "other"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	resetFlags(root)
+
+	if len(names) != 2 || names[0] != "one" || names[1] != "two" {
+		t.Errorf("the registered default was not restored: %q", names)
+	}
+}
+
+// The parsing this depends on, since pflag offers no way back to the original.
+func TestTheRenderedDefaultIsReadBack(t *testing.T) {
+	for rendered, want := range map[string][]string{
+		"[]":         nil,
+		"[one]":      {"one"},
+		"[one,two]":  {"one", "two"},
+		"[one, two]": {"one", "two"},
+		"":           nil,
+	} {
+		got := defaultSlice(rendered)
+		if len(got) != len(want) {
+			t.Errorf("%q -> %q, want %q", rendered, got, want)
+			continue
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Errorf("%q -> %q, want %q", rendered, got, want)
+				break
+			}
+		}
+	}
+}
