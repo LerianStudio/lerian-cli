@@ -47,3 +47,25 @@ func TestCanAskRefusesAWriterNobodyCanRead(t *testing.T) {
 		t.Error("CanAsk said yes for a buffer")
 	}
 }
+
+// A row that must not be chosen has to arrive at the selector saying so. The
+// caller marks it; this is the only place that mark can be lost.
+func TestChoosePreservesDisabled(t *testing.T) {
+	options := optionsFrom([]Choice{
+		{Value: "works", Label: "works", Note: "fine"},
+		{Value: "broken", Label: "broken", Note: "not available yet", Disabled: true},
+	})
+
+	if len(options) != 2 {
+		t.Fatalf("got %d options, want 2", len(options))
+	}
+	if options[0].disabled {
+		t.Error("a row that can be chosen was disabled")
+	}
+	if !options[1].disabled {
+		t.Error("a disabled row arrived selectable")
+	}
+	if options[1].note != "not available yet" {
+		t.Errorf("note = %q", options[1].note)
+	}
+}

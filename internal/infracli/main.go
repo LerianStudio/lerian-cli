@@ -395,6 +395,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if !found {
 			return nil, why
 		}
+		// What this run knows, recorded for the agent install offered below. The
+		// cluster was just built here; asking which cluster, in this session, is
+		// a question whose answer is still on screen.
+		//
+		// The ARN is preferred over one assembled from parts: it is what the EKS
+		// stack reported, and it is the kubeconfig context verbatim.
+		CarryAgentTargetARN(config.Profile, config.Region, opts.account, facts.Name, facts.ARN)
 		return func() error {
 			return pointKubectl(ctx, ask, progressOut, facts, config.Region, config.Profile)
 		}, ""
@@ -932,11 +939,16 @@ func unlockOne(
 }
 
 func printFailureAdvice(out io.Writer, unit infra.UnitResult) {
-	lock := infra.ReadStateLock(unit.Err.Error())
-	if lock == nil {
+	if lock := infra.ReadStateLock(unit.Err.Error()); lock != nil {
+		fmt.Fprintf(out, "\n%s\n", indent(lock.Advice(unit.Unit.Dir, time.Now()), "  "))
 		return
 	}
-	fmt.Fprintf(out, "\n%s\n", indent(lock.Advice(unit.Unit.Dir, time.Now()), "  "))
+	// A resource AWS has and the state does not. Worth recognizing for the same
+	// reason as the lock: Terraform's message is accurate and says nothing about
+	// the cause, and the fix is one command nobody can write from memory.
+	if drift := infra.ReadResourceInUse(unit.Err.Error()); drift != nil {
+		fmt.Fprintf(out, "\n%s\n", indent(drift.Advice(unit.Unit.Dir), "  "))
+	}
 }
 
 // guardCredentialLifetime says out loud how long the run's credentials have, and

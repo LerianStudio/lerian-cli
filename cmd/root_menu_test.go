@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/lerian-studio/lerian-cli/internal/infracli"
 )
 
 func fakeRoot(t *testing.T) *cobra.Command {
@@ -137,20 +139,48 @@ func TestACommandCanBeKeptOutOfTheMenu(t *testing.T) {
 // And the menu still offers what it should — read off cobra, so a command added
 // later appears here without anyone registering it twice. config arrived that
 // way, and this list is the only place it had to be written down again.
-func TestTheMenuOffersAuthConfigInfraAndVersion(t *testing.T) {
+func TestTheMenuOffersAgentAuthConfigInfraAndVersion(t *testing.T) {
 	choices := menuChoices(rootCmd)
 	offered := make([]string, 0, len(choices))
 	for _, choice := range choices {
 		offered = append(offered, choice.Value)
 	}
 
-	want := []string{"auth", "config", "infra", "version"}
+	want := []string{"agent", "auth", "config", "infra", "version"}
 	if len(offered) != len(want) {
 		t.Fatalf("the menu offers %v, want exactly %v", offered, want)
 	}
 	for index, name := range want {
 		if offered[index] != name {
 			t.Errorf("offered[%d] = %q, want %q (%v)", index, offered[index], name, offered)
+		}
+	}
+}
+
+// A command that does not work yet is shown and not offered. Hiding it would
+// send somebody looking for a command they have heard of; leaving it selectable
+// sends them into something broken.
+func TestAuthIsShownButNotSelectable(t *testing.T) {
+	var auth *infracli.Choice
+	for index, choice := range menuChoices(rootCmd) {
+		if choice.Value == "auth" {
+			auth = &menuChoices(rootCmd)[index]
+		}
+	}
+
+	if auth == nil {
+		t.Fatal("auth was removed from the menu rather than disabled")
+	}
+	if !auth.Disabled {
+		t.Error("auth is selectable, and it does not work yet")
+	}
+	if !strings.Contains(auth.Note, "not available") {
+		t.Errorf("the row does not say why it cannot be chosen: %q", auth.Note)
+	}
+	// And the rest of the menu is untouched.
+	for _, choice := range menuChoices(rootCmd) {
+		if choice.Value != "auth" && choice.Disabled {
+			t.Errorf("%q was disabled too", choice.Value)
 		}
 	}
 }

@@ -1,0 +1,222 @@
+package agent
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"sync"
+
+	"github.com/lerian-studio/lerian-cli/internal/agent"
+	"github.com/lerian-studio/lerian-cli/internal/infracli"
+)
+
+var install struct {
+	opts           agent.Options
+	kubeContext    string
+	timeout        time.Duration
+	wait           bool
+	noControlPlane bool
+	yes            bool
+}
+
+var installCmd = &cobra.Command{
+	Use:   "install",
+	Short: "Install the agent into the cluster kubectl points at",
+	Long: `Install the Lerian agent.
+
+The credential is either a single-use enrollment token, which carries no
+identity and is safe to hand to a cluster that does not exist yet, or a
+per-agent token, which needs --agent-id with it. Both reach the cluster as a
+Secret; --existing-secret is the way the credential never passes through this
+process at all.
+
+Every namespace in --managed-namespaces must already exist: the chart creates a
+Role and a RoleBinding in each, and Kubernetes has nowhere to put them
+otherwise.`,
+	Example: `  lerian agent install --control-plane https://cp.example.com --token lerian_enroll_...
+  lerian agent install --control-plane https://cp.example.com --existing-secret agent-creds
+  lerian agent install --control-plane https://cp.example.com --token ... --managed-namespaces apps,data`,
+	RunE: runInstall,
+}
+
+func init() {
+	flags := installCmd.Flags()
+	flags.StringVar(&install.opts.ControlPlaneURL, "control-plane", "",
+		"base URL of the Lerian control plane (default: the api-url of the current auth profile)")
+	flags.StringVar(&install.opts.Token, "token", "",
+		"enrollment or per-agent token from the control plane")
+	flags.StringVar(&install.opts.AgentID, "agent-id", "",
+		"agent id, required with a per-agent token and refused with an enrollment one")
+	flags.StringVar(&install.opts.ExistingSecret, "existing-secret", "",
+		"name a Secret already in the cluster instead of passing a token")
+	flags.StringSliceVar(&install.opts.ManagedNamespaces, "managed-namespaces",
+		agent.DefaultManagedNamespaces,
+		"namespaces the agent may install into; created if missing")
+	flags.StringVar(&install.opts.Namespace, "namespace", agent.DefaultNamespace,
+		"namespace the agent itself runs in")
+	flags.StringVar(&install.opts.ChartVersion, "chart-version", "",
+		"pin the chart; empty installs the newest published version")
+	flags.BoolVar(&install.opts.AllowInsecureHTTP, "allow-insecure-http", false,
+		"permit a cleartext control plane URL, for an isolated dev cluster only")
+	flags.StringVar(&install.opts.ImageRepository, "image-repository", "",
+		"pull the agent image from somewhere other than the chart's default")
+	flags.StringVar(&install.opts.ImageDigest, "image-digest", "",
+		"pin the image by digest")
+	flags.StringVar(&install.opts.AllowedRegistries, "allowed-registries", "",
+		"registries the agent accepts for its own self-update; set it alongside --image-repository")
+	flags.StringSliceVar(&install.opts.ImagePullSecrets, "image-pull-secrets", nil,
+		"Secrets for a registry that refuses anonymous reads")
+	flags.StringVar(&install.kubeContext, "kube-context", "",
+		"kubeconfig context to install into; empty uses the current one")
+	flags.DurationVar(&install.timeout, "timeout", agent.DefaultTimeout,
+		"how long to wait for the agent to become ready")
+	flags.BoolVar(&install.yes, "yes", false,
+		"skip the confirmation; required outside a terminal")
+	flags.BoolVar(&install.noControlPlane, "no-control-plane", false,
+		"install against a placeholder, for a control plane that does not exist yet: "+
+			"it exercises the chart, the RBAC and the pod, but never the registration")
+	flags.BoolVar(&install.wait, "wait", true,
+		"wait for the agent to become ready; --wait=false returns once the objects exist, "+
+			"which is what you want against a control plane that does not exist yet")
+}
+
+// profileFlag is the --profile the root command defines, when it was given.
+func profileFlag(cmd *cobra.Command) string {
+	name, _ := cmd.Flags().GetString("profile")
+	return name
+}
+
+// placeholderConnection fills in a connection for an install that is not meant
+// to reach anything.
+//
+// Refused rather than half-applied when real values are also given: keeping a
+// real URL beside a placeholder token points the agent at a live control plane
+// with a credential it will reject, while every message printed here says it is
+// talking to control-plane.invalid.
+func placeholderConnection(opts agent.Options) (agent.Options, error) {
+	if opts.ControlPlaneURL != "" || opts.Token != "" || opts.ExistingSecret != "" {
+		return opts, fmt.Errorf("--no-control-plane stands in for the connection, so it cannot be " +
+			"combined with --control-plane, --token or --existing-secret. Drop it to use the real " +
+			"values, or drop them to install against a placeholder")
+	}
+	opts.ControlPlaneURL = agent.PlaceholderControlPlane
+	opts.Token = agent.PlaceholderToken
+	return opts, nil
+}
+
+// needsAsking reports that nothing was given, so the questions are the only way
+// to find out.
+//
+// The control plane URL stands for the whole set: it has no sensible default,
+// so a run without it was never going to work, and a run with it is somebody
+// driving the command rather than picking it off a menu. Printing the usage
+// text of a command nobody typed is what this exists to avoid.
+func needsAsking(flags agent.Options) bool {
+	return flags.ControlPlaneURL == ""
+}
+
+// keepFlags takes the answers while keeping what the caller already said.
+//
+// The questions cover what somebody picking "install" off a menu must be asked:
+// where the control plane is, the token, the namespaces. Everything else has a
+// flag and no question, so an answer set would silently drop
+// `--namespace infra` from a command that carried it.
+func keepFlags(flags, asked agent.Options) agent.Options {
+	asked.Namespace = flags.Namespace
+	asked.ChartVersion = flags.ChartVersion
+	asked.ImageRepository = flags.ImageRepository
+	asked.ImageDigest = flags.ImageDigest
+	asked.AllowedRegistries = flags.AllowedRegistries
+	asked.ImagePullSecrets = flags.ImagePullSecrets
+	asked.AllowInsecureHTTP = flags.AllowInsecureHTTP
+	// NoWait is not carried over: the questions ask about waiting, and --wait
+	// defaults to true, so taking the flag here would overrule the answer with a
+	// value nobody typed.
+	return asked
+}
+
+func runInstall(cmd *cobra.Command, _ []string) error {
+	opts := install.opts
+
+	// An install nobody expects to connect. The chart requires a URL and a
+	// credential regardless, so this supplies them rather than exempting
+	// anything — see agent.PlaceholderControlPlane.
+	if install.noControlPlane {
+		var err error
+		if opts, err = placeholderConnection(opts); err != nil {
+			return err
+		}
+	}
+
+	// What auth login already recorded, before anything is asked: a scripted run
+	// that signed in should not also have to repeat where it signed in to.
+	if opts.ControlPlaneURL == "" {
+		opts.ControlPlaneURL = agent.DefaultControlPlane(profileFlag(cmd))
+	}
+
+	if needsAsking(opts) {
+		asked, err := infracli.AskAgentOptions(cmd.OutOrStdout())
+		if err != nil {
+			return err
+		}
+		opts = keepFlags(opts, asked)
+	}
+
+	// Only when it was typed: the questions already asked, and the flag's own
+	// default would otherwise overrule the answer.
+	if cmd.Flags().Changed("wait") {
+		opts.NoWait = !install.wait
+	}
+	// After the flag, not before: --no-control-plane --wait would otherwise ask
+	// helm to wait for a registration that cannot happen, and spend the whole
+	// timeout finding out.
+	if install.noControlPlane {
+		opts.NoWait = true
+	}
+
+	helm, err := agent.NewHelm()
+	if err != nil {
+		return err
+	}
+	helm.Context = target.Context
+
+	// What is there now, before confirming: an install over something already
+	// installed is a different operation, and confirming one that turns out to
+	// write nothing is a question nobody needed.
+	planned, existing, err := agent.PlanInstall(cmd.Context(), helm, opts)
+	if err != nil {
+		return err
+	}
+	if planned == agent.Unmodified {
+		infracli.PrintInstalled(cmd.OutOrStdout(), target, opts, existing, planned)
+		return nil
+	}
+
+	if !install.yes {
+		verb := "install"
+		if planned == agent.Reconfigured {
+			verb = "reconfigure"
+		}
+		if err := infracli.ConfirmAgentAction(cmd.Context(), cmd.OutOrStdout(),
+			verb+" the agent in "+target.Described()); err != nil {
+			return err
+		}
+	}
+
+	var mu sync.Mutex
+	spin := infracli.Spin(&mu, cmd.OutOrStdout(), "installing into "+opts.Namespace)
+	outcome, err := agent.InstallReporting(cmd.Context(), helm, opts, install.timeout)
+	spin.Stop()
+	if err != nil {
+		return err
+	}
+
+	// The same report the menu prints: one installation, one way of saying what
+	// it did. Read back rather than assumed, because an install that resolved
+	// "newest" only knows which version that was afterwards.
+	release, _, _ := helm.Installed(cmd.Context(), opts.Namespace)
+	infracli.PrintInstalled(cmd.OutOrStdout(), target, opts, release, outcome)
+	return nil
+}

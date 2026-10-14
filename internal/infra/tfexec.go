@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	goversion "github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-exec/tfexec"
@@ -93,6 +94,18 @@ func NewCLI(ctx context.Context) (*CLI, error) {
 // ExecPath is the terraform binary this CLI drives, for the preflight summary.
 func (c *CLI) ExecPath() string { return c.execPath }
 
+// setWaitDelay is a seam. The grace period lands in a field tfexec does not
+// export, so a test cannot read it back — but it can replace this and see that
+// the client every root gets was actually given one, which is the half of the
+// behavior a check on the constant says nothing about.
+var setWaitDelay = func(client *tfexec.Terraform, delay time.Duration) error {
+	return client.SetWaitDelay(delay)
+}
+
+// gracefulShutdown is how long terraform may take to stop after an interrupt
+// before it is killed. See the reasoning where it is applied.
+const gracefulShutdown = 30 * time.Minute
+
 // terraform returns the cached client for one root, creating it on first use.
 func (c *CLI) terraform(unit Unit) (*tfexec.Terraform, error) {
 	c.mu.Lock()
@@ -105,6 +118,29 @@ func (c *CLI) terraform(unit Unit) (*tfexec.Terraform, error) {
 	client, err := tfexec.NewTerraform(unit.Dir, c.execPath)
 	if err != nil {
 		return nil, fmt.Errorf("infra: cannot prepare terraform for %s: %w", unit.Name, err)
+	}
+
+	// How long an interrupted Terraform is given to finish and write its state.
+	//
+	// ctrl-c cancels the context, and terraform-exec turns that into SIGINT —
+	// which is right: Terraform then waits for the API call in flight to return,
+	// records what it created, and exits. What it does next is the problem.
+	// exec.Cmd kills the process WaitDelay after the cancel, and terraform-exec
+	// ships a default of 60 seconds.
+	//
+	// Sixty seconds is less than one EKS node group. A cluster here lost its node
+	// group exactly this way: the resource was created in AWS at 19:44:39, the
+	// last state write was at 19:44:31, and nothing was written after — so the
+	// next apply tried to create it again and got "already exists", and the next
+	// destroy left the cluster with nodes attached. Nothing recovers that but a
+	// hand-written import.
+	//
+	// Not zero, which would mean waiting forever on a Terraform that is genuinely
+	// stuck. Thirty minutes outlives the slowest root here by a wide margin, and
+	// the operator is told it is waiting rather than left looking at a dead
+	// terminal.
+	if err := setWaitDelay(client, gracefulShutdown); err != nil {
+		return nil, fmt.Errorf("infra: cannot set the shutdown grace period for %s: %w", unit.Name, err)
 	}
 
 	if c.envCache == nil {
