@@ -7,6 +7,7 @@ import (
 
 	"context"
 
+	"github.com/lerian-studio/lerian-cli/internal/agent"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
@@ -181,5 +182,85 @@ func TestRemovalRefusesWithoutATerminalAndNamesTheFlag(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "--auto-approve") {
 		t.Errorf("it names a flag this command does not have: %v", err)
+	}
+}
+
+// An install reaches one cluster in one account. A report that names neither
+// leaves somebody to remember which — across seven AWS profiles, that is a
+// thing to be told rather than recalled.
+func TestTheInstalledReportSaysWhereAndWhat(t *testing.T) {
+	var out strings.Builder
+
+	PrintInstalled(&out,
+		AgentTarget{Cluster: "example-eks", Account: "111122223333", Region: "us-east-2", Profile: "work"},
+		agent.Options{
+			Namespace:         agent.DefaultNamespace,
+			ControlPlaneURL:   "https://control.example.com",
+			Token:             agent.EnrollmentPrefix + "abc",
+			ManagedNamespaces: []string{"lerian-apps"},
+		},
+		agent.Release{Chart: "agent-helm-1.0.1", AppVersion: "1.0.1", Revision: "2", Status: "deployed"})
+
+	// Anchored on the row rather than on the value: "1.0.1" also appears inside
+	// "agent-helm-1.0.1", so a substring check passed with the agent's own
+	// version missing entirely.
+	for _, want := range []string{
+		"cluster           example-eks",
+		"account           111122223333  (work)",
+		"region            us-east-2",
+		"namespace         lerian-system",
+		"chart             agent-helm-1.0.1",
+		"agent             1.0.1",
+		"revision          2  ·  deployed",
+		"control plane     https://control.example.com",
+		"may install into  lerian-apps",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the report is missing the row %q:\n%s", want, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "lerian agent status") {
+		t.Errorf("the report does not say what to do next:\n%s", out.String())
+	}
+}
+
+// A placeholder install must not promise a heartbeat it cannot send.
+func TestAPlaceholderReportDoesNotPromiseRegistration(t *testing.T) {
+	var out strings.Builder
+
+	PrintInstalled(&out, AgentTarget{Cluster: "example-eks"},
+		agent.Options{
+			Namespace:       agent.DefaultNamespace,
+			ControlPlaneURL: agent.PlaceholderControlPlane,
+			Token:           agent.PlaceholderToken,
+		},
+		agent.Release{Chart: "agent-helm-1.0.1"})
+
+	if strings.Contains(out.String(), "first heartbeat lands") {
+		t.Errorf("it promises a registration that cannot happen:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "nowhere to register") {
+		t.Errorf("it does not say why it will stay unready:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "logs deploy/"+agent.ReleaseName) {
+		t.Errorf("it does not say where to look:\n%s", out.String())
+	}
+}
+
+// Run without the preflight — scripted, with --kube-context — there is no
+// account or region to report, and inventing them would be worse than omitting.
+func TestTheReportOmitsWhatItDoesNotKnow(t *testing.T) {
+	var out strings.Builder
+
+	PrintInstalled(&out, AgentTarget{},
+		agent.Options{Namespace: agent.DefaultNamespace, ControlPlaneURL: "https://c",
+			Token: agent.EnrollmentPrefix + "x"},
+		agent.Release{})
+
+	if strings.Contains(out.String(), "account") || strings.Contains(out.String(), "region") {
+		t.Errorf("it reported a cluster it was never told about:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "namespace") {
+		t.Errorf("it dropped what it does know:\n%s", out.String())
 	}
 }

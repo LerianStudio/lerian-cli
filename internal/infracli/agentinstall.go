@@ -219,7 +219,12 @@ func installAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poi
 		return err
 	}
 
-	printInstalled(out, opts)
+	// Read back rather than assumed: the chart version, the app version and the
+	// revision are what helm recorded, and an install that resolved "newest"
+	// only knows which one that was afterwards.
+	release, _, _ := helm.Installed(ctx, opts.Namespace)
+	target, _ := CarriedAgentTarget()
+	PrintInstalled(out, target, opts, release)
 	return nil
 }
 
@@ -231,27 +236,72 @@ func describeChart(opts agent.Options) string {
 	return agent.Chart + "  ·  " + opts.ChartVersion
 }
 
-// printInstalled is what replaces helm's NOTES.txt: what happened, and the one
-// thing worth doing next.
-func printInstalled(out io.Writer, opts agent.Options) {
+// PrintInstalled is what replaces helm's NOTES.txt: where it landed, what is
+// running there, and the one thing worth doing next.
+//
+// Where matters as much as what. An install reaches one cluster in one account,
+// and a report that names neither leaves somebody to remember which — across
+// seven AWS profiles, that is a thing to be told rather than recalled.
+func PrintInstalled(out io.Writer, target AgentTarget, opts agent.Options, release agent.Release) {
 	theme := newStyle(out)
 	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Installed"))
 
+	rows := [][2]string{}
+	if target.Cluster != "" {
+		rows = append(rows,
+			[2]string{"cluster", target.Cluster},
+			[2]string{"account", target.Account + accountSuffix(target.Profile)},
+			[2]string{"region", target.Region},
+		)
+	}
+	rows = append(rows, [2]string{"namespace", opts.Namespace})
+	if release.Chart != "" {
+		rows = append(rows, [2]string{"chart", release.Chart})
+	}
+	if release.AppVersion != "" {
+		rows = append(rows, [2]string{"agent", release.AppVersion})
+	}
+	if release.Revision != "" {
+		rows = append(rows, [2]string{"revision", release.Revision + "  ·  " + release.Status})
+	}
+	rows = append(rows,
+		[2]string{"control plane", opts.ControlPlaneURL},
+		[2]string{"may install into", describeNamespaces(opts)},
+	)
+
+	width := 0
+	for _, row := range rows {
+		if len(row[0]) > width {
+			width = len(row[0])
+		}
+	}
+	for _, row := range rows {
+		fmt.Fprintf(out, "  %-*s  %s\n", width, row[0], row[1])
+	}
+
+	fmt.Fprintln(out)
 	if opts.IsPlaceholder() {
 		// Saying "it appears in the control plane once it heartbeats" would
 		// promise what this install cannot do: there is nowhere to register, and
 		// the pod sits at 0/1 forever.
-		fmt.Fprintf(out, "  The agent is running in %s and has nowhere to register, so it\n", opts.Namespace)
-		fmt.Fprintf(out, "  retries against %s and stays unready.\n\n", opts.ControlPlaneURL)
-		fmt.Fprintf(out, "  %s\n", theme.dim("kubectl -n "+opts.Namespace+" logs deploy/"+agent.ReleaseName))
+		fmt.Fprintf(out, "  It has nowhere to register, so it retries and stays unready. What it is\n")
+		fmt.Fprintf(out, "  doing:\n")
+		fmt.Fprintf(out, "    %s\n", theme.dim("kubectl -n "+opts.Namespace+" logs deploy/"+agent.ReleaseName))
 		fmt.Fprintf(out, "\n  Re-running this once there is a control plane address is the same\n")
 		fmt.Fprintf(out, "  operation, and keeps the identity it already has.\n\n")
 		return
 	}
 
-	fmt.Fprintf(out, "  The agent is running in %s and registering with the control plane.\n", opts.Namespace)
-	fmt.Fprintf(out, "  It appears there once its first heartbeat lands.\n\n")
-	fmt.Fprintf(out, "  %s\n\n", theme.dim("lerian agent status"))
+	fmt.Fprintf(out, "  It appears in the control plane once its first heartbeat lands:\n")
+	fmt.Fprintf(out, "    %s\n\n", theme.dim("lerian agent status"))
+}
+
+// accountSuffix names the profile beside the account, when there is one.
+func accountSuffix(profile string) string {
+	if profile == "" {
+		return ""
+	}
+	return "  (" + profile + ")"
 }
 
 // AskAgentOptions asks for an install, for a caller outside this package.
