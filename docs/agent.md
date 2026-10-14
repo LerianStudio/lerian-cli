@@ -35,13 +35,15 @@ What now?
 Both end up in the same code. The second only asks what the CLI cannot work out
 for itself.
 
-Where the control plane is, it usually can: `lerian auth login` records the
-platform's `api-url` in a profile, and the agent connects to that same platform.
-So `--control-plane` defaults to the current profile's URL, the question offers
-it as the answer Enter accepts, and only a cluster pointed at a different
-control plane has to type one. The chart has no default of its own — it refuses
-to render without the URL — so this is a value somebody always has to have, not
-one worth asking for twice.
+The control plane is not among them. It belongs to Lerian, not to the cluster
+being installed into, so the CLI carries the address rather than asking —
+`agent.ControlPlane` is the single constant, and `--control-plane` is there for
+a cluster deliberately pointed somewhere else. Failing that, a machine that has
+run `lerian auth login` falls back to the platform it signed in to.
+
+**The address has not been decided yet.** Until it is, `agent.ControlPlane` is
+empty and an install with nothing else to go on uses the placeholder below and
+says so.
 
 The offer appears after an `apply` that left a cluster behind, never after a
 `plan`, and never preselected: it reaches a real cluster and needs a credential

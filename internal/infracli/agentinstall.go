@@ -222,41 +222,37 @@ func askAgentOptions(ask *prompter) (agent.Options, error) {
 	out := ask.out
 	opts := agent.Options{Namespace: agent.DefaultNamespace}
 
-	// Offered rather than asked blind: `lerian auth login` already wrote where
-	// the platform is, and the agent connects to that same platform. Enter takes
-	// it; a different cluster talking to a different control plane is the case
-	// that types one.
-	known := agent.ControlPlaneFromProfile("")
-	purpose := "The agent connects outward to it. https:// — it sends a bearer token on every request."
-	switch {
-	case known != "":
-		purpose += " Enter takes the one you signed in to."
-	default:
-		// The state this CLI is used in today: the control plane is still being
-		// built. Refusing to install until it exists would be refusing to test
-		// everything that does not depend on it — the chart, the RBAC, the pod.
-		purpose += " Leave empty if it does not exist yet."
-	}
-	url, err := ask.ask("Where is the Lerian control plane?", purpose, known, "--control-plane")
-	if err != nil {
-		return opts, err
-	}
-	opts.ControlPlaneURL = strings.TrimSpace(url)
+	// Not asked. The control plane belongs to Lerian, so it is a constant this
+	// CLI carries — asking for it would be asking somebody to supply a value
+	// they have no way of choosing. `--control-plane` remains for a cluster
+	// pointed at a different one, which is a deliberate exception rather than
+	// the normal case.
+	opts.ControlPlaneURL = agent.DefaultControlPlane("")
 
 	if opts.ControlPlaneURL == "" {
-		// Both, because a token without somewhere to redeem it is no more useful
-		// than a URL with nothing to present.
+		// The state this CLI is used in today: the address has not been decided.
+		// Refusing to install until it exists would refuse everything that does
+		// not depend on it — the chart, the RBAC, the pod.
+		//
+		// Both values, because a token without somewhere to redeem it is no more
+		// useful than a URL with nothing to present.
 		opts.ControlPlaneURL = agent.PlaceholderControlPlane
 		opts.Token = agent.PlaceholderToken
 		opts.NoWait = true
 
-		fmt.Fprintf(out, "\n  %s\n", newStyle(out).bold("Installing without a control plane"))
-		fmt.Fprintf(out, "  The agent will start and retry against %s, which never\n", agent.PlaceholderControlPlane)
-		fmt.Fprintf(out, "  resolves. That exercises the chart, the RBAC and the pod — not the\n")
-		fmt.Fprintf(out, "  registration, which is the part that needs a control plane.\n")
-		fmt.Fprintf(out, "  Re-run this with the real values when it exists; it is the same command.\n")
+		// Asked first, told after: announcing an install before the questions
+		// that could still fail describes something that may not happen.
+		opts, err := askManagedNamespaces(ask, opts)
+		if err != nil {
+			return opts, err
+		}
 
-		return askManagedNamespaces(ask, opts)
+		fmt.Fprintf(out, "\n  %s\n", newStyle(out).bold("Installing without a control plane"))
+		fmt.Fprintf(out, "  There is no Lerian control plane address yet, so the agent will start and\n")
+		fmt.Fprintf(out, "  retry against %s, which never resolves. That\n", agent.PlaceholderControlPlane)
+		fmt.Fprintf(out, "  exercises the chart, the RBAC and the pod — not the registration.\n")
+		fmt.Fprintf(out, "  Re-running this once the address exists is the same command.\n")
+		return opts, nil
 	}
 
 	token, err := ask.ask("Enrollment token?",

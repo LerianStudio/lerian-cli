@@ -147,7 +147,7 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 	// What auth login already recorded, before anything is asked: a scripted run
 	// that signed in should not also have to repeat where it signed in to.
 	if opts.ControlPlaneURL == "" {
-		opts.ControlPlaneURL = agent.ControlPlaneFromProfile(profileFlag(cmd))
+		opts.ControlPlaneURL = agent.DefaultControlPlane(profileFlag(cmd))
 	}
 
 	if needsAsking(opts) {

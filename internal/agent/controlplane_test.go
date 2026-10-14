@@ -81,3 +81,42 @@ func TestNoProfileMeansNoDefault(t *testing.T) {
 		t.Errorf("an unreadable config produced %q instead of no default", got)
 	}
 }
+
+// The control plane belongs to Lerian, not to the cluster being installed
+// into. Asking for it asks somebody to supply a value they have no way of
+// choosing — so it is a constant here, and this is the only line that changes
+// when the address exists.
+func TestTheControlPlaneIsACarriedConstantNotAQuestion(t *testing.T) {
+	writeConfig(t, `current-profile: work
+profiles:
+  work:
+    api-url: https://signed-in.example.com
+`)
+
+	got := DefaultControlPlane("")
+
+	switch ControlPlane {
+	case "":
+		// Nothing published yet, so what the operator signed in to is the best
+		// answer there is — a per-machine value chosen on purpose.
+		if got != "https://signed-in.example.com" {
+			t.Errorf("with no published address it must fall back to the profile, got %q", got)
+		}
+	default:
+		// Once published, it wins: a machine signed in to a different platform
+		// must not quietly point its agent somewhere else.
+		if got != ControlPlane {
+			t.Errorf("the published address must win over the profile, got %q", got)
+		}
+	}
+}
+
+// With neither, an install has nothing to point at, and the caller substitutes
+// the placeholder rather than asking a question with no answer.
+func TestNoAddressAndNoProfileYieldsNothing(t *testing.T) {
+	writeConfig(t, "profiles: {}\n")
+
+	if ControlPlane == "" && DefaultControlPlane("") != "" {
+		t.Error("an unconfigured machine produced an address from nowhere")
+	}
+}
