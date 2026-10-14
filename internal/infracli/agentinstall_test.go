@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"slices"
+
 	"github.com/lerian-studio/lerian-cli/internal/agent"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
@@ -118,5 +120,51 @@ func TestAskingForAnInstallOutsideATerminalSaysWhatIsMissing(t *testing.T) {
 	}
 	if out.String() != "" {
 		t.Errorf("it printed a prompt anyway:\n%s", out.String())
+	}
+}
+
+// Somebody who has just planned against a running cluster most often wants to
+// know what is in it. An offer that can only install answers a question they
+// did not ask — and asks for a control plane URL to do it.
+func TestWithAnAgentInstalledEveryOperationIsOffered(t *testing.T) {
+	values := make([]string, 0, 4)
+	for _, opt := range agentActions(true) {
+		values = append(values, opt.value)
+	}
+
+	for _, want := range []string{"status", "upgrade", "install", "uninstall"} {
+		if !slices.Contains(values, want) {
+			t.Errorf("%q is not offered for an installed agent: %v", want, values)
+		}
+	}
+	// Reading comes first: it is the one that changes nothing, and the one most
+	// often wanted.
+	if values[0] != "status" {
+		t.Errorf("the first row is %q, want the one that changes nothing", values[0])
+	}
+}
+
+// With nothing installed, an upgrade and a removal are operations on something
+// that is not there.
+func TestWithNoAgentOnlyInstallAndStatusAreOffered(t *testing.T) {
+	for _, opt := range agentActions(false) {
+		if opt.value == "upgrade" || opt.value == "uninstall" {
+			t.Errorf("%q was offered with nothing installed", opt.value)
+		}
+	}
+}
+
+// The line under the question says what is there, so the choice is made with
+// the state in view rather than from memory.
+func TestTheMenuSaysWhatIsInstalled(t *testing.T) {
+	got := agentState(agent.Release{Chart: "agent-helm-1.0.1", Status: "deployed", Revision: "3"}, true)
+	for _, want := range []string{"agent-helm-1.0.1", "deployed", "3"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the state line omits %q: %q", want, got)
+		}
+	}
+
+	if got := agentState(agent.Release{}, false); !strings.Contains(got, "Nothing is installed") {
+		t.Errorf("an empty namespace is described as %q", got)
 	}
 }

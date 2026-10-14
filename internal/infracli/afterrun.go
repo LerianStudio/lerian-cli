@@ -95,7 +95,7 @@ func afterRun(
 			}
 			continue
 		case picked == afterAgent:
-			if err := installAgentFromMenu(ctx, ask, out, point); err != nil {
+			if err := manageAgentFromMenu(ctx, ask, out, point); err != nil {
 				agentInstallFailed(out, err)
 			}
 			continue
@@ -208,8 +208,8 @@ func afterOptions(done infra.Action, cluster bool) []option {
 	// about the run: whichever action just happened, the cluster is there and
 	// the agent in it is worth reaching.
 	if agentOffer(cluster) {
-		options = append(options, option{value: afterAgent, label: "install or reconfigure the Lerian agent",
-			note: "connects this cluster to the Lerian control plane"})
+		options = append(options, option{value: afterAgent, label: "manage the Lerian agent",
+			note: "what is installed, install, upgrade or remove"})
 	}
 	options = append(options,
 		option{value: string(infra.ActionOutput), label: "output", note: "reads terraform output"},

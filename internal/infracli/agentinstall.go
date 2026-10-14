@@ -7,9 +7,150 @@ import (
 	"io"
 	"strings"
 
+	"sync"
+
 	"github.com/lerian-studio/lerian-cli/internal/agent"
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
+
+// manageAgentFromMenu is what the row after a deploy opens.
+//
+// The four operations rather than the install alone. Somebody who has just
+// planned against a running cluster most often wants to know what is in it, and
+// an offer that can only install answers a question they did not ask — and asks
+// for a control plane URL to do it.
+func manageAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, point func() error) error {
+	// The kubeconfig first, for every operation and not only the install: all
+	// four reach the cluster, and reading the wrong one is as wrong as writing
+	// to it.
+	if point != nil {
+		if err := point(); err != nil {
+			return fmt.Errorf("cannot point kubectl at the cluster: %w", err)
+		}
+	}
+
+	helm, err := agent.NewHelm()
+	if err != nil {
+		return err
+	}
+	helm.Out = out
+	if carried, ok := CarriedAgentTarget(); ok {
+		helm.Context = carried.Context
+	}
+
+	// What is there now, so the menu can say it rather than offering an upgrade
+	// for something that is not installed.
+	var mu sync.Mutex
+	spin := newSpinner(&mu, out, "reading the release")
+	release, installed, err := helm.Installed(ctx, agent.DefaultNamespace)
+	spin.Stop()
+	if err != nil {
+		return err
+	}
+
+	chosen, err := ask.pick("What about the agent?", agentState(release, installed), "",
+		agentActions(installed), "")
+	if err != nil {
+		return err
+	}
+
+	switch chosen {
+	case "status":
+		printAgentStatus(out, release, installed)
+		return nil
+	case "install":
+		return installAgentFromMenu(ctx, ask, out, nil)
+	case "upgrade":
+		return upgradeAgentFromMenu(ctx, helm, out, release)
+	case "uninstall":
+		return uninstallAgentFromMenu(ctx, ask, helm, out, release)
+	}
+	return nil
+}
+
+// agentState is the line under the question: what is installed, if anything.
+func agentState(release agent.Release, installed bool) string {
+	if !installed {
+		return "Nothing is installed in " + agent.DefaultNamespace + " yet."
+	}
+	return fmt.Sprintf("%s is installed, %s, revision %s.", release.Chart, release.Status, release.Revision)
+}
+
+// agentActions offers what can actually be done to what is there.
+func agentActions(installed bool) []option {
+	if !installed {
+		return []option{
+			{value: "install", label: "install it", note: "needs a control plane URL and a token"},
+			{value: "status", label: "show what is there", note: "reads the release, changes nothing"},
+		}
+	}
+	return []option{
+		{value: "status", label: "show what is there", note: "reads the release, changes nothing"},
+		{value: "upgrade", label: "move it to another chart version", note: "keeps every other value"},
+		{value: "install", label: "reconfigure it", note: "new control plane, token or namespaces"},
+		{value: "uninstall", label: "remove it", note: "keeps the identity Secret"},
+	}
+}
+
+// printAgentStatus is the same report `lerian agent status` prints.
+func printAgentStatus(out io.Writer, release agent.Release, installed bool) {
+	if !installed {
+		fmt.Fprintf(out, "\n  No agent in %s.\n\n", agent.DefaultNamespace)
+		return
+	}
+	fmt.Fprintf(out, "\n  release      %s\n", release.Name)
+	fmt.Fprintf(out, "  namespace    %s\n", release.Namespace)
+	fmt.Fprintf(out, "  chart        %s\n", release.Chart)
+	fmt.Fprintf(out, "  app version  %s\n", release.AppVersion)
+	fmt.Fprintf(out, "  revision     %s\n", release.Revision)
+	fmt.Fprintf(out, "  status       %s\n", release.Status)
+	if release.Status != "deployed" {
+		fmt.Fprintf(out, "\n  What the agent says:\n    kubectl -n %s logs deploy/%s\n",
+			release.Namespace, agent.ReleaseName)
+	}
+	fmt.Fprintln(out)
+}
+
+// upgradeAgentFromMenu moves the release to the newest published chart.
+//
+// No version asked for: the menu's answer to "which version" is "the current
+// one", and somebody who wants a specific chart has `lerian agent upgrade
+// --chart-version` for it.
+func upgradeAgentFromMenu(ctx context.Context, helm *agent.Helm, out io.Writer, release agent.Release) error {
+	// Not waiting when it was not ready to begin with: a new chart does not make
+	// an agent that never registered become ready, and waiting for it spends the
+	// timeout to report the state it was already in.
+	noWait := release.Status != "deployed"
+
+	fmt.Fprintf(out, "\n  Upgrading from %s to the newest published chart.\n\n", release.Chart)
+	if err := helm.Reuse(ctx, "", release.Namespace, agent.DefaultTimeout, noWait); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "\n  Upgraded.\n\n")
+	return nil
+}
+
+// uninstallAgentFromMenu removes the release, after the same confirmation a
+// destroy gets.
+func uninstallAgentFromMenu(
+	ctx context.Context,
+	ask *prompter,
+	helm *agent.Helm,
+	out io.Writer,
+	release agent.Release,
+) error {
+	what := fmt.Sprintf("remove %s (%s) from %s", release.Name, release.Chart, release.Namespace)
+	fmt.Fprintf(out, "\n  %s\n  The control plane will stop hearing from it.\n", what)
+	if err := ask.confirm(ctx, out, what); err != nil {
+		return err
+	}
+	if err := helm.Uninstall(ctx, release.Namespace); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "\n  Removed. %s was kept, so a reinstall is the same agent.\n\n",
+		agent.IdentitySecretName)
+	return nil
+}
 
 // installAgentFromMenu is the second way into the one installation.
 //
