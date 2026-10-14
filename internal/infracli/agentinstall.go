@@ -203,14 +203,19 @@ func describeNamespaces(opts agent.Options) string {
 	return strings.Join(opts.ManagedNamespaces, ", ")
 }
 
-// agentOffer reports whether installing the agent is worth offering.
+// agentOffer reports whether managing the agent is worth offering.
 //
-// Only after an apply, and only with a cluster: an offer to install into
-// something that was not built, or was only planned, is a question with no
-// answer. Never as a default — it reaches a real cluster and needs a credential
-// nobody has lying around.
-func agentOffer(done infra.Action, cluster bool) bool {
-	return done == infra.ActionApply && cluster
+// Whenever there is a cluster, whatever the action was — the same rule the
+// kubectl row above follows, and for the same reason it was changed to follow
+// it. Gating this on apply read as "the agent belongs to a deploy", when what
+// it belongs to is the cluster: somebody who has just planned against a running
+// cluster is exactly somebody who may want to look at the agent in it, and the
+// cluster is there either way.
+//
+// Still never a default. It reaches a real cluster, and installing needs a
+// credential nobody has lying around.
+func agentOffer(cluster bool) bool {
+	return cluster
 }
 
 // agentInstallFailed reports an install that did not happen, without ending the

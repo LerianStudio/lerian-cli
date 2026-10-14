@@ -8,25 +8,30 @@ import (
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
-// The offer belongs where the cluster exists and was just built. Offering it
-// after a plan would be a question with nothing to install into.
-func TestTheAgentIsOfferedOnlyAfterAnApplyWithACluster(t *testing.T) {
-	for name, tc := range map[string]struct {
-		done    infra.Action
-		cluster bool
-		want    bool
-	}{
-		"applied, cluster there": {infra.ActionApply, true, true},
-		"applied, no cluster":    {infra.ActionApply, false, false},
-		"only planned":           {infra.ActionPlan, true, false},
-		"destroyed":              {infra.ActionDestroy, true, false},
-		"output":                 {infra.ActionOutput, true, false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := agentOffer(tc.done, tc.cluster); got != tc.want {
-				t.Errorf("offer = %v, want %v", got, tc.want)
-			}
-		})
+// The offer belongs to the cluster, not to the run that happened to precede it.
+// Somebody who has just planned against a running cluster is exactly somebody
+// who may want to reach the agent in it — the same reasoning that moved the
+// kubectl row off this gate.
+func TestTheAgentIsOfferedWheneverThereIsACluster(t *testing.T) {
+	if !agentOffer(true) {
+		t.Error("a cluster is there and the agent was not offered")
+	}
+	if agentOffer(false) {
+		t.Error("the agent was offered with no cluster to reach")
+	}
+}
+
+// Which means it survives a plan, which is where this was wrong: planning
+// against a running cluster hid the row.
+func TestTheAgentRowSurvivesAPlan(t *testing.T) {
+	var found bool
+	for _, opt := range afterOptions(infra.ActionPlan, true) {
+		if opt.value == afterAgent {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("planning against a running cluster hid the agent row")
 	}
 }
 
@@ -47,9 +52,10 @@ func TestTheMenuCarriesTheAgentRow(t *testing.T) {
 		t.Fatalf("no agent row after an apply with a cluster: %+v", rows)
 	}
 
-	for _, opt := range afterOptions(infra.ActionPlan, true) {
+	// And with no cluster there is nothing to reach, whatever just ran.
+	for _, opt := range afterOptions(infra.ActionApply, false) {
 		if opt.value == afterAgent {
-			t.Error("the agent was offered after a plan")
+			t.Error("the agent was offered with no cluster")
 		}
 	}
 }

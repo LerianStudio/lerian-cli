@@ -204,11 +204,11 @@ func afterOptions(done infra.Action, cluster bool) []option {
 		options = append(options, option{value: afterKubectl, label: "point kubectl at the cluster",
 			note: "runs aws eks update-kubeconfig"})
 	}
-	// Offered where somebody is already looking at the cluster they just built,
-	// which is the moment the answer to "which cluster?" is obvious. Only after
-	// an apply: there is nothing to install into after a plan.
-	if agentOffer(done, cluster) {
-		options = append(options, option{value: afterAgent, label: "install the Lerian agent",
+	// Beside the kubectl row, because both are about the cluster rather than
+	// about the run: whichever action just happened, the cluster is there and
+	// the agent in it is worth reaching.
+	if agentOffer(cluster) {
+		options = append(options, option{value: afterAgent, label: "install or reconfigure the Lerian agent",
 			note: "connects this cluster to the Lerian control plane"})
 	}
 	options = append(options,
