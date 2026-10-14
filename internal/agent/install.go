@@ -13,6 +13,9 @@ import (
 // point of this function, and is not visible from a test of the advice alone.
 type Installer interface {
 	Install(ctx context.Context, opts Options, timeout time.Duration) error
+	// KubeContext is the cluster the install will reach, so the namespaces are
+	// created in the same one rather than in whatever is current.
+	KubeContext() string
 }
 
 // Install is the one installation, whichever way somebody arrived at it.
@@ -29,6 +32,13 @@ func Install(ctx context.Context, helm Installer, opts Options, timeout time.Dur
 	// come through, and a wrong flag should cost nothing — not a chart pull, not
 	// a partial release, not three minutes of waiting.
 	if err := opts.Validate(); err != nil {
+		return err
+	}
+
+	// Before helm, because the chart places a Role in each and Kubernetes has
+	// nowhere to put one in a namespace that does not exist. This used to be the
+	// operator's problem, discovered three minutes into an install.
+	if err := EnsureNamespaces(ctx, helm.KubeContext(), opts.ManagedNamespaces); err != nil {
 		return err
 	}
 	if timeout == 0 {

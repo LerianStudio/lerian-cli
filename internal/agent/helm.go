@@ -32,6 +32,9 @@ type Helm struct {
 	Out io.Writer
 }
 
+// KubeContext is the cluster this client acts on, empty for the current one.
+func (h *Helm) KubeContext() string { return h.Context }
+
 // NewHelm finds the helm binary, or says what to install.
 func NewHelm() (*Helm, error) {
 	path, err := exec.LookPath("helm")

@@ -79,6 +79,7 @@ func TestUnrelatedFailuresGetNoAdvice(t *testing.T) {
 type failing struct{ err error }
 
 func (f failing) Install(context.Context, Options, time.Duration) error { return f.err }
+func (f failing) KubeContext() string                                   { return "" }
 
 // A test of adviseOn proves adviseOn works and says nothing about whether
 // Install calls it — which is exactly the gap a mutation deleting the call
@@ -137,6 +138,8 @@ func (r reaching) Install(context.Context, Options, time.Duration) error {
 	*r.called = true
 	return nil
 }
+
+func (r reaching) KubeContext() string { return "" }
 
 // The failure somebody hits while the control plane is still being built. Helm
 // says "timed out waiting for the condition", which is true and says nothing

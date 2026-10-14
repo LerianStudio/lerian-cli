@@ -240,19 +240,14 @@ func askAgentOptions(ask *prompter) (agent.Options, error) {
 		opts.Token = agent.PlaceholderToken
 		opts.NoWait = true
 
-		// Asked first, told after: announcing an install before the questions
-		// that could still fail describes something that may not happen.
-		opts, err := askManagedNamespaces(ask, opts)
-		if err != nil {
-			return opts, err
-		}
+		opts.ManagedNamespaces = agent.DefaultManagedNamespaces
 
 		fmt.Fprintf(out, "\n  %s\n", newStyle(out).bold("Installing without a control plane"))
 		fmt.Fprintf(out, "  There is no Lerian control plane address yet, so the agent will start and\n")
 		fmt.Fprintf(out, "  retry against %s, which never resolves. That\n", agent.PlaceholderControlPlane)
 		fmt.Fprintf(out, "  exercises the chart, the RBAC and the pod — not the registration.\n")
 		fmt.Fprintf(out, "  Re-running this once the address exists is the same command.\n")
-		return opts, nil
+		return opts, opts.Validate()
 	}
 
 	token, err := ask.ask("Enrollment token?",
@@ -264,10 +259,10 @@ func askAgentOptions(ask *prompter) (agent.Options, error) {
 	}
 	opts.Token = strings.TrimSpace(token)
 
-	opts, err = askManagedNamespaces(ask, opts)
-	if err != nil {
-		return opts, err
-	}
+	// Not asked either. Which namespaces the agent writes to follows from what
+	// Lerian deploys, not from whoever runs the installer, and the prompt had a
+	// right answer nobody outside this repository could know.
+	opts.ManagedNamespaces = agent.DefaultManagedNamespaces
 
 	// Asked, because waiting is right when the control plane is there and a trap
 	// when it is not: readiness means registered, so against a control plane that
@@ -299,24 +294,6 @@ func askAgentOptions(ask *prompter) (agent.Options, error) {
 		return opts, err
 	}
 	return opts, nil
-}
-
-// askManagedNamespaces is the last question, reached whether or not there is a
-// control plane to point at.
-func askManagedNamespaces(ask *prompter, opts agent.Options) (agent.Options, error) {
-	namespaces, err := ask.ask("Namespaces the agent may install into?",
-		"Comma-separated, and each must already exist. Leave empty to decide later — "+
-			"adding one is another install with the same values.",
-		"", "--managed-namespaces")
-	if err != nil {
-		return opts, err
-	}
-	for _, name := range strings.Split(namespaces, ",") {
-		if name = strings.TrimSpace(name); name != "" {
-			opts.ManagedNamespaces = append(opts.ManagedNamespaces, name)
-		}
-	}
-	return opts, opts.Validate()
 }
 
 // describeCredential says which form was given without printing it.

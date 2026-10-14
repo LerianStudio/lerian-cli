@@ -96,32 +96,39 @@ func TestNoManagedNamespacesSaysWhatThatMeans(t *testing.T) {
 	}
 }
 
-// `lerian agent install` with no flags reaches this. Outside a terminal it must
-// refuse and name the flag to add, rather than block on a question nobody will
-// answer — a flag missing in CI is a flag to add to the script.
+// With no control plane address published and no profile to fall back on,
+// there is nothing left to ask: the control plane is a constant this CLI
+// carries and the namespaces are a Lerian convention. An install can be built
+// without a terminal at all.
 //
-// The control plane is not among the questions: it belongs to Lerian and is a
-// constant this CLI carries, so the first thing it cannot work out alone is
-// which namespaces the agent may install into.
-func TestAskingForAnInstallOutsideATerminalSaysWhatIsMissing(t *testing.T) {
+// That is the point of making both implicit — the questions that remained were
+// ones whose right answer nobody running the installer could know.
+func TestAnInstallNeedsNoQuestionsWhenNothingIsPublished(t *testing.T) {
+	if agent.ControlPlane != "" {
+		t.Skip("an address is published, so the wait question applies")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+
 	var out strings.Builder
+	opts, err := AskAgentOptions(&out)
 
-	_, err := AskAgentOptions(&out)
-
-	if err == nil {
-		t.Fatal("it tried to ask with no terminal")
+	if err != nil {
+		t.Fatalf("it could not build an install without asking: %v", err)
 	}
-	if !strings.Contains(err.Error(), "--managed-namespaces") {
-		t.Errorf("the error does not name the flag to add: %v", err)
+	if err := opts.Validate(); err != nil {
+		t.Errorf("what it built does not validate: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no terminal") {
-		t.Errorf("and does not say why it could not ask: %v", err)
+	if !opts.IsPlaceholder() {
+		t.Error("with no address published the install must be a placeholder one")
 	}
-	if strings.Contains(err.Error(), "--control-plane") {
-		t.Errorf("it asks for a value this CLI should already know: %v", err)
+	if len(opts.ManagedNamespaces) == 0 {
+		t.Error("no managed namespaces were set, so the agent could install nowhere")
 	}
-	if out.String() != "" {
-		t.Errorf("it printed a prompt anyway:\n%s", out.String())
+	// And it says what it did, since a silent placeholder install would look
+	// like a real one.
+	if !strings.Contains(out.String(), "without a control plane") {
+		t.Errorf("it did not say what kind of install this is:\n%s", out.String())
 	}
 }
 

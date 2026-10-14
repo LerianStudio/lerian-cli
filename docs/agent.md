@@ -83,10 +83,19 @@ helm runs, and in the log of any CI that echoes its commands.
 
 ## Managed namespaces
 
-`--managed-namespaces` is where the agent may **install**, not where it runs.
-Each entry gets a `Role` and a `RoleBinding`, so **each must already exist** —
-Kubernetes has nowhere to put a Role otherwise. A missing one fails the install,
-and the failure prints the `kubectl create namespace` for each name.
+Where the agent may **install**, not where it runs. Each entry gets a `Role` and
+a `RoleBinding` there.
+
+Not asked for: which namespaces the agent writes to follows from what Lerian
+deploys, so the default is `lerian-apps` — beside `lerian-system`, where the
+agent itself runs. One namespace for the agent, one for what it installs.
+`--managed-namespaces` is there for a cluster that keeps its workloads
+somewhere else.
+
+**They are created if missing.** Kubernetes has nowhere to put a Role in a
+namespace that does not exist, so an install used to fail on a namespace nobody
+had been asked about. That needs `kubectl` on PATH; an install that manages no
+namespaces does not.
 
 Everything else lives in `--namespace` (default `lerian-system`): the Deployment,
 the ServiceAccount, the Secrets, the ConfigMap.
