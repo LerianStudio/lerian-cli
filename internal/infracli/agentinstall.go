@@ -33,7 +33,6 @@ func manageAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poin
 	if err != nil {
 		return err
 	}
-	helm.Out = out
 	if carried, ok := CarriedAgentTarget(); ok {
 		helm.Context = carried.Context
 	}
@@ -122,11 +121,18 @@ func upgradeAgentFromMenu(ctx context.Context, helm *agent.Helm, out io.Writer, 
 	// timeout to report the state it was already in.
 	noWait := release.Status != "deployed"
 
-	fmt.Fprintf(out, "\n  Upgrading from %s to the newest published chart.\n\n", release.Chart)
-	if err := helm.Reuse(ctx, "", release.Namespace, agent.DefaultTimeout, noWait); err != nil {
+	fmt.Fprintf(out, "\n%s\n", newStyle(out).bold("==> Upgrading the Lerian agent"))
+	fmt.Fprintf(out, "  from  %s\n", release.Chart)
+	fmt.Fprintf(out, "  to    the newest published chart\n\n")
+
+	var mu sync.Mutex
+	spin := newSpinner(&mu, out, "upgrading in "+release.Namespace)
+	err := helm.Reuse(ctx, "", release.Namespace, agent.DefaultTimeout, noWait)
+	spin.Stop()
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "\n  Upgraded.\n\n")
+	fmt.Fprintf(out, "\n  Upgraded. %s\n\n", newStyle(out).dim("lerian agent status"))
 	return nil
 }
 
@@ -144,7 +150,11 @@ func uninstallAgentFromMenu(
 	if err := ask.confirm(ctx, out, what); err != nil {
 		return err
 	}
-	if err := helm.Uninstall(ctx, release.Namespace); err != nil {
+	var mu sync.Mutex
+	spin := newSpinner(&mu, out, "removing from "+release.Namespace)
+	err := helm.Uninstall(ctx, release.Namespace)
+	spin.Stop()
+	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "\n  Removed. %s was kept, so a reinstall is the same agent.\n\n",
@@ -177,29 +187,71 @@ func installAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poi
 	if err != nil {
 		return err
 	}
-	helm.Out = out
+	if carried, ok := CarriedAgentTarget(); ok {
+		helm.Context = carried.Context
+	}
 
 	opts, err := askAgentOptions(ask)
 	if err != nil {
 		return err
 	}
 
-	// Said before it is done, because an install reaches a real cluster and the
-	// values came from four separate answers.
-	fmt.Fprintf(out, "\n%s\n", newStyle(out).bold("==> Installing the Lerian agent"))
+	// Said before it is done: an install reaches a real cluster, and what it is
+	// about to do should be readable before it happens rather than reconstructed
+	// from helm's output afterwards.
+	theme := newStyle(out)
+	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Installing the Lerian agent"))
 	fmt.Fprintf(out, "  namespace          %s\n", opts.Namespace)
 	fmt.Fprintf(out, "  control plane      %s\n", opts.ControlPlaneURL)
 	fmt.Fprintf(out, "  credential         %s\n", describeCredential(opts))
-	fmt.Fprintf(out, "  managed namespaces %s\n\n", describeNamespaces(opts))
+	fmt.Fprintf(out, "  managed namespaces %s\n", describeNamespaces(opts))
+	fmt.Fprintf(out, "  chart              %s\n\n", describeChart(opts))
 
-	if err := agent.Install(ctx, helm, opts, agent.DefaultTimeout); err != nil {
+	// The spinner rather than helm's own stream: a chart's NOTES.txt is a page
+	// of headings that buries the one line saying what happened, and this is
+	// seconds of waiting on a remote registry with nothing to show — which is
+	// what the spinner is for everywhere else in this CLI.
+	var mu sync.Mutex
+	spin := newSpinner(&mu, out, "installing into "+opts.Namespace)
+	err = agent.Install(ctx, helm, opts, agent.DefaultTimeout)
+	spin.Stop()
+	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(out, "\n  The agent is installed. It appears in the control plane once it has sent\n")
-	fmt.Fprintf(out, "  its first heartbeat:\n")
-	fmt.Fprintf(out, "    lerian agent status\n\n")
+	printInstalled(out, opts)
 	return nil
+}
+
+// describeChart names the version that will be installed.
+func describeChart(opts agent.Options) string {
+	if opts.ChartVersion == "" {
+		return agent.Chart + "  ·  newest published"
+	}
+	return agent.Chart + "  ·  " + opts.ChartVersion
+}
+
+// printInstalled is what replaces helm's NOTES.txt: what happened, and the one
+// thing worth doing next.
+func printInstalled(out io.Writer, opts agent.Options) {
+	theme := newStyle(out)
+	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Installed"))
+
+	if opts.IsPlaceholder() {
+		// Saying "it appears in the control plane once it heartbeats" would
+		// promise what this install cannot do: there is nowhere to register, and
+		// the pod sits at 0/1 forever.
+		fmt.Fprintf(out, "  The agent is running in %s and has nowhere to register, so it\n", opts.Namespace)
+		fmt.Fprintf(out, "  retries against %s and stays unready.\n\n", opts.ControlPlaneURL)
+		fmt.Fprintf(out, "  %s\n", theme.dim("kubectl -n "+opts.Namespace+" logs deploy/"+agent.ReleaseName))
+		fmt.Fprintf(out, "\n  Re-running this once there is a control plane address is the same\n")
+		fmt.Fprintf(out, "  operation, and keeps the identity it already has.\n\n")
+		return
+	}
+
+	fmt.Fprintf(out, "  The agent is running in %s and registering with the control plane.\n", opts.Namespace)
+	fmt.Fprintf(out, "  It appears there once its first heartbeat lands.\n\n")
+	fmt.Fprintf(out, "  %s\n\n", theme.dim("lerian agent status"))
 }
 
 // AskAgentOptions asks for an install, for a caller outside this package.

@@ -35,7 +35,6 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	helm.Context = target.Context
-	helm.Out = cmd.OutOrStdout()
 
 	var mu sync.Mutex
 	spin := infracli.Spin(&mu, cmd.OutOrStdout(), "reading the release")

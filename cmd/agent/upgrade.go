@@ -49,7 +49,6 @@ func runUpgrade(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	helm.Context = target.Context
-	helm.Out = cmd.OutOrStdout()
 
 	// Refused rather than turned into an install. An upgrade of something that
 	// is not there would have to invent a credential, and inventing one is how

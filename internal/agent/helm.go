@@ -179,18 +179,37 @@ func (h *Helm) Uninstall(ctx context.Context, namespace string) error {
 	return nil
 }
 
-// run executes helm with its output going to the operator.
+// run executes helm, keeping what it printed.
+//
+// Kept rather than streamed, because helm's own output is a chart's NOTES.txt
+// in full — a page of headings and example commands that buries the one line
+// saying what happened. On failure it is exactly what somebody needs, so it
+// goes into the error; on success the caller prints a summary instead.
+//
+// Out is still honored when set, for a caller that wants the stream as it
+// happens.
 func (h *Helm) run(ctx context.Context, args ...string) error {
 	// #nosec G204 -- the binary is whatever LookPath found for "helm", and every
 	// argument is built in this file from values Options.Validate has already
 	// accepted. Nothing an operator types becomes a command name, and the values
 	// that do come from them reach helm through a file rather than argv.
 	command := exec.CommandContext(ctx, h.binary, h.withContext(args)...)
-	command.Stdout = h.Out
-	command.Stderr = h.Out
+
+	var captured strings.Builder
+	if h.Out != nil {
+		command.Stdout = io.MultiWriter(h.Out, &captured)
+		command.Stderr = io.MultiWriter(h.Out, &captured)
+	} else {
+		command.Stdout = &captured
+		command.Stderr = &captured
+	}
+
 	if err := command.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return fmt.Errorf("canceled; helm may have left a release behind — `helm list -A` says")
+		}
+		if said := strings.TrimSpace(captured.String()); said != "" {
+			return fmt.Errorf("%w\n%s", err, said)
 		}
 		return err
 	}
