@@ -223,21 +223,42 @@ func installAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poi
 		return err
 	}
 
+	// What is there now, before anything is said about what will be: an install
+	// over something already installed is a different operation, and confirming
+	// one that turns out to write nothing is a question nobody needed.
+	var mu sync.Mutex
+	spin := newSpinner(&mu, out, "reading what is installed")
+	planned, existing, err := agent.PlanInstall(ctx, helm, opts)
+	spin.Stop()
+	if err != nil {
+		return err
+	}
+
+	target, _ := CarriedAgentTarget()
+	if planned == agent.Unmodified {
+		// Nothing to confirm and nothing to do.
+		PrintInstalled(out, target, opts, existing, planned)
+		return nil
+	}
+
 	// Said before it is done: an install reaches a real cluster, and what it is
 	// about to do should be readable before it happens rather than reconstructed
 	// from helm's output afterwards.
 	theme := newStyle(out)
-	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Installing the Lerian agent"))
+	fmt.Fprintf(out, "\n%s\n", theme.bold("==> "+plannedHeading(planned)))
+	if existing.Chart != "" {
+		fmt.Fprintf(out, "  installed now      %s  ·  revision %s, %s\n",
+			existing.Chart, existing.Revision, existing.Status)
+	}
 	fmt.Fprintf(out, "  namespace          %s\n", opts.Namespace)
 	fmt.Fprintf(out, "  control plane      %s\n", opts.ControlPlaneURL)
 	fmt.Fprintf(out, "  credential         %s\n", describeCredential(opts))
 	fmt.Fprintf(out, "  managed namespaces %s\n", describeNamespaces(opts))
-	fmt.Fprintf(out, "  chart              %s\n\n", describeChart(opts))
+	fmt.Fprintf(out, "  chart              %s\n", describeChart(opts))
 
 	// Confirmed, because this writes a workload into a real cluster. The summary
 	// above says which one and what it will hold.
-	target, _ := CarriedAgentTarget()
-	if err := ask.confirm(ctx, out, "install the agent into "+target.Described()); err != nil {
+	if err := ask.confirm(ctx, out, plannedVerb(planned)+" the agent in "+target.Described()); err != nil {
 		return err
 	}
 
@@ -245,8 +266,7 @@ func installAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poi
 	// of headings that buries the one line saying what happened, and this is
 	// seconds of waiting on a remote registry with nothing to show — which is
 	// what the spinner is for everywhere else in this CLI.
-	var mu sync.Mutex
-	spin := newSpinner(&mu, out, "installing into "+opts.Namespace)
+	spin = newSpinner(&mu, out, "installing into "+opts.Namespace)
 	outcome, err := agent.InstallReporting(ctx, helm, opts, agent.DefaultTimeout)
 	spin.Stop()
 	if err != nil {
@@ -259,6 +279,22 @@ func installAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poi
 	release, _, _ := helm.Installed(ctx, opts.Namespace)
 	PrintInstalled(out, target, opts, release, outcome)
 	return nil
+}
+
+// plannedHeading says what the run will be, before it is.
+func plannedHeading(planned agent.Outcome) string {
+	if planned == agent.Reconfigured {
+		return "Reconfiguring the Lerian agent"
+	}
+	return "Installing the Lerian agent"
+}
+
+// plannedVerb is the same thing in the confirmation line.
+func plannedVerb(planned agent.Outcome) string {
+	if planned == agent.Reconfigured {
+		return "reconfigure"
+	}
+	return "install"
 }
 
 // describeChart names the version that will be installed.

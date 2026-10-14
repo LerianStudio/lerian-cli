@@ -335,3 +335,76 @@ appVersion: "1.0.1"`
 		t.Errorf("version = %q, want the chart's own 1.0.1 rather than a dependency's", got)
 	}
 }
+
+// Confirming an operation that turns out to write nothing is a question nobody
+// needed, and what is already installed is what somebody wants to see before
+// saying yes. So the check has to be available before the install runs.
+func TestPlanInstallReportsWithoutWriting(t *testing.T) {
+	var ran bool
+	helm := settled{Release{Chart: "agent-helm-1.0.1", Status: "deployed"}, true, &ran}
+
+	outcome, existing, err := PlanInstall(context.Background(), helm, deployedOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ran {
+		t.Error("planning wrote to the cluster")
+	}
+	if outcome != Unmodified {
+		t.Errorf("outcome = %v, want Unmodified", outcome)
+	}
+	if existing.Chart != "agent-helm-1.0.1" {
+		t.Errorf("it did not report what is installed: %+v", existing)
+	}
+}
+
+// Over something already there, it is a reconfiguration rather than an
+// install — and the caller needs the existing release to show what changes.
+func TestPlanInstallNamesAReconfiguration(t *testing.T) {
+	var ran bool
+	helm := settled{Release{Chart: "agent-helm-1.0.1", Revision: "3", Status: "deployed"}, false, &ran}
+
+	outcome, existing, err := PlanInstall(context.Background(), helm, deployedOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ran {
+		t.Error("planning wrote to the cluster")
+	}
+	if outcome != Reconfigured {
+		t.Errorf("outcome = %v, want Reconfigured", outcome)
+	}
+	if existing.Revision != "3" {
+		t.Errorf("the existing revision was not reported: %+v", existing)
+	}
+}
+
+// With nothing installed there is nothing to show and nothing to compare.
+func TestPlanInstallOnAnEmptyNamespaceIsAnInstall(t *testing.T) {
+	var ran bool
+	helm := empty{&ran}
+
+	outcome, existing, err := PlanInstall(context.Background(), helm, deployedOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if outcome != Installed {
+		t.Errorf("outcome = %v, want Installed", outcome)
+	}
+	if existing.Chart != "" {
+		t.Errorf("it invented a release: %+v", existing)
+	}
+}
+
+// empty stands in for a namespace with no release in it.
+type empty struct{ ran *bool }
+
+func (e empty) Install(context.Context, Options, time.Duration) error { *e.ran = true; return nil }
+func (e empty) KubeContext() string                                   { return "" }
+func (e empty) Installed(context.Context, string) (Release, bool, error) {
+	return Release{}, false, nil
+}
+func (e empty) Unchanged(context.Context, Options, Release) (bool, error) { return false, nil }

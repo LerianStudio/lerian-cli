@@ -182,10 +182,25 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 	}
 	helm.Context = target.Context
 
+	// What is there now, before confirming: an install over something already
+	// installed is a different operation, and confirming one that turns out to
+	// write nothing is a question nobody needed.
+	planned, existing, err := agent.PlanInstall(cmd.Context(), helm, opts)
+	if err != nil {
+		return err
+	}
+	if planned == agent.Unmodified {
+		infracli.PrintInstalled(cmd.OutOrStdout(), target, opts, existing, planned)
+		return nil
+	}
+
 	if !install.yes {
-		where := target.Described()
+		verb := "install"
+		if planned == agent.Reconfigured {
+			verb = "reconfigure"
+		}
 		if err := infracli.ConfirmAgentAction(cmd.Context(), cmd.OutOrStdout(),
-			"install the agent into "+where); err != nil {
+			verb+" the agent in "+target.Described()); err != nil {
 			return err
 		}
 	}

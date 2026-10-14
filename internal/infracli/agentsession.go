@@ -27,11 +27,19 @@ type AgentTarget struct {
 }
 
 // Described renders the target for the line above an operation.
+//
+// Three cases, because a confirmation that says "the current kubeconfig
+// context" about a cluster it was told the name of is less specific than it
+// could be — and that line is the last thing somebody reads before saying yes.
 func (t AgentTarget) Described() string {
-	if t.Cluster == "" {
+	switch {
+	case t.Cluster != "":
+		return fmt.Sprintf("%s · account %s · %s", t.Cluster, t.Account, t.Region)
+	case t.Context != "":
+		return t.Context
+	default:
 		return "the current kubeconfig context"
 	}
-	return fmt.Sprintf("%s · account %s · %s", t.Cluster, t.Account, t.Region)
 }
 
 // PrepareAgent walks everything an agent command needs before it can act.
@@ -294,7 +302,8 @@ func ConfirmAgentAction(ctx context.Context, out io.Writer, what string) error {
 		return fmt.Errorf("this needs a confirmation and stdin is not a terminal\n"+
 			"Pending: %s\n\nRe-run from a terminal, or pass --yes.", what)
 	}
-	fmt.Fprintf(out, "\n  %s\n", what)
+	// Not printed here: prompter.confirm puts the question on the line it reads
+	// the answer from, and printing it first said the same thing twice.
 	return ask.confirm(ctx, out, what)
 }
 

@@ -31,10 +31,23 @@ func TestTheTargetSaysWhichClusterAndAccount(t *testing.T) {
 }
 
 // Without a chosen cluster it must not invent one: "the current kubeconfig
-// context" is the honest answer, and it is what a scripted run gets.
+// context" is the honest answer, and it is what a run with nothing at all gets.
 func TestAnUnchosenTargetSaysSo(t *testing.T) {
 	if got := (AgentTarget{}).Described(); !strings.Contains(got, "current kubeconfig") {
 		t.Errorf("an empty target described as %q", got)
+	}
+}
+
+// But a --kube-context run does know which cluster, and saying "the current
+// context" about one it was told the name of is less specific than it could
+// be — on the line somebody reads last before saying yes.
+func TestAContextOnlyTargetNamesTheContext(t *testing.T) {
+	const context = "arn:aws:eks:us-east-2:111122223333:cluster/example-eks"
+
+	got := AgentTarget{Context: context}.Described()
+
+	if got != context {
+		t.Errorf("described as %q, want the context it was given", got)
 	}
 }
 

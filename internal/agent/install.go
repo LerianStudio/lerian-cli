@@ -49,6 +49,36 @@ func Install(ctx context.Context, helm Installer, opts Options, timeout time.Dur
 	return err
 }
 
+// PlanInstall reports what an install would do, without doing any of it.
+//
+// Asked before the confirmation, because confirming an operation that turns out
+// to write nothing is a question nobody needed — and because what is already
+// installed is the thing somebody wants to see before saying yes.
+func PlanInstall(ctx context.Context, helm Installer, opts Options) (Outcome, Release, error) {
+	if opts.Namespace == "" {
+		opts.Namespace = DefaultNamespace
+	}
+	if err := opts.Validate(); err != nil {
+		return Installed, Release{}, err
+	}
+
+	// An unreadable release is not a reason to refuse: the install then runs,
+	// which is what it would have done anyway.
+	release, installed, err := helm.Installed(ctx, opts.Namespace)
+	if err != nil || !installed {
+		return Installed, Release{}, nil //nolint:nilerr // unreadable means "go ahead".
+	}
+
+	unchanged, err := helm.Unchanged(ctx, opts, release)
+	if err != nil {
+		return Reconfigured, release, err
+	}
+	if unchanged {
+		return Unmodified, release, nil
+	}
+	return Reconfigured, release, nil
+}
+
 // InstallReporting is Install, and says what the run turned out to be.
 //
 // Running it twice has always converged on the same state — helm upgrade
@@ -75,19 +105,12 @@ func InstallReporting(
 	}
 
 	// What is there now, so a run that would change nothing can say so and stop.
-	// An unreadable release is not a reason to refuse: the install then runs,
-	// which is what it would have done anyway.
-	outcome := Installed
-	release, installed, readErr := helm.Installed(ctx, opts.Namespace)
-	if readErr == nil && installed {
-		outcome = Reconfigured
-		unchanged, cmpErr := helm.Unchanged(ctx, opts, release)
-		if cmpErr != nil {
-			return outcome, cmpErr
-		}
-		if unchanged {
-			return Unmodified, nil
-		}
+	outcome, _, err := PlanInstall(ctx, helm, opts)
+	if err != nil {
+		return outcome, err
+	}
+	if outcome == Unmodified {
+		return Unmodified, nil
 	}
 
 	// Before helm, because the chart places a Role in each and Kubernetes has
@@ -97,17 +120,16 @@ func InstallReporting(
 		return outcome, err
 	}
 
-	err := helm.Install(ctx, opts, timeout)
-	if err == nil {
-		return outcome, nil
+	if err := helm.Install(ctx, opts, timeout); err != nil {
+		// Helm's own message is accurate and stays. What it leaves out is which
+		// thing the operator controls is wrong, and these are the two that are
+		// wrong often enough to be worth naming.
+		if advice := adviseOn(err, opts.Namespace); advice != "" {
+			return outcome, fmt.Errorf("%w\n\n%s", err, advice)
+		}
+		return outcome, err
 	}
-	// Helm's own message is accurate and stays. What it leaves out is which
-	// thing the operator controls is wrong, and these are the two that are
-	// wrong often enough to be worth naming.
-	if advice := adviseOn(err, opts.Namespace); advice != "" {
-		return outcome, fmt.Errorf("%w\n\n%s", err, advice)
-	}
-	return outcome, err
+	return outcome, nil
 }
 
 // missingNamespace catches the chart failing to place a Role, which it does
