@@ -25,6 +25,10 @@ type Choice struct {
 	Label string
 	// Note says what choosing it means, in a few words.
 	Note string
+	// Disabled shows the row without letting it be picked. Shown rather than
+	// removed, because a command somebody has heard of is better explained than
+	// made to look as though it never existed.
+	Disabled bool
 }
 
 // CanAsk reports whether there is somebody at the other end to answer, and
@@ -52,13 +56,23 @@ func writerIsTerminal(out io.Writer) bool {
 // The error is infra.ErrAborted when the operator leaves without choosing, which
 // callers treat as a clean exit rather than a failure.
 func Choose(out io.Writer, question, purpose string, choices []Choice) (string, error) {
+	return newPrompter(out).pick(question, purpose, "", optionsFrom(choices), "")
+}
+
+// optionsFrom carries a caller's choices into the selector's own type.
+//
+// Split out to be tested: whether Disabled survives this decides whether a row
+// that must not be chosen can be, and the alternative is a test that drives a
+// selector through a terminal it does not have.
+func optionsFrom(choices []Choice) []option {
 	options := make([]option, 0, len(choices))
 	for _, choice := range choices {
 		options = append(options, option{
-			value: choice.Value,
-			label: choice.Label,
-			note:  choice.Note,
+			value:    choice.Value,
+			label:    choice.Label,
+			note:     choice.Note,
+			disabled: choice.Disabled,
 		})
 	}
-	return newPrompter(out).pick(question, purpose, "", options, "")
+	return options
 }
