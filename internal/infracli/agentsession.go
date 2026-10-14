@@ -280,3 +280,24 @@ func Spin(mu *sync.Mutex, out io.Writer, label string) *spinner {
 func Heading(out io.Writer, text string) string {
 	return newStyle(out).bold(text)
 }
+
+// ConfirmRemoval asks before an agent is removed, for a caller outside this
+// package.
+//
+// The same confirmation an apply or a destroy gets: typed, not a keypress, and
+// with anything queued beforehand discarded — a stray Enter left over from a
+// previous step must not answer a question about removing something.
+//
+// Outside a terminal it refuses and names the flag, which is the contract every
+// other confirmation here has.
+func ConfirmRemoval(ctx context.Context, out io.Writer, what string) error {
+	ask := newPrompter(out)
+	if !ask.interactive {
+		// Its own message rather than the shared one: that names --auto-approve,
+		// which this command does not have, and sending somebody to a flag that
+		// does not exist is worse than saying nothing.
+		return fmt.Errorf("this needs a confirmation and stdin is not a terminal\n"+
+			"Pending: %s\n\nRe-run from a terminal, or pass --yes.", what)
+	}
+	return ask.confirm(ctx, out, what)
+}

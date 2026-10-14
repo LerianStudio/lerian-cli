@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/lerian-studio/lerian-cli/internal/agent"
+	"github.com/lerian-studio/lerian-cli/internal/infracli"
 )
 
 var uninstall struct {
@@ -32,7 +33,7 @@ func init() {
 	uninstallCmd.Flags().StringVar(&uninstall.kubeContext, "kube-context", "",
 		"kubeconfig context to act in; empty uses the current one")
 	uninstallCmd.Flags().BoolVar(&uninstall.yes, "yes", false,
-		"skip the confirmation")
+		"skip the confirmation; required outside a terminal")
 }
 
 func runUninstall(cmd *cobra.Command, _ []string) error {
@@ -55,11 +56,18 @@ func runUninstall(cmd *cobra.Command, _ []string) error {
 	if !uninstall.yes {
 		// Named, because "the agent" is not specific enough when somebody has
 		// more than one cluster in their kubeconfig.
-		fmt.Fprintf(cmd.OutOrStdout(),
-			"This removes %s (%s) from namespace %s.\nThe control plane will stop hearing from it.\n"+
-				"Re-run with --yes to confirm.\n",
-			release.Name, release.Chart, release.Namespace)
-		return nil
+		//
+		// Asked rather than answered with "re-run with --yes": this command is
+		// reached from a menu, where there is no command line to add a flag to,
+		// and telling somebody to re-run with a flag they never typed leaves them
+		// where they started.
+		what := fmt.Sprintf("remove %s (%s) from %s in %s",
+			release.Name, release.Chart, release.Namespace, target.Described())
+		fmt.Fprintf(cmd.OutOrStdout(), "\n  %s\n  The control plane will stop hearing from it.\n",
+			what)
+		if err := infracli.ConfirmRemoval(cmd.Context(), cmd.OutOrStdout(), what); err != nil {
+			return err
+		}
 	}
 
 	if err := helm.Uninstall(cmd.Context(), uninstall.namespace); err != nil {

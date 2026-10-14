@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"context"
+
 	"github.com/lerian-studio/lerian-cli/internal/infra"
 )
 
@@ -150,5 +152,34 @@ func TestAUsableProfileShowsItsAccount(t *testing.T) {
 		if !strings.Contains(options[0].note, want) {
 			t.Errorf("the row omits %q: %q", want, options[0].note)
 		}
+	}
+}
+
+// Removing an agent is reached from a menu, where there is no command line to
+// add --yes to. Answering that with "re-run with --yes" leaves somebody exactly
+// where they started — the same mistake the install made before it asked.
+func TestRemovalRefusesWithoutATerminalAndNamesTheFlag(t *testing.T) {
+	var out strings.Builder
+
+	err := ConfirmRemoval(context.Background(), &out, "remove the agent from example-eks")
+
+	if err == nil {
+		t.Fatal("it removed without confirming and without a terminal")
+	}
+	if !strings.Contains(err.Error(), "not a terminal") {
+		t.Errorf("the error does not say why it could not ask: %v", err)
+	}
+	// And it repeats what was pending, so a scripted run says what it declined
+	// to do rather than only that it declined.
+	if !strings.Contains(err.Error(), "example-eks") {
+		t.Errorf("the error does not name what was pending: %v", err)
+	}
+	// The flag this command actually has. The shared confirmation names
+	// --auto-approve, which belongs to the infra run and does not exist here.
+	if !strings.Contains(err.Error(), "--yes") {
+		t.Errorf("the error does not name the flag to pass: %v", err)
+	}
+	if strings.Contains(err.Error(), "--auto-approve") {
+		t.Errorf("it names a flag this command does not have: %v", err)
 	}
 }
