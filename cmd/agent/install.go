@@ -180,7 +180,7 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 
 	var mu sync.Mutex
 	spin := infracli.Spin(&mu, cmd.OutOrStdout(), "installing into "+opts.Namespace)
-	err = agent.Install(cmd.Context(), helm, opts, install.timeout)
+	outcome, err := agent.InstallReporting(cmd.Context(), helm, opts, install.timeout)
 	spin.Stop()
 	if err != nil {
 		return err
@@ -190,6 +190,6 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 	// it did. Read back rather than assumed, because an install that resolved
 	// "newest" only knows which version that was afterwards.
 	release, _, _ := helm.Installed(cmd.Context(), opts.Namespace)
-	infracli.PrintInstalled(cmd.OutOrStdout(), target, opts, release)
+	infracli.PrintInstalled(cmd.OutOrStdout(), target, opts, release, outcome)
 	return nil
 }

@@ -131,6 +131,10 @@ func (r recording) Install(context.Context, Options, time.Duration) error {
 	return nil
 }
 func (r recording) KubeContext() string { return "" }
+func (r recording) Installed(context.Context, string) (Release, bool, error) {
+	return Release{}, false, nil
+}
+func (r recording) Unchanged(context.Context, Options, Release) (bool, error) { return false, nil }
 
 // A test of EnsureNamespaces proves EnsureNamespaces works and says nothing
 // about whether Install calls it — which is the gap a mutation deleting the

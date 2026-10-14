@@ -199,7 +199,8 @@ func TestTheInstalledReportSaysWhereAndWhat(t *testing.T) {
 			Token:             agent.EnrollmentPrefix + "abc",
 			ManagedNamespaces: []string{"lerian-apps"},
 		},
-		agent.Release{Chart: "agent-helm-1.0.1", AppVersion: "1.0.1", Revision: "2", Status: "deployed"})
+		agent.Release{Chart: "agent-helm-1.0.1", AppVersion: "1.0.1", Revision: "2", Status: "deployed"},
+		agent.Installed)
 
 	// Anchored on the row rather than on the value: "1.0.1" also appears inside
 	// "agent-helm-1.0.1", so a substring check passed with the agent's own
@@ -234,7 +235,7 @@ func TestAPlaceholderReportDoesNotPromiseRegistration(t *testing.T) {
 			ControlPlaneURL: agent.PlaceholderControlPlane,
 			Token:           agent.PlaceholderToken,
 		},
-		agent.Release{Chart: "agent-helm-1.0.1"})
+		agent.Release{Chart: "agent-helm-1.0.1"}, agent.Installed)
 
 	if strings.Contains(out.String(), "first heartbeat lands") {
 		t.Errorf("it promises a registration that cannot happen:\n%s", out.String())
@@ -255,12 +256,54 @@ func TestTheReportOmitsWhatItDoesNotKnow(t *testing.T) {
 	PrintInstalled(&out, AgentTarget{},
 		agent.Options{Namespace: agent.DefaultNamespace, ControlPlaneURL: "https://c",
 			Token: agent.EnrollmentPrefix + "x"},
-		agent.Release{})
+		agent.Release{}, agent.Installed)
 
 	if strings.Contains(out.String(), "account") || strings.Contains(out.String(), "region") {
 		t.Errorf("it reported a cluster it was never told about:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), "namespace") {
 		t.Errorf("it dropped what it does know:\n%s", out.String())
+	}
+}
+
+// Installing twice converges on the same state either way — helm upgrade
+// --install sees to that — but it wrote a revision, re-applied every manifest
+// and reported as though something had happened. A second run should be free
+// and should say that nothing was needed.
+func TestAnUnchangedRunSaysNothingHappened(t *testing.T) {
+	var out strings.Builder
+
+	PrintInstalled(&out, AgentTarget{Cluster: "example-eks"},
+		agent.Options{Namespace: agent.DefaultNamespace, ControlPlaneURL: "https://c",
+			Token: agent.EnrollmentPrefix + "x"},
+		agent.Release{Chart: "agent-helm-1.0.1", Revision: "4", Status: "deployed"},
+		agent.Unmodified)
+
+	if !strings.Contains(out.String(), "Unchanged") {
+		t.Errorf("a run that changed nothing is headed as an install:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "nothing was changed") {
+		t.Errorf("it does not say that nothing happened:\n%s", out.String())
+	}
+	// And it does not tell somebody to watch for a heartbeat that already
+	// happened, or did not, before this command ran.
+	if strings.Contains(out.String(), "first heartbeat lands") {
+		t.Errorf("it describes a registration this run had nothing to do with:\n%s", out.String())
+	}
+}
+
+// A release that was there and now holds different values is neither an
+// install nor nothing.
+func TestAReconfiguredRunIsNamedAsOne(t *testing.T) {
+	var out strings.Builder
+
+	PrintInstalled(&out, AgentTarget{Cluster: "example-eks"},
+		agent.Options{Namespace: agent.DefaultNamespace, ControlPlaneURL: "https://c",
+			Token: agent.EnrollmentPrefix + "x"},
+		agent.Release{Chart: "agent-helm-1.0.1", Revision: "5", Status: "deployed"},
+		agent.Reconfigured)
+
+	if !strings.Contains(out.String(), "Reconfigured") {
+		t.Errorf("a reconfiguration is reported as an install:\n%s", out.String())
 	}
 }

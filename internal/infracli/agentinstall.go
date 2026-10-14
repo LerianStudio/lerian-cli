@@ -213,7 +213,7 @@ func installAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poi
 	// what the spinner is for everywhere else in this CLI.
 	var mu sync.Mutex
 	spin := newSpinner(&mu, out, "installing into "+opts.Namespace)
-	err = agent.Install(ctx, helm, opts, agent.DefaultTimeout)
+	outcome, err := agent.InstallReporting(ctx, helm, opts, agent.DefaultTimeout)
 	spin.Stop()
 	if err != nil {
 		return err
@@ -224,7 +224,7 @@ func installAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poi
 	// only knows which one that was afterwards.
 	release, _, _ := helm.Installed(ctx, opts.Namespace)
 	target, _ := CarriedAgentTarget()
-	PrintInstalled(out, target, opts, release)
+	PrintInstalled(out, target, opts, release, outcome)
 	return nil
 }
 
@@ -242,9 +242,15 @@ func describeChart(opts agent.Options) string {
 // Where matters as much as what. An install reaches one cluster in one account,
 // and a report that names neither leaves somebody to remember which — across
 // seven AWS profiles, that is a thing to be told rather than recalled.
-func PrintInstalled(out io.Writer, target AgentTarget, opts agent.Options, release agent.Release) {
+func PrintInstalled(
+	out io.Writer,
+	target AgentTarget,
+	opts agent.Options,
+	release agent.Release,
+	outcome agent.Outcome,
+) {
 	theme := newStyle(out)
-	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Installed"))
+	fmt.Fprintf(out, "\n%s\n", theme.bold("==> "+outcomeHeading(outcome)))
 
 	rows := [][2]string{}
 	if target.Cluster != "" {
@@ -280,6 +286,12 @@ func PrintInstalled(out io.Writer, target AgentTarget, opts agent.Options, relea
 	}
 
 	fmt.Fprintln(out)
+	if outcome == agent.Unmodified {
+		// Nothing ran, so there is nothing to say about what to watch: the agent
+		// is doing exactly what it was doing before this command.
+		fmt.Fprintf(out, "  Already in this state, so nothing was changed.\n\n")
+		return
+	}
 	if opts.IsPlaceholder() {
 		// Saying "it appears in the control plane once it heartbeats" would
 		// promise what this install cannot do: there is nowhere to register, and
@@ -294,6 +306,19 @@ func PrintInstalled(out io.Writer, target AgentTarget, opts agent.Options, relea
 
 	fmt.Fprintf(out, "  It appears in the control plane once its first heartbeat lands:\n")
 	fmt.Fprintf(out, "    %s\n\n", theme.dim("lerian agent status"))
+}
+
+// outcomeHeading says what the run was, because "Installed" over a run that
+// changed nothing is a report of something that did not happen.
+func outcomeHeading(outcome agent.Outcome) string {
+	switch outcome {
+	case agent.Reconfigured:
+		return "Reconfigured"
+	case agent.Unmodified:
+		return "Unchanged"
+	default:
+		return "Installed"
+	}
 }
 
 // accountSuffix names the profile beside the account, when there is one.

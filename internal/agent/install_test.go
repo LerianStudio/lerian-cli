@@ -80,6 +80,10 @@ type failing struct{ err error }
 
 func (f failing) Install(context.Context, Options, time.Duration) error { return f.err }
 func (f failing) KubeContext() string                                   { return "" }
+func (f failing) Installed(context.Context, string) (Release, bool, error) {
+	return Release{}, false, nil
+}
+func (f failing) Unchanged(context.Context, Options, Release) (bool, error) { return false, nil }
 
 // A test of adviseOn proves adviseOn works and says nothing about whether
 // Install calls it — which is exactly the gap a mutation deleting the call
@@ -140,6 +144,10 @@ func (r reaching) Install(context.Context, Options, time.Duration) error {
 }
 
 func (r reaching) KubeContext() string { return "" }
+func (r reaching) Installed(context.Context, string) (Release, bool, error) {
+	return Release{}, false, nil
+}
+func (r reaching) Unchanged(context.Context, Options, Release) (bool, error) { return false, nil }
 
 // The failure somebody hits while the control plane is still being built. Helm
 // says "timed out waiting for the condition", which is true and says nothing

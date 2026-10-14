@@ -102,6 +102,11 @@ the ServiceAccount, the Secrets, the ConfigMap.
 
 ## Commands
 
+Installing twice is free. The second run compares the values and the chart
+version against what is already there and stops if nothing would change, saying
+so rather than writing a revision and re-applying every manifest. A release that
+is `failed` is always re-run, since that is how somebody recovers from one.
+
 ```bash
 # Install, or re-install with new values
 lerian agent install --control-plane https://cp.example.com --token lerian_enroll_... \
