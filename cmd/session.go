@@ -237,7 +237,7 @@ func resetFlags(cmd *cobra.Command) {
 // letting the appending come back unnoticed.
 func forgetSliceParse(value pflag.Value) {
 	field := reflect.ValueOf(value)
-	if field.Kind() != reflect.Ptr || field.IsNil() {
+	if field.Kind() != reflect.Pointer || field.IsNil() {
 		return
 	}
 	changed := field.Elem().FieldByName("changed")
