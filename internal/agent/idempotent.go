@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Unchanged reports that an install would leave the cluster exactly as it is.
@@ -93,17 +95,28 @@ func sameChart(ctx context.Context, helm *Helm, opts Options, release Release) (
 }
 
 // NewestChart asks the registry what version "unpinned" means today.
+//
+// Parsed rather than grepped. `helm show chart` prints the whole Chart.yaml,
+// dependencies included, and a dependency carries a version line of its own —
+// indented, but the first one in the file. Matching the first "version:" read a
+// subchart's 2.2.0 as the agent chart's, and an upgrade was offered to a
+// version that does not exist.
 func (h *Helm) NewestChart(ctx context.Context) (string, error) {
 	out, err := h.output(ctx, "show", "chart", Chart)
 	if err != nil {
 		return "", err
 	}
-	for _, line := range strings.Split(out, "\n") {
-		if version, ok := strings.CutPrefix(strings.TrimSpace(line), "version:"); ok {
-			return strings.TrimSpace(version), nil
-		}
+
+	var chart struct {
+		Version string `yaml:"version"`
 	}
-	return "", fmt.Errorf("agent: the chart did not report a version")
+	if err := yaml.Unmarshal([]byte(out), &chart); err != nil {
+		return "", fmt.Errorf("agent: cannot read what the chart reported: %w", err)
+	}
+	if chart.Version == "" {
+		return "", fmt.Errorf("agent: the chart did not report a version")
+	}
+	return chart.Version, nil
 }
 
 // marshal renders values the way helm's own output is shaped, for tests and for
@@ -114,4 +127,49 @@ func marshal(values map[string]any) (string, error) {
 		return "", fmt.Errorf("agent: cannot render the chart values: %w", err)
 	}
 	return string(encoded), nil
+}
+
+// PointsAtPlaceholder reports that the installed release was never going to
+// connect.
+//
+// Worth knowing before an upgrade: readiness means registered, so an agent
+// pointed at a placeholder is not ready and will not become ready by being
+// given a new chart. Waiting for it spends the whole timeout and then reports
+// a failure that is really the state it was already in.
+func (h *Helm) PointsAtPlaceholder(ctx context.Context, namespace string) bool {
+	out, err := h.output(ctx, "get", "values", ReleaseName,
+		"--namespace", namespace, "--output", "json")
+	if err != nil {
+		return false
+	}
+	var values struct {
+		Agent struct {
+			ConfigMap struct {
+				ControlPlaneURL string `json:"CONTROL_PLANE_URL"`
+			} `json:"configmap"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal([]byte(out), &values); err != nil {
+		return false
+	}
+	return values.Agent.ConfigMap.ControlPlaneURL == PlaceholderControlPlane
+}
+
+// UpgradeNeeded reports whether a release is already on the version an upgrade
+// would move it to, and which version that is.
+//
+// Asked before the upgrade runs, because "move it to another chart version"
+// with no other version to move to is a Helm run that rewrites the release for
+// nothing — and, against an agent that cannot become ready, one that waits the
+// whole timeout before saying so.
+func (h *Helm) UpgradeNeeded(ctx context.Context, wanted string, release Release) (bool, string, error) {
+	if wanted == "" {
+		newest, err := h.NewestChart(ctx)
+		if err != nil {
+			return false, "", err
+		}
+		wanted = newest
+	}
+	current := strings.TrimPrefix(release.Chart, "agent-helm-")
+	return current != wanted, wanted, nil
 }

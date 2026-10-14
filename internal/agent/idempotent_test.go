@@ -228,3 +228,110 @@ func TestInstallReportsAReconfiguration(t *testing.T) {
 		t.Errorf("outcome = %v, want Reconfigured", outcome)
 	}
 }
+
+// "Move it to another chart version" with no other version to move to rewrites
+// the release for nothing — and against an agent that cannot become ready, it
+// waits the whole timeout before saying so.
+func TestAnUpgradeToTheSameVersionIsNotNeeded(t *testing.T) {
+	helm := helmSaying(t, "{}", "version: 1.0.1")
+
+	needed, newest, err := helm.UpgradeNeeded(context.Background(), "",
+		Release{Chart: "agent-helm-1.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if needed {
+		t.Error("an upgrade to the version already installed was reported as needed")
+	}
+	if newest != "1.0.1" {
+		t.Errorf("newest = %q", newest)
+	}
+}
+
+// And a release behind the registry does need one.
+func TestAnUpgradeToANewerVersionIsNeeded(t *testing.T) {
+	helm := helmSaying(t, "{}", "version: 1.1.0")
+
+	needed, newest, err := helm.UpgradeNeeded(context.Background(), "",
+		Release{Chart: "agent-helm-1.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !needed {
+		t.Error("a release a version behind was reported as up to date")
+	}
+	if newest != "1.1.0" {
+		t.Errorf("newest = %q", newest)
+	}
+}
+
+// A pinned version is compared against the pin, and the registry is not asked:
+// somebody who pinned does not want whatever is newest.
+func TestAPinnedUpgradeIgnoresTheRegistry(t *testing.T) {
+	helm := helmSaying(t, "{}", "version: 9.9.9")
+
+	needed, newest, err := helm.UpgradeNeeded(context.Background(), "1.0.1",
+		Release{Chart: "agent-helm-1.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if needed {
+		t.Error("a release already on the pinned version was reported as needing an upgrade")
+	}
+	if newest != "1.0.1" {
+		t.Errorf("it reported the registry's version rather than the pin: %q", newest)
+	}
+}
+
+// Readiness means registered. An agent pointed at the placeholder is not ready
+// and will not become ready by being given a new chart, so waiting for it
+// spends the whole timeout and reports the state it was already in — which is
+// exactly what an upgrade did.
+func TestAPlaceholderReleaseIsRecognized(t *testing.T) {
+	values := `{"agent":{"configmap":{"CONTROL_PLANE_URL":"` + PlaceholderControlPlane + `"}}}`
+	helm := helmSaying(t, values, "version: 1.0.1")
+
+	if !helm.PointsAtPlaceholder(context.Background(), DefaultNamespace) {
+		t.Error("a release pointed at the placeholder was not recognized")
+	}
+}
+
+// A real control plane is not a placeholder, so waiting for readiness is right.
+func TestARealControlPlaneIsNotAPlaceholder(t *testing.T) {
+	values := `{"agent":{"configmap":{"CONTROL_PLANE_URL":"https://control.example.com"}}}`
+	helm := helmSaying(t, values, "version: 1.0.1")
+
+	if helm.PointsAtPlaceholder(context.Background(), DefaultNamespace) {
+		t.Error("a real control plane was taken for the placeholder")
+	}
+}
+
+// `helm show chart` prints the whole Chart.yaml, dependencies included, and a
+// dependency carries a version line of its own — indented, but the first one in
+// the file. Matching the first "version:" read a subchart's 2.2.0 as the agent
+// chart's, and an upgrade was offered to a version that does not exist.
+func TestTheChartVersionIsNotASubchartVersion(t *testing.T) {
+	chart := `apiVersion: v2
+name: agent-helm
+dependencies:
+  - name: common
+    repository: https://charts.example.com
+    version: 2.2.0
+description: The Lerian agent
+type: application
+version: 1.0.1
+appVersion: "1.0.1"`
+	helm := helmSaying(t, "{}", chart)
+
+	got, err := helm.NewestChart(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got != "1.0.1" {
+		t.Errorf("version = %q, want the chart's own 1.0.1 rather than a dependency's", got)
+	}
+}

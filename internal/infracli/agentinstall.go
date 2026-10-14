@@ -60,7 +60,7 @@ func manageAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poin
 	case "install":
 		return installAgentFromMenu(ctx, ask, out, nil)
 	case "upgrade":
-		return upgradeAgentFromMenu(ctx, helm, out, release)
+		return upgradeAgentFromMenu(ctx, ask, helm, out, release)
 	case "uninstall":
 		return uninstallAgentFromMenu(ctx, ask, helm, out, release)
 	}
@@ -115,24 +115,51 @@ func printAgentStatus(out io.Writer, release agent.Release, installed bool) {
 // No version asked for: the menu's answer to "which version" is "the current
 // one", and somebody who wants a specific chart has `lerian agent upgrade
 // --chart-version` for it.
-func upgradeAgentFromMenu(ctx context.Context, helm *agent.Helm, out io.Writer, release agent.Release) error {
-	// Not waiting when it was not ready to begin with: a new chart does not make
-	// an agent that never registered become ready, and waiting for it spends the
-	// timeout to report the state it was already in.
-	noWait := release.Status != "deployed"
-
-	fmt.Fprintf(out, "\n%s\n", newStyle(out).bold("==> Upgrading the Lerian agent"))
-	fmt.Fprintf(out, "  from  %s\n", release.Chart)
-	fmt.Fprintf(out, "  to    the newest published chart\n\n")
-
+func upgradeAgentFromMenu(
+	ctx context.Context,
+	ask *prompter,
+	helm *agent.Helm,
+	out io.Writer,
+	release agent.Release,
+) error {
+	// Asked before anything is written: "move it to another chart version" with
+	// no other version to move to rewrites the release for nothing, and against
+	// an agent that cannot become ready it waits the whole timeout first.
 	var mu sync.Mutex
-	spin := newSpinner(&mu, out, "upgrading in "+release.Namespace)
-	err := helm.Reuse(ctx, "", release.Namespace, agent.DefaultTimeout, noWait)
+	spin := newSpinner(&mu, out, "checking the published chart")
+	needed, newest, err := helm.UpgradeNeeded(ctx, "", release)
 	spin.Stop()
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "\n  Upgraded. %s\n\n", newStyle(out).dim("lerian agent status"))
+
+	theme := newStyle(out)
+	if !needed {
+		fmt.Fprintf(out, "\n%s\n", theme.bold("==> Unchanged"))
+		fmt.Fprintf(out, "  Already on %s, which is the newest published chart.\n\n", release.Chart)
+		return nil
+	}
+
+	fmt.Fprintf(out, "\n%s\n", theme.bold("==> Upgrading the Lerian agent"))
+	fmt.Fprintf(out, "  from  %s\n", release.Chart)
+	fmt.Fprintf(out, "  to    agent-helm-%s\n", newest)
+
+	if err := ask.confirm(ctx, out, "upgrade the agent in "+release.Namespace); err != nil {
+		return err
+	}
+
+	// Readiness means registered, so an agent pointed at a placeholder is not
+	// ready and a new chart will not make it so. Waiting spends the timeout to
+	// report the state it was already in — which is exactly what it did.
+	noWait := release.Status != "deployed" || helm.PointsAtPlaceholder(ctx, release.Namespace)
+
+	spin = newSpinner(&mu, out, "upgrading in "+release.Namespace)
+	err = helm.Reuse(ctx, "", release.Namespace, agent.DefaultTimeout, noWait)
+	spin.Stop()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "\n  Upgraded to agent-helm-%s. %s\n\n", newest, theme.dim("lerian agent status"))
 	return nil
 }
 
@@ -207,6 +234,13 @@ func installAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poi
 	fmt.Fprintf(out, "  managed namespaces %s\n", describeNamespaces(opts))
 	fmt.Fprintf(out, "  chart              %s\n\n", describeChart(opts))
 
+	// Confirmed, because this writes a workload into a real cluster. The summary
+	// above says which one and what it will hold.
+	target, _ := CarriedAgentTarget()
+	if err := ask.confirm(ctx, out, "install the agent into "+target.Described()); err != nil {
+		return err
+	}
+
 	// The spinner rather than helm's own stream: a chart's NOTES.txt is a page
 	// of headings that buries the one line saying what happened, and this is
 	// seconds of waiting on a remote registry with nothing to show — which is
@@ -223,7 +257,6 @@ func installAgentFromMenu(ctx context.Context, ask *prompter, out io.Writer, poi
 	// revision are what helm recorded, and an install that resolved "newest"
 	// only knows which one that was afterwards.
 	release, _, _ := helm.Installed(ctx, opts.Namespace)
-	target, _ := CarriedAgentTarget()
 	PrintInstalled(out, target, opts, release, outcome)
 	return nil
 }

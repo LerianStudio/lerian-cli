@@ -22,9 +22,16 @@ func (o Options) Values() map[string]any {
 		configmap["AGENT_ALLOWED_IMAGE_REGISTRIES"] = o.AllowedRegistries
 	}
 
+	// Never nil: a nil slice renders as JSON null and an empty one as [], so a
+	// release installed with no managed namespaces compared unequal to an
+	// install that would set none — and every repeat run reported a change.
+	namespaces := o.ManagedNamespaces
+	if namespaces == nil {
+		namespaces = []string{}
+	}
 	agent := map[string]any{
 		"configmap":         configmap,
-		"managedNamespaces": o.ManagedNamespaces,
+		"managedNamespaces": namespaces,
 	}
 
 	if len(o.ImagePullSecrets) > 0 {

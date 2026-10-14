@@ -2,11 +2,13 @@ package agent
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/lerian-studio/lerian-cli/internal/agent"
+	"github.com/lerian-studio/lerian-cli/internal/infracli"
 )
 
 var upgrade struct {
@@ -15,6 +17,7 @@ var upgrade struct {
 	kubeContext string
 	timeout     time.Duration
 	wait        bool
+	yes         bool
 }
 
 var upgradeCmd = &cobra.Command{
@@ -39,6 +42,8 @@ func init() {
 		"kubeconfig context to act in; empty uses the current one")
 	upgradeCmd.Flags().DurationVar(&upgrade.timeout, "timeout", agent.DefaultTimeout,
 		"how long to wait for the agent to become ready")
+	upgradeCmd.Flags().BoolVar(&upgrade.yes, "yes", false,
+		"skip the confirmation; required outside a terminal")
 	upgradeCmd.Flags().BoolVar(&upgrade.wait, "wait", true,
 		"wait for the agent to become ready; skipped automatically when it was not ready to begin with")
 }
@@ -62,15 +67,42 @@ func runUpgrade(cmd *cobra.Command, _ []string) error {
 			upgrade.namespace)
 	}
 
-	// An agent that is not ready now will not be made ready by a new chart, so
-	// waiting for it would spend the timeout to report a failure that is really
-	// the state it was already in. status says which case this is.
-	noWait := !upgrade.wait || release.Status != "deployed"
+	out := cmd.OutOrStdout()
 
-	if err := helm.Reuse(cmd.Context(), upgrade.version, upgrade.namespace, upgrade.timeout, noWait); err != nil {
+	// Checked before anything is written: moving to the version it already has
+	// rewrites the release for nothing, and against an agent that cannot become
+	// ready it waits the whole timeout before saying so.
+	needed, newest, err := helm.UpgradeNeeded(cmd.Context(), upgrade.version, release)
+	if err != nil {
+		return err
+	}
+	if !needed {
+		fmt.Fprintf(out, "\nAlready on %s; nothing to upgrade.\n", release.Chart)
+		return nil
+	}
+
+	if !upgrade.yes {
+		if err := infracli.ConfirmAgentAction(cmd.Context(), out,
+			fmt.Sprintf("upgrade the agent in %s from %s to agent-helm-%s",
+				release.Namespace, release.Chart, newest)); err != nil {
+			return err
+		}
+	}
+
+	// Readiness means registered, so an agent pointed at a placeholder is not
+	// ready and a new chart will not make it so.
+	noWait := !upgrade.wait ||
+		release.Status != "deployed" ||
+		helm.PointsAtPlaceholder(cmd.Context(), upgrade.namespace)
+
+	var mu sync.Mutex
+	spin := infracli.Spin(&mu, out, "upgrading in "+upgrade.namespace)
+	err = helm.Reuse(cmd.Context(), upgrade.version, upgrade.namespace, upgrade.timeout, noWait)
+	spin.Stop()
+	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "\nUpgraded from %s.\n", release.Chart)
+	fmt.Fprintf(out, "\nUpgraded from %s to agent-helm-%s.\n", release.Chart, newest)
 	return nil
 }

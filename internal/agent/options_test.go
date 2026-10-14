@@ -270,3 +270,24 @@ func TestThePlaceholdersAreUnroutableAndRecognizable(t *testing.T) {
 		t.Error("a real install was taken for a placeholder")
 	}
 }
+
+// A nil slice renders as JSON null and an empty one as [], so a release
+// installed with no managed namespaces compared unequal to an install that
+// would set none — and every repeat run reported a change it had not made.
+func TestNoManagedNamespacesRendersAsAnEmptyList(t *testing.T) {
+	opts := valid()
+	opts.ManagedNamespaces = nil
+
+	rendered := opts.Values()["agent"].(map[string]any)["managedNamespaces"]
+
+	namespaces, ok := rendered.([]string)
+	if !ok {
+		t.Fatalf("managedNamespaces rendered as %T, want a slice", rendered)
+	}
+	if namespaces == nil {
+		t.Error("a nil slice reached the values, where it renders as null")
+	}
+	if len(namespaces) != 0 {
+		t.Errorf("it invented namespaces: %v", namespaces)
+	}
+}

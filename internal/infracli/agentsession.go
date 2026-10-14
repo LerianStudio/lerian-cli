@@ -281,6 +281,23 @@ func Heading(out io.Writer, text string) string {
 	return newStyle(out).bold(text)
 }
 
+// ConfirmAgentAction asks before an agent operation writes to a cluster.
+//
+// All three write: an install puts a workload in, an upgrade replaces it, a
+// removal takes it away. The confirmation is the same one an apply or a destroy
+// gets — typed deliberately, with anything queued beforehand discarded so a
+// stray Enter cannot answer it — and it names the cluster, because "the agent"
+// is not specific enough when there is more than one in a kubeconfig.
+func ConfirmAgentAction(ctx context.Context, out io.Writer, what string) error {
+	ask := newPrompter(out)
+	if !ask.interactive {
+		return fmt.Errorf("this needs a confirmation and stdin is not a terminal\n"+
+			"Pending: %s\n\nRe-run from a terminal, or pass --yes.", what)
+	}
+	fmt.Fprintf(out, "\n  %s\n", what)
+	return ask.confirm(ctx, out, what)
+}
+
 // ConfirmRemoval asks before an agent is removed, for a caller outside this
 // package.
 //

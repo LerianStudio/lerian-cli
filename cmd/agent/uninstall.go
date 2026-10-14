@@ -64,7 +64,7 @@ func runUninstall(cmd *cobra.Command, _ []string) error {
 			release.Name, release.Chart, release.Namespace, target.Described())
 		fmt.Fprintf(cmd.OutOrStdout(), "\n  %s\n  The control plane will stop hearing from it.\n",
 			what)
-		if err := infracli.ConfirmRemoval(cmd.Context(), cmd.OutOrStdout(), what); err != nil {
+		if err := infracli.ConfirmAgentAction(cmd.Context(), cmd.OutOrStdout(), what); err != nil {
 			return err
 		}
 	}

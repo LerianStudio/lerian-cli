@@ -18,6 +18,7 @@ var install struct {
 	timeout        time.Duration
 	wait           bool
 	noControlPlane bool
+	yes            bool
 }
 
 var installCmd = &cobra.Command{
@@ -50,8 +51,9 @@ func init() {
 		"agent id, required with a per-agent token and refused with an enrollment one")
 	flags.StringVar(&install.opts.ExistingSecret, "existing-secret", "",
 		"name a Secret already in the cluster instead of passing a token")
-	flags.StringSliceVar(&install.opts.ManagedNamespaces, "managed-namespaces", nil,
-		"namespaces the agent may install into; each must already exist")
+	flags.StringSliceVar(&install.opts.ManagedNamespaces, "managed-namespaces",
+		agent.DefaultManagedNamespaces,
+		"namespaces the agent may install into; created if missing")
 	flags.StringVar(&install.opts.Namespace, "namespace", agent.DefaultNamespace,
 		"namespace the agent itself runs in")
 	flags.StringVar(&install.opts.ChartVersion, "chart-version", "",
@@ -70,6 +72,8 @@ func init() {
 		"kubeconfig context to install into; empty uses the current one")
 	flags.DurationVar(&install.timeout, "timeout", agent.DefaultTimeout,
 		"how long to wait for the agent to become ready")
+	flags.BoolVar(&install.yes, "yes", false,
+		"skip the confirmation; required outside a terminal")
 	flags.BoolVar(&install.noControlPlane, "no-control-plane", false,
 		"install against a placeholder, for a control plane that does not exist yet: "+
 			"it exercises the chart, the RBAC and the pod, but never the registration")
@@ -177,6 +181,14 @@ func runInstall(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	helm.Context = target.Context
+
+	if !install.yes {
+		where := target.Described()
+		if err := infracli.ConfirmAgentAction(cmd.Context(), cmd.OutOrStdout(),
+			"install the agent into "+where); err != nil {
+			return err
+		}
+	}
 
 	var mu sync.Mutex
 	spin := infracli.Spin(&mu, cmd.OutOrStdout(), "installing into "+opts.Namespace)
