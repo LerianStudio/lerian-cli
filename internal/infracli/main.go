@@ -762,9 +762,70 @@ func execute(
 				config.Environment, opts.target)
 			return nil
 		}
+		// Before the closing line, because it changes what that line means: a
+		// bootstrap that plans to create a backend already in the account is not
+		// a plan to run, it is state that has lost track of what exists.
+		offerBootstrapAdoption(ctx, out, terraform, stages, results, opts, config)
+
 		fmt.Fprint(out, "  Nothing was changed. Re-run with --action apply to execute this plan.\n\n")
 	}
 	return nil
+}
+
+// offerBootstrapAdoption spots a backend that exists while bootstrap's own
+// state does not know it, and offers to import it.
+func offerBootstrapAdoption(
+	ctx context.Context,
+	out io.Writer,
+	terraform *infra.CLI,
+	stages []infra.Stage,
+	results []infra.StageResult,
+	opts options,
+	config infra.EnvConfig,
+) {
+	ask := newPrompter(out)
+	if !ask.interactive || opts.backends == nil {
+		return
+	}
+
+	unit, wouldCreate, ok := bootstrapCreating(stages, results)
+	if !ok {
+		return
+	}
+
+	backend, orphaned := orphanedBackend(ctx, opts.backends,
+		config.Profile, config.Region, config.AccountID, config.Environment, wouldCreate)
+	if !orphaned {
+		return
+	}
+
+	if err := offerAdoption(ctx, ask, out, terraform, unit, backend); err != nil {
+		fmt.Fprintf(out, "\n  %v\n\n", err)
+	}
+}
+
+// bootstrapCreating reports whether this run planned the bootstrap stack and
+// whether that plan would create anything.
+func bootstrapCreating(
+	stages []infra.Stage,
+	results []infra.StageResult,
+) (infra.Unit, bool, bool) {
+	for _, stage := range stages {
+		for _, unit := range stage.Units {
+			if !unit.Bootstrap {
+				continue
+			}
+			for _, result := range results {
+				for _, plan := range result.Plans {
+					if plan.Unit.Name == unit.Name {
+						return unit, plan.Changes.Create > 0, true
+					}
+				}
+			}
+			return unit, false, true
+		}
+	}
+	return infra.Unit{}, false, false
 }
 
 func writeOutputs(ctx context.Context, runner *infra.Runner, units []infra.Unit, stdout io.Writer) error {

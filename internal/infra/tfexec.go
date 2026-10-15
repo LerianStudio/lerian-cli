@@ -262,6 +262,26 @@ func (c *CLI) Init(ctx context.Context, unit Unit, opts InitOptions) error {
 }
 
 // Plan writes a saved plan and reports whether it holds any change.
+// Import brings an existing resource under Terraform's management.
+//
+// For the backend the bootstrap root creates and cannot keep its own state in:
+// when that local state is gone, the bucket and the lock table are still there
+// and nothing knows them. Import is the only way back that does not delete and
+// recreate the thing every other stack's state lives in.
+func (c *CLI) Import(ctx context.Context, unit Unit, address, id string) error {
+	client, err := c.terraform(unit)
+	if err != nil {
+		return err
+	}
+	restore := c.quiet(client, unit)
+	defer restore()
+
+	if err := client.Import(ctx, address, id); err != nil {
+		return fmt.Errorf("infra: cannot import %s as %s: %w", id, address, err)
+	}
+	return nil
+}
+
 func (c *CLI) Plan(ctx context.Context, unit Unit, opts PlanOptions) (bool, error) {
 	client, err := c.terraform(unit)
 	if err != nil {
