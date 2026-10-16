@@ -209,7 +209,7 @@ The following documentation is planned:
 
 Copyright © 2025 Lerian Studio. All rights reserved.
 
-Licensed under the Apache License, Version 2.0. See [LICENSE](../LICENSE) for details.
+Licensed under the Elastic License 2.0 (ELv2). See [LICENSE](../LICENSE) for details.
 
 ---
 
