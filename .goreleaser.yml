@@ -127,7 +127,7 @@ release:
 #     description: |
 #       Official command-line interface for the Lerian platform.
 #       Manage Midaz ledger deployments and interact with your ledgers.
-#     license: Apache-2.0
+#     license: Elastic-2.0
 #     test: |
 #       system "#{bin}/lerian --version"
 #     install: |
@@ -150,7 +150,7 @@ nfpms:
       Official command-line interface for the Lerian platform.
       Manage Midaz ledger deployments, interact with your ledgers,
       and streamline your financial infrastructure operations.
-    license: Apache-2.0
+    license: Elastic-2.0
     formats:
       - deb
       - rpm
@@ -196,7 +196,7 @@ nfpms:
 #       - "--label=org.opencontainers.image.version={{.Version}}"
 #       - "--label=org.opencontainers.image.source={{.GitURL}}"
 #       - "--label=org.opencontainers.image.description=Lerian CLI"
-#       - "--label=org.opencontainers.image.licenses=Apache-2.0"
+#       - "--label=org.opencontainers.image.licenses=Elastic-2.0"
 #
 #   - image_templates:
 #       - "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}-arm64"
@@ -213,7 +213,7 @@ nfpms:
 #       - "--label=org.opencontainers.image.version={{.Version}}"
 #       - "--label=org.opencontainers.image.source={{.GitURL}}"
 #       - "--label=org.opencontainers.image.description=Lerian CLI"
-#       - "--label=org.opencontainers.image.licenses=Apache-2.0"
+#       - "--label=org.opencontainers.image.licenses=Elastic-2.0"
 #
 # docker_manifests:
 #   - name_template: "ghcr.io/lerian-studio/lerian-cli:{{ .Version }}"

@@ -9,7 +9,7 @@
 [![Cobra](https://img.shields.io/badge/CLI-Cobra-6558F5)](https://github.com/spf13/cobra)
 [![Terraform](https://img.shields.io/badge/Terraform-infra-844FBA?logo=terraform&logoColor=white)](https://www.terraform.io/)
 [![Status](https://img.shields.io/badge/status-beta-orange)](#)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](./LICENSE)
+[![License](https://img.shields.io/badge/license-ELv2-blue)](./LICENSE)
 
 Official command-line interface for the Lerian platform. One binary, `lerian`, to sign in to the Lerian platform and to deploy AWS infrastructure from the Lerian Terraform templates, with an interactive session for people and plain flags for pipelines.
 
@@ -518,7 +518,7 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org/), and
 
 ## License
 
-Apache License 2.0 — Lerian Studio. See [LICENSE](./LICENSE).
+Elastic License 2.0 (ELv2) — Lerian Studio. See [LICENSE](./LICENSE).
 
 ---
 
